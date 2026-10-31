@@ -895,7 +895,7 @@ class Packager:
         "def __main__(args):\n"
         "    bundle, folders = args[0], args[1:]\n"
         "    mode = py_compile.PycInvalidationMode.UNCHECKED_HASH\n"
-        "    ok = all([compileall.compile_dir(f, quiet=1, workers=1, invalidation_mode=mode, stripdir=bundle,\n"
+        "    ok = all([compileall.compile_dir(f, quiet=1, workers=1, invalidation_mode=mode, stripdir=bundle, force=True,\n"
         "                                     prependdir='/Applications/Toska.app') for f in folders])\n"
         "    sys.stderr.write('compiled-ok\\n' if ok else 'compile-failed\\n')\n")
 
@@ -912,7 +912,10 @@ class Packager:
         home = tempfile.mkdtemp(prefix='krita-agent-compile-')
         try:
             stage_helper_script(home, 'compile_bundle', self.COMPILE_SCRIPT, settings_folder(self.source))
-            env = {'PATH': '/usr/bin:/bin', 'HOME': home, 'CFFIXED_USER_HOME': home, 'QT_QPA_PLATFORM': 'offscreen', 'PYTHONNOUSERSITE': '1'}
+            # Python itself must not write a .pyc while starting (it would name this folder and be skipped as up to date: 60
+            # stdlib files in a packaging of 2026-10-31); force rewrites every one hash-based, its paths stripped.
+            env = {'PATH': '/usr/bin:/bin', 'HOME': home, 'CFFIXED_USER_HOME': home, 'QT_QPA_PLATFORM': 'offscreen', 'PYTHONNOUSERSITE': '1',
+                   'PYTHONDONTWRITEBYTECODE': '1'}
             folders = [self.frameworks / 'Python.framework', self.resources / 'krita-python-libs', self.resources / 'krita' / 'pykrita']
             result = subprocess.run([str(self.macos / 'kritarunner'), '-s', 'compile_bundle', str(self.bundle)] + [str(f) for f in folders],
                                     env=env, capture_output=True, text=True, timeout=900)
