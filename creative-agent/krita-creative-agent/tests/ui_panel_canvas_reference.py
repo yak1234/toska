@@ -15,12 +15,16 @@ import types
 import unittest
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 os.environ['KRITA_CREATIVE_NO_AUTOSTART'] = '1'
+import importlib
 import importlib.util
 
 PLUGIN = Path(__file__).resolve().parents[2] / 'krita-mcp/krita-plugin/kritamcp'
 package = types.ModuleType('panel_reference_test'); package.__path__ = [str(PLUGIN)]; sys.modules['panel_reference_test'] = package
 from panel_reference_test.qt_compat import QApplication, QDockWidget, QStandardPaths, QPushButton, QLabel, QImage, QColor, QObject
 from panel_reference_test import auto_approve
+from panel_reference_test import canvas_reference_viewer as viewer_module
+from panel_reference_test.qt_compat import QtCore, QPoint, Qt
+QTest = importlib.import_module(QtCore.__name__.split('.')[0] + '.QtTest').QTest
 QStandardPaths.setTestModeEnabled(True)
 
 
@@ -60,11 +64,31 @@ class Rules(unittest.TestCase):
         self.assertFalse(auto.counting())
 
 
+class ViewerGeometry(unittest.TestCase):
+    """The viewer's mark (canvas_reference_viewer.py): plain Python, no Qt."""
+    def test_a_box_is_four_corners_whichever_way_it_is_dragged(self):
+        self.assertEqual(viewer_module.box_points(30, 40, 10, 5), [(10, 5), (30, 5), (30, 40), (10, 40)])
+
+    def test_a_mark_is_in_0_1_canvas_coordinates_clamped_or_none_when_it_encloses_nothing(self):
+        self.assertEqual(viewer_module.normalized([(0, 0), (200, 0), (200, 100), (0, 100)], 400, 200), [[0, 0], [0.5, 0], [0.5, 0.5], [0, 0.5]])
+        self.assertEqual(viewer_module.normalized([(-5, 0), (500, 0), (500, 300)], 400, 200), [[0, 0], [1, 0], [1, 1]], 'clamped to the picture')
+        self.assertIsNone(viewer_module.normalized([(10, 10), (20, 20), (30, 30)], 400, 200), 'a line encloses nothing')
+        self.assertIsNone(viewer_module.normalized([(10, 10), (20, 20)], 400, 200))
+
+    def test_freehand_keeps_points_a_step_apart(self):
+        points = [(x * 0.5, 0) for x in range(41)]
+        self.assertEqual(viewer_module.simplified(points, 5), [(0, 0), (5.0, 0), (10.0, 0), (15.0, 0), (20.0, 0)])
+
+
 class PanelCanvasReference(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.mkdtemp(prefix='ui-canvas-reference-')
         self.picture = os.path.join(self.folder, 'compare.png')
         image = QImage(408, 150, QImage.Format.Format_RGB32); image.fill(QColor(90, 110, 160)); image.save(self.picture)
+        # The viewer's pictures: the reference (400 x 300), the canvas view it was made from, the found area (a mask).
+        self.paths = {name: os.path.join(self.folder, name + '.png') for name in ('reference', 'canvas', 'mask')}
+        for name, size, color in (('reference', (400, 300), QColor(200, 120, 60)), ('canvas', (200, 150), QColor(60, 90, 200)), ('mask', (100, 75), QColor(0, 0, 0))):
+            picture = QImage(*size, QImage.Format.Format_RGB32); picture.fill(color); picture.save(self.paths[name])
         self.commands = []; self.now = [1000.0]
         self.panel = module.CreativeAgentDocker(); self.panel.resize(320, 900); self.panel.show()
         self.panel.process = types.SimpleNamespace(state=lambda: QProcess.ProcessState.Running,
@@ -120,6 +144,58 @@ class PanelCanvasReference(unittest.TestCase):
     def test_a_wide_change_is_warned_about(self):
         self.card(message=MESSAGE.split('\n\n')[0] + '\n\nThe model changed a lot (72% of the canvas): try a narrower instruction, or name an area (… in the sky).', wide=True)
         self.assertTrue(any('changed a lot' in t for t in self.texts()))
+
+    def viewer_card(self):
+        buttons = self.card(reference_path=self.paths['reference'], canvas_path=self.paths['canvas'], mask_path=self.paths['mask'], mask_size=[100, 75])
+        picture = [l for l in self.panel.findChildren(QLabel) if l.objectName() == 'questionImage' and l.isVisible()][-1]
+        QTest.mouseClick(picture, Qt.MouseButton.LeftButton); app.processEvents()
+        viewer = self.panel.reference_viewer
+        self.assertTrue(viewer.isVisible() and viewer.isWindow(), 'clicking the picture opens its own window')
+        return buttons, viewer
+
+    def test_the_viewer_zooms_pans_and_shows_the_canvas_before(self):
+        _buttons, viewer = self.viewer_card()
+        self.assertEqual([b.text() for b in viewer.answer_buttons], OPTIONS, "the card's answers")
+        viewer.view.set_zoom(1.0); self.assertAlmostEqual(viewer.view.zoom(), 1.0); self.assertEqual(viewer.zoom_label.text(), '100%')
+        viewer.zoom_box.activated.emit(3); self.assertAlmostEqual(viewer.view.zoom(), 2.0, msg='the 200% item')
+        QTest.mouseClick(viewer.view.viewport(), Qt.MouseButton.LeftButton)            # a click in Move marks nothing
+        self.assertIsNone(viewer.mark)
+        viewer.view.wheelEvent(types.SimpleNamespace(angleDelta=lambda: QPoint(0, 240)))
+        self.assertAlmostEqual(viewer.view.zoom(), 2.0 * viewer_module.WHEEL_STEP ** 2, places=3)
+        self.assertFalse(viewer.view.canvas.isVisible())
+        QTest.keyPress(viewer, Qt.Key.Key_Space); self.assertTrue(viewer.view.canvas.isVisible(), 'hold Space: the canvas as it was')
+        QTest.keyRelease(viewer, Qt.Key.Key_Space); self.assertFalse(viewer.view.canvas.isVisible())
+        viewer.before.click(); self.assertTrue(viewer.view.canvas.isVisible(), 'or the toggle')
+        self.assertTrue(viewer.view.area.isVisible()); viewer.show_found.click(); self.assertFalse(viewer.view.area.isVisible())
+        self.assertEqual(self.commands, [], 'looking sends nothing')
+
+    def test_a_marked_box_goes_with_use_and_closes_the_card(self):
+        buttons, viewer = self.viewer_card()
+        viewer.view.set_zoom(1.0); viewer.view.centerOn(200, 150); app.processEvents()
+        viewer.tool_buttons['box'].click()
+        start = viewer.view.mapFromScene(100, 75); end = viewer.view.mapFromScene(300, 225)
+        QTest.mousePress(viewer.view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, start)
+        QTest.mouseMove(viewer.view.viewport(), end)
+        QTest.mouseRelease(viewer.view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, end)
+        self.assertEqual(len(viewer.mark), 4)
+        for (x, y), (ex, ey) in zip(viewer.mark, [(0.25, 0.25), (0.75, 0.25), (0.75, 0.75), (0.25, 0.75)]):
+            self.assertAlmostEqual(x, ex, delta=0.01); self.assertAlmostEqual(y, ey, delta=0.01)
+        self.assertTrue(viewer.clear.isEnabled())
+        viewer.answer_buttons[0].click(); app.processEvents()
+        sent = [c for c in self.commands if c['type'] == 'canvas_reference']
+        self.assertEqual(len(sent), 1); self.assertEqual(sent[0]['action'], 'use'); self.assertEqual(sent[0]['area'], viewer.mark)
+        self.assertFalse(viewer.isVisible(), 'the window closes')
+        self.assertTrue(all(not b.isEnabled() for b in buttons), "the card's buttons close too")
+        self.panel.open_reference_viewer({}, None, buttons)
+        self.assertIn('already answered', self.panel.status.text())
+
+    def test_describe_edits_sends_try_again_with_the_words_and_clear_drops_the_mark(self):
+        _buttons, viewer = self.viewer_card()
+        viewer.set_mark([(0, 0), (200, 0), (200, 150)]); self.assertIsNotNone(viewer.mark)
+        viewer.clear.click(); self.assertIsNone(viewer.mark)
+        viewer.describe.setText('  make the general older  '); QTest.keyClick(viewer.describe, Qt.Key.Key_Return); app.processEvents()
+        self.assertEqual([c for c in self.commands if c['type'] == 'canvas_reference'],
+                         [{'type': 'canvas_reference', 'id': 'r1', 'action': 'retry', 'text': 'make the general older'}])
 
     def test_no_change_offers_only_try_again_and_discard(self):
         buttons = self.card(options=['Try again', 'Discard'], actions=['retry', 'discard'])

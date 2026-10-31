@@ -25,6 +25,7 @@ except ImportError:                                       # command_queue is not
 from .protection import ProtectionCraft
 from .feature_guard import FeatureCraft
 from .paint_only_panel import PaintOnlyBar
+from .canvas_reference_viewer import PictureButton, ReferenceViewer
 from .folder_study_panel import FolderStudyCard
 from .reference_parts import part_image, crop_image, opaque_bounds
 from .qt_compat import Qt, QProcess, QProcessEnvironment, QUrl, QTimer, pyqtSignal, QEvent, QSize, QRectF, scoped, QCoreApplication, QStandardPaths
@@ -2621,14 +2622,15 @@ class CreativeAgentDocker(DockWidget):
                  'cancelled': 'is %.1fx smaller than the canvas: sharpening was stopped.'}.get(state.get('state'))
         return ('The goal image ' + words % factor) if words and factor else ''
 
-    def choice_card(self, title, text, choices, answer, image_path=None, notes=()):
-        """A card in the chat with a picture (optional), notes always shown under it, and one button per (label, value):
-        answered once, then disabled."""
+    def choice_card(self, title, text, choices, answer, image_path=None, notes=(), on_picture=None):
+        """A card in the chat with a picture (optional; clickable when `on_picture` is given), notes always shown under it,
+        and one button per (label, value): answered once, then disabled."""
         self.flush_stream(); self.reply_open = False; self.empty_state.hide()
         item = self.transcript.add_message(title, text, True)
         pixmap = QPixmap(image_path) if image_path else QPixmap()
         if not pixmap.isNull():
-            picture = QLabel(); picture.setObjectName('questionImage')
+            picture = PictureButton() if on_picture else QLabel(); picture.setObjectName('questionImage')
+            if on_picture: picture.clicked.connect(on_picture)
             picture.setPixmap(pixmap.scaled(QSize(400, 300), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
             item['layout'].addWidget(picture)
         for note in notes:
@@ -2642,6 +2644,18 @@ class CreativeAgentDocker(DockWidget):
             button.clicked.connect(lambda _checked=False, chosen=value: ([b.setEnabled(False) for b in buttons], self.auto_approve.cancel(), answer(chosen)))
             item['layout'].addWidget(button); buttons.append(button)
         return buttons
+
+    def open_reference_viewer(self, event, answer, buttons):
+        """The canvas reference up close; an answer there answers the card (its buttons close too)."""
+        if not buttons or not any(b.isEnabled() for b in buttons):
+            self.status.setText('That canvas reference is already answered.'); return
+        if getattr(self, 'reference_viewer', None) is not None: self.reference_viewer.close()
+
+        def answered(action, extra):
+            for button in buttons: button.setEnabled(False)
+            self.auto_approve.cancel(); answer(action, extra)
+        self.reference_viewer = ReferenceViewer(event, answered)
+        self.reference_viewer.show(); self.reference_viewer.raise_(); self.reference_viewer.activateWindow()
 
     def show_sharpen_progress(self, event):
         """The Now card's sharpening row: shown while it runs, hidden when it ends."""
@@ -3435,11 +3449,15 @@ class CreativeAgentDocker(DockWidget):
         elif kind == 'canvas_reference':
             # Canvas reference (canvas-reference.ts): the canvas and the reference side by side. Never offered to
             # Auto-approve (auto_approve.NEVER): what the painting becomes is the artist's choice.
+            # Clicking the picture opens the viewer (canvas_reference_viewer.py): zoom, Before / after, a mark and Describe
+            # edits, answered with the same message plus `area` and `text`.
             reference_id = event['id']; paragraphs = (event.get('message') or '').split('\n\n')
             choices = list(zip(event.get('options') or [], event.get('actions') or []))
-            self.canvas_reference_controls = self.choice_card(event.get('title') or 'Canvas edit reference', paragraphs[0], choices,
-                                                              lambda value, reference_id=reference_id: self.send({'type': 'canvas_reference', 'id': reference_id, 'action': value}),
-                                                              event.get('image_path'), notes=paragraphs[1:])
+            def answer(value, extra=None, reference_id=reference_id):
+                self.send(dict({'type': 'canvas_reference', 'id': reference_id, 'action': value}, **(extra or {})))
+            buttons = self.choice_card(event.get('title') or 'Canvas edit reference', paragraphs[0], choices, answer,
+                                       event.get('image_path'), notes=paragraphs[1:], on_picture=lambda: self.open_reference_viewer(event, answer, buttons))
+            self.canvas_reference_controls = buttons
         elif kind == 'effect_build':
             self.show_effect_build(event)
         elif kind == 'shapes_model_ready':
