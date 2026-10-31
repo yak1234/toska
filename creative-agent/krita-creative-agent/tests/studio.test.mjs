@@ -1913,6 +1913,8 @@ test('a Subject Agent move works the subject through several batches, then one c
   const [move]=h.runtime.goal.moves;
   assert.deepEqual([move.number,move.status,move.calls,move.actions,move.title],[1,'ready',3,3,'Kremlin: red walls, five towers with green spires, lit windows']);
   assert.equal(h.events.filter(e=>e.type==='move').length,1,'one card for the subject');
+  // The chat's last word on the move (the artist, 2026-10-31: it ended on "one more pass…" while the status said finished).
+  assert.ok(h.events.some(e=>e.type==='action' && e.message==='Move 1 finished: Kremlin: red walls, five towers with green spires, lit windows. Keep continues your request with another move.'));
   assert.ok(h.events.some(e=>e.type==='status' && /Move 1 · Kremlin block-in · 2 batches/.test(e.message ?? '')),'progress shows while it works');
   await h.runtime.moveAction({action:'undo',move:1});
   assert.equal(h.calls.find(c=>c.operation==='review_pass').params.pass_id,'stage:move-1','one Undo removes the whole subject');
@@ -1937,6 +1939,7 @@ test('Keep after a move that finished the whole request ends it instead of askin
   await h.runtime.prompt('Paint the Rothko.');
   const [move]=h.runtime.goal.moves;
   assert.equal(move.request_done,true);
+  assert.ok(h.events.some(e=>e.type==='action' && e.message==='Move 1 finished: Rothko: yellow over red-orange on an orange ground. That completes your request.'));
   await h.runtime.moveAction({action:'keep',move:1});
   assert.equal(painterCalls,2,'no further move was asked for');
   assert.equal(h.runtime.goal.moves.length,1); assert.equal(h.runtime.goal.moves[0].status,'kept');

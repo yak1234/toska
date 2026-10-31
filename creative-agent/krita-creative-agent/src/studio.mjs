@@ -4271,6 +4271,11 @@ export class StudioRuntime extends PaintingRuntime {
           : (move.underpainting?.closed ? `Move ${move.number} underpainted the whole picture and ended with the transfer: keep it, undo it, or type a correction.`
           : move.limited ? `Move ${move.number} reached its size limit: keep it, undo it, or say continue to finish it.`
           : `Move ${move.number} painted: keep it, undo it, or type a correction.`)+(move.review_line ? ' '+move.review_line+'.' : '')+(move.likeness_line ? ' '+move.likeness_line+'.' : ''))+askNext);
+      // The chat's last word on a finished move (the artist, 2026-10-31: the chat ended on "one more pass…" while the status
+      // said the request was finished): what it painted, and whether Keep ends the request or continues it.
+      if (move.status === 'ready' && move.finished && !guidesOnly && move.title && !this.runError && !this.cancelRequested)
+        this.emit({type:'action', seconds:0, message:`Move ${move.number} finished: ${move.title.replace(/[.\s]+$/, '')}. `
+          + (move.request_done ? 'That completes your request.' : 'Keep continues your request with another move.')});
       // Was the effect it painted met? Judged after the move, off its path: the next move never waits for it.
       const watch = this.effectWatch;
       if (watch?.move === move) {

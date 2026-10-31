@@ -64,6 +64,11 @@ export const MASK_RULES = Object.freeze({
   /** The area grows by this share of the long side. */
   dilate: 0.01,
 });
+/** The subject check (the artist, 2026-10-31: "Caesar facial paint is too saturated" found a band across the top of the
+ * picture, where the image model had drifted, and the move painted there). With no part and no mark, what the instruction
+ * is about is found on the canvas (Find it); a found change with less than `inside` of it there is off the subject, and the
+ * card says so. A subject over `widest` of the canvas (the whole painting) checks nothing. */
+export const SUBJECT_RULES = Object.freeze({ inside: 0.2, widest: 0.6, name: 60 });
 const MIN_DILATE = 3;
 const REFERENCE_SIDE = 2560;
 const FOLDER = 'canvas-reference';
@@ -345,6 +350,8 @@ export type CanvasReferenceRecord = {
   area?: Mark | null;
   /** Earlier instructions this one edits (Describe edits), oldest first. */
   edits?: string[];
+  /** The found change lies outside what the instruction is about (SUBJECT_RULES): the card asks for a mark. */
+  off_subject?: boolean;
 };
 /** A used canvas reference as the likeness target of the moves painting toward it (the artist, 2026-10-25: an edit is not
  * measured against the goal): the reference over the whole canvas. Outside its area it is the canvas, and Krita blocks
@@ -403,6 +410,31 @@ async function partWithin(found: FoundPart, [w, h]: [number, number], [cw, ch]: 
   return out;
 }
 
+/** What an instruction is about, as Find it's name: the words, at most SUBJECT_RULES.name characters, cut at a word. */
+export function subjectOf(instruction: string): string {
+  const said = instruction.trim().replace(/\s+/g, ' ').replace(/[.?!]+$/, '');
+  if (said.length <= SUBJECT_RULES.name) return said;
+  const cut = said.slice(0, SUBJECT_RULES.name + 1), space = cut.lastIndexOf(' ');
+  return (space > 0 ? cut.slice(0, space) : cut.slice(0, SUBJECT_RULES.name)).trim();
+}
+/** Where a rectangle (canvas pixels) lies, in words: "a band across the top of the picture", "the lower left". */
+export function placeOf([x, y, w, h]: Rect, [cw, ch]: [number, number]): string {
+  const third = (at: number, size: number) => at < size / 3 ? 0 : at < 2 * size / 3 ? 1 : 2;
+  const v = ['top', 'middle', 'bottom'][third(y + h / 2, ch)]!, side = ['left', 'centre', 'right'][third(x + w / 2, cw)]!;
+  const wide = w > 0.6 * cw, tall = h > 0.6 * ch;
+  if (wide && tall) return 'over most of the picture';
+  if (wide) return `in a band across the ${v} of the picture`;
+  if (tall) return `in a strip down the ${side === 'centre' ? 'middle' : side} of the picture`;
+  if (v === 'middle' && side === 'centre') return 'in the centre of the picture';
+  return `in the ${v === 'top' ? 'upper' : v === 'bottom' ? 'lower' : 'middle'} ${side === 'centre' ? 'middle' : side} of the picture`;
+}
+/** The share of a mask's pixels (>= 128) that lie inside a plane of the same size. */
+function shareInside(mask: Uint8Array, plane: Uint8Array): number {
+  let all = 0, inside = 0;
+  for (let p = 0; p < mask.length; p++) if (mask[p]! >= 128) { all++; if (plane[p]! >= 128) inside++; }
+  return all ? inside / all : 1;
+}
+
 export function canvasReferencer(host: CanvasReferenceHost) {
   const say = (message: string) => host.emit({ type: 'action', seconds: 0, message });
   const records = (): Record<string, CanvasReferenceRecord> => {
@@ -429,6 +461,8 @@ export function canvasReferencer(host: CanvasReferenceHost) {
       reference_path: record.reference_path, canvas_path: record.canvas_path, mask_path: record.mask_path, mask_size: record.mask_size,
       fine: record.fine ?? false, area: record.area ?? null, edits: record.edits ?? [] });
   };
+  // The panel's card closes however it was answered (a button, the viewer, or a typed answer), and says how.
+  const closed = (record: CanvasReferenceRecord) => host.emit({ type: 'canvas_reference_closed', id: record.id, state: record.state });
   const drop = async (record: CanvasReferenceRecord) => {
     if (host.study) await rm(join(host.study.directory, FOLDER, record.id), { recursive: true, force: true });
   };
@@ -454,6 +488,8 @@ export function canvasReferencer(host: CanvasReferenceHost) {
       else notes.push(`${part[0]!.toUpperCase() + part.slice(1)} was not found, so the whole canvas is compared.`);
     }
     if (area) { const marked = markPlane(area, w, h); within = within ? within.map((v, p) => v >= 128 && marked[p]! ? 255 : 0) : marked; }
+    // With no part and no mark, what the instruction is about is found while the picture is made (SUBJECT_RULES).
+    const subject = !part && !area && host.findArea ? host.findArea(subjectOf(instruction)).catch(() => null) : null;
     // Describe edits sends the last reference and the new words; Try again sends the canvas and every instruction so far.
     const said = from ? instruction : [...edits, instruction].join('; then ');
     const made = await host.generate({ prompt: editPrompt(said, part), input: { data: from ?? view, mimeType: 'image/png' }, aspect: aspectOf(seen.width, seen.height) });
@@ -469,9 +505,20 @@ export function canvasReferencer(host: CanvasReferenceHost) {
     await writeFile(files.compare, encodeRgb(compareImage(small, other, mask)));
     await writeFile(files.mask, encodePlane(mask));
     const bounds = mask.bounds ? canvasMask(mask, canvas).bounds : null;
+    const found = await subject;
+    let offSubject = false;
+    if (found && bounds) {
+      const plane = await partWithin(found, [w, h], canvas).catch(() => null);
+      const covers = plane ? plane.reduce((n, v) => n + (v >= 128 ? 1 : 0), 0) / plane.length : 1;
+      if (plane && covers > 0 && covers <= SUBJECT_RULES.widest && shareInside(mask.data, plane) < SUBJECT_RULES.inside) {
+        offSubject = true;
+        notes.push(`The change I found is ${placeOf(bounds, canvas)}, not where “${subjectOf(instruction)}” is. `
+          + 'Click the picture and mark the area to change before you use it, or use it anyway.');
+      }
+    }
     const record: CanvasReferenceRecord = { id, instruction, part, ...(step_key ? { step_key } : {}), state: 'ready', reference_path: files.reference, reference_size: size,
       compare_path: files.compare, mask_path: files.mask, mask_size: [w, h], canvas, share: mask.share, bounds, wide: mask.share > WIDE_SHARE, model: made.model,
-      made_at: new Date().toISOString(), canvas_path: files.canvas, fine: mask.fine ?? false, area, ...(edits.length ? { edits } : {}) };
+      made_at: new Date().toISOString(), canvas_path: files.canvas, fine: mask.fine ?? false, area, ...(edits.length ? { edits } : {}), ...(offSubject ? { off_subject: true } : {}) };
     records()[id] = record;
     if (!goal.canvas_reference_notice) { notes.push(NOTICE[host.backend()] ?? NOTICE.codex); goal.canvas_reference_notice = true; }
     await host.persist(); host.publish();
@@ -487,12 +534,12 @@ export function canvasReferencer(host: CanvasReferenceHost) {
     const words = typeof text === 'string' ? text.trim() : '';
     if (action === 'discard') {
       record.state = 'discarded'; await drop(record);
-      await host.persist(); host.publish(); say('Discarded the canvas reference.');
+      await host.persist(); host.publish(); closed(record); say('Discarded the canvas reference.');
       await host.discarded?.(record);
     } else if (action === 'retry') {
       const kept = mark ?? record.area ?? null, step = record.step_key ? { step_key: record.step_key } : {};
       const from = words ? await readFile(record.reference_path) : undefined;      // read before the folder goes
-      record.state = 'replaced'; await drop(record); await host.persist();
+      record.state = 'replaced'; await drop(record); await host.persist(); closed(record);
       if (words) await start({ instruction: words, part: null, area: kept, edits: [...(record.edits ?? []), record.instruction], from, ...step });
       else await start({ instruction: record.instruction, part: record.part, area: kept, edits: record.edits ?? [], ...step });
     } else if (action === 'use' || (action === 'goal' && host.makeGoal)) {
@@ -517,7 +564,7 @@ export function canvasReferencer(host: CanvasReferenceHost) {
         try { await host.makeGoal!(record, { bounds: area.bounds, plane: area.plane }); record.goal = true; }
         catch (error) { say(`${(error as Error).message} The reference is the target for this move only.`); }
       }
-      record.state = 'used'; await host.persist(); host.publish();
+      record.state = 'used'; await host.persist(); host.publish(); closed(record);
       await host.use(record, { mask_path: file, bounds: area.bounds, canvas: record.canvas, share: area.share });
     } else throw new Error('A canvas reference is used, made the new goal, tried again or discarded.');
   }

@@ -199,7 +199,7 @@ class ReferenceViewer(QWidget):
     def __init__(self, event, answer, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
         self.setObjectName('referenceViewer'); self.setWindowTitle(event.get('title') or 'Canvas edit reference')
-        self.answer = answer; self.answered = False; self.mark = None; self.before_held = False
+        self.answer = answer; self.answered = False; self.mark = None; self.before_held = False; self.reference_id = event.get('id')
         reference = QPixmap(event.get('reference_path') or event.get('image_path') or '')
         self.view = ReferenceView(reference, QPixmap(event.get('canvas_path') or ''), area_pixmap(event.get('mask_path')))
         self.view.zoomed.connect(self.show_zoom); self.view.marked.connect(self.set_mark)

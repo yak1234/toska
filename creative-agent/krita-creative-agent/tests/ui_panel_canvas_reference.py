@@ -189,6 +189,31 @@ class PanelCanvasReference(unittest.TestCase):
         self.panel.open_reference_viewer({}, None, buttons)
         self.assertIn('already answered', self.panel.status.text())
 
+    def test_a_card_closed_by_the_companion_says_how_and_its_picture_points_to_the_newer_one(self):
+        # The artist, 2026-10-31: a typed edit replaced the card, its buttons stayed live, and clicking its picture said only
+        # "already answered". The companion now closes it whatever answered it, and the card says how.
+        buttons = self.card(id='old', reference_path=self.paths['reference'], canvas_path=self.paths['canvas'])
+        self.assertTrue(all(b.isEnabled() for b in buttons))
+        self.panel.handle_event({'type': 'canvas_reference_closed', 'id': 'old', 'state': 'replaced'}); app.processEvents()
+        self.assertTrue(all(not b.isEnabled() for b in buttons), 'a typed edit closes the card too')
+        self.assertIn('Replaced by your edit: the newer reference is below.', self.texts())
+        newer = self.card(id='new')
+        picture = [l for l in self.panel.findChildren(QLabel) if l.objectName() == 'questionImage' and l.isVisible()][0]
+        QTest.mouseClick(picture, Qt.MouseButton.LeftButton); app.processEvents()
+        self.assertEqual(self.panel.status.text(), 'This reference was replaced by your edit: answer the newest one below.')
+        self.assertIsNone(getattr(self.panel, 'reference_viewer', None), 'no viewer for a closed card')
+        self.panel.handle_event({'type': 'canvas_reference_closed', 'id': 'old', 'state': 'used'}); app.processEvents()
+        self.assertEqual(self.texts().count('Replaced by your edit: the newer reference is below.'), 1, 'closed once')
+        self.assertTrue(all(b.isEnabled() for b in newer), 'the newer card waits')
+        self.panel.handle_event({'type': 'canvas_reference_closed', 'id': 'new', 'state': 'used'}); app.processEvents()
+        self.assertIn('Used: a move paints toward this reference.', self.texts())
+
+    def test_an_open_viewer_closes_with_its_card(self):
+        _buttons, viewer = self.viewer_card()
+        self.panel.handle_event({'type': 'canvas_reference_closed', 'id': 'r1', 'state': 'discarded'}); app.processEvents()
+        self.assertFalse(viewer.isVisible())
+        self.assertEqual([c for c in self.commands if c['type'] == 'canvas_reference'], [], 'closing it sends nothing')
+
     def test_describe_edits_sends_try_again_with_the_words_and_clear_drops_the_mark(self):
         _buttons, viewer = self.viewer_card()
         viewer.set_mark([(0, 0), (200, 0), (200, 150)]); self.assertIsNotNone(viewer.mark)

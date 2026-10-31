@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canvasReferenceRequest, typedAnswer, editPrompt, differenceMask, canvasMask, compareImage, canvasReferencer, referenceMoveNote, referencePlacement,
-  CANVAS_REFERENCE_OPTIONS, WIDE_SHARE, MASK_RULES } from '../src/canvas-reference.ts';
+  CANVAS_REFERENCE_OPTIONS, WIDE_SHARE, MASK_RULES, SUBJECT_RULES, subjectOf, placeOf } from '../src/canvas-reference.ts';
 import { decodeRgba } from '../src/png-rgba.ts';
 import { decodePlane, encodeRgba } from '../src/shapes/png.ts';
 
@@ -451,4 +451,83 @@ test('a typed answer while the card waits (the artist typed "yes go ahead", 2026
   for (const no of ['no', 'discard', 'cancel it', 'nope', 'never mind', 'discard it please']) assert.equal(typedAnswer(no), 'discard', no);
   for (const edit of ['make the general older', 'yes but make the general older', 'no, the general should have a beard', 'more snow', 'go ahead and add a flag'])
     assert.equal(typedAnswer(edit), 'edit', edit);
+});
+
+test('what an instruction is about, and where a rectangle lies, in words', () => {
+  assert.equal(subjectOf('  Caesar facial paint is too saturated. '), 'Caesar facial paint is too saturated');
+  const long = subjectOf('the face of the old senator on the left, with his laurel wreath, his grey beard and his folded hands');
+  assert.ok(long.length <= SUBJECT_RULES.name && !long.endsWith(' ') && 'the face of the old senator on the left, with his laurel'.startsWith(long), long);
+  assert.equal(placeOf([0, 0, 800, 150], [800, 600]), 'in a band across the top of the picture');
+  assert.equal(placeOf([500, 400, 200, 150], [800, 600]), 'in the lower right of the picture');
+  assert.equal(placeOf([300, 200, 200, 200], [800, 600]), 'in the centre of the picture');
+  assert.equal(placeOf([0, 0, 800, 600], [800, 600]), 'over most of the picture');
+  assert.equal(placeOf([20, 0, 150, 500], [800, 600]), 'in a strip down the left of the picture');
+});
+
+/** A found subject: a rectangle of the 800 x 600 canvas, as Find it's outline (canvas pixels). */
+async function subjectAt(directory, [x, y, w, h]) {
+  const { encodePlane } = await import('../src/shapes/png.ts');
+  const path = join(directory, `subject-${x}-${y}.png`);
+  await writeFile(path, encodePlane({ width: w, height: h, data: new Uint8Array(w * h).fill(255) }));
+  return { mask_path: path, bounds: [x, y, w, h], canvas: [800, 600] };
+}
+
+test('the subject check (the artist, 2026-10-31): a change found away from what the instruction is about says so on the card', async () => {
+  // The change is at [400, 160, 160, 120] of the canvas (the view's [100, 40, 40, 30] at 4x).
+  const { host, directory, close } = await fakeHost();
+  try {
+    host.goal.limits.ai_images = 10;
+    const asked = [];
+    const face = await subjectAt(directory, [40, 380, 200, 180]);
+    host.findArea = async part => { asked.push(part); return face; };
+    const referencer = canvasReferencer(host);
+    await referencer.start({ instruction: 'Caesar facial paint is too saturated', part: null });
+    assert.deepEqual(asked, ['Caesar facial paint is too saturated'], 'what the instruction is about, found once');
+    const card = cards(host)[0];
+    assert.match(card.message, /The change I found is in the centre of the picture, not where “Caesar facial paint is too saturated” is/);
+    assert.match(card.message, /mark the area to change before you use it, or use it anyway/);
+    assert.equal(host.goal.canvas_references[card.id].off_subject, true);
+    await referencer.answer({ id: card.id, action: 'use' });
+    assert.equal(host.used.length, 1, 'using it anyway still paints');
+
+    const around = await subjectAt(directory, [360, 120, 260, 220]);       // the subject holds the change: no note
+    host.findArea = async () => around;
+    await referencer.start({ instruction: 'more snow on the tower', part: null });
+    assert.doesNotMatch(cards(host)[1].message, /The change I found is/);
+    assert.equal(host.goal.canvas_references[cards(host)[1].id].off_subject, undefined);
+
+    host.findArea = async () => null;                                       // not found: nothing is said
+    await referencer.start({ instruction: 'make it warmer', part: null });
+    assert.doesNotMatch(cards(host)[2].message, /The change I found is/);
+
+    const whole = await subjectAt(directory, [0, 0, 800, 600]);            // the whole painting checks nothing
+    host.findArea = async () => whole;
+    await referencer.start({ instruction: 'the painting', part: null });
+    assert.doesNotMatch(cards(host)[3].message, /The change I found is/);
+
+    asked.length = 0; host.findArea = async part => { asked.push(part); return face; };
+    await referencer.start({ instruction: 'more snow', part: 'the sky' });   // a named part is the area: no subject check
+    assert.deepEqual(asked, ['the sky']);
+    await referencer.start({ instruction: 'more snow', part: null, area: [[0.4, 0.2], [0.8, 0.2], [0.8, 0.6], [0.4, 0.6]] });
+    assert.deepEqual(asked, ['the sky'], 'a mark is the area: no subject check');
+  } finally { await close(); }
+});
+
+test('the panel is told when a card closes, however it was answered: used, discarded, or replaced by an edit', async () => {
+  const { host, close } = await fakeHost();
+  try {
+    const referencer = canvasReferencer(host);
+    const closedOf = () => host.events.filter(e => e.type === 'canvas_reference_closed').map(e => [e.id, e.state]);
+    await referencer.start({ instruction: 'add more ghosts', part: null });
+    const first = cards(host)[0].id;
+    await referencer.answer({ id: first, action: 'retry', text: 'fewer ghosts' });
+    const second = cards(host)[1].id;
+    await referencer.answer({ id: second, action: 'discard' });
+    await referencer.start({ instruction: 'add more ghosts', part: null });
+    const third = cards(host)[2].id;
+    await referencer.answer({ id: third, action: 'use' });
+    assert.deepEqual(closedOf(), [[first, 'replaced'], [second, 'discarded'], [third, 'used']]);
+    const replacedAt = host.events.findIndex(e => e.type === 'canvas_reference_closed' && e.id === first);
+    assert.ok(replacedAt < host.events.findIndex(e => e.type === 'canvas_reference' && e.id === second), 'the old card closes before the new one arrives');
+  } finally { await close(); }
 });

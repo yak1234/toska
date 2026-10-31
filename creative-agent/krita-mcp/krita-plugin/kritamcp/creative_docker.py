@@ -1378,7 +1378,7 @@ class CreativeAgentDocker(DockWidget):
         self.sharpen_bar = QProgressBar(); self.sharpen_bar.setRange(0, 1000); self.sharpen_bar.setTextVisible(False); self.sharpen_bar.setFixedHeight(6)
         self.sharpen_bar.setAccessibleName('Sharpening progress'); sharpen_layout.addWidget(self.sharpen_bar)
         self.sharpen_row.hide(); self.plan_steps.now_layout.addWidget(self.sharpen_row)
-        self.sharpen_controls = []; self.canvas_reference_controls = []; self.effect_build_controls = []; self.effect_build_cards = []
+        self.sharpen_controls = []; self.canvas_reference_controls = []; self.effect_build_controls = []; self.effect_build_cards = []; self.reference_cards = {}
         top_area = QVBoxLayout(); top_area.setContentsMargins(0, 0, 0, 0); top_area.setSpacing(6); layout.addLayout(top_area)
         self.tabs = QTabWidget(); self.tabs.setObjectName('panelTabs'); self.tabs.setDocumentMode(True); self.tabs.setUsesScrollButtons(False)
         self.tabs.tabBar().setDrawBase(False); self.tabs.tabBar().setExpanding(False)
@@ -2626,7 +2626,7 @@ class CreativeAgentDocker(DockWidget):
         """A card in the chat with a picture (optional; clickable when `on_picture` is given), notes always shown under it,
         and one button per (label, value): answered once, then disabled."""
         self.flush_stream(); self.reply_open = False; self.empty_state.hide()
-        item = self.transcript.add_message(title, text, True)
+        item = self.transcript.add_message(title, text, True); self.last_card_layout = item['layout']
         pixmap = QPixmap(image_path) if image_path else QPixmap()
         if not pixmap.isNull():
             picture = PictureButton() if on_picture else QLabel(); picture.setObjectName('questionImage')
@@ -2645,10 +2645,35 @@ class CreativeAgentDocker(DockWidget):
             item['layout'].addWidget(button); buttons.append(button)
         return buttons
 
+    # A closed canvas reference card: the note under it, and what clicking its picture says (the artist, 2026-10-31: a card
+    # an edit had replaced said only "already answered", and the edit looked broken).
+    REFERENCE_CLOSED = {
+        'replaced': ('Replaced by your edit: the newer reference is below.', 'This reference was replaced by your edit: answer the newest one below.'),
+        'used': ('Used: a move paints toward this reference.', 'This canvas reference was used: a move paints toward it.'),
+        'discarded': ('Discarded.', 'This canvas reference was discarded.'),
+    }
+
+    def close_reference_card(self, event):
+        """The companion closed a canvas reference (used, discarded, or replaced by an edit), however it was answered: its
+        buttons go off, a note says how, and its viewer closes."""
+        card = self.reference_cards.get(event.get('id'))
+        state = event.get('state')
+        if not card or card['state'] or state not in self.REFERENCE_CLOSED: return
+        card['state'] = state
+        for button in card['buttons']: button.setEnabled(False)
+        line = QLabel(self.REFERENCE_CLOSED[state][0]); line.setObjectName('muted'); line.setWordWrap(True)
+        line.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred); card['layout'].addWidget(line)
+        viewer = getattr(self, 'reference_viewer', None)
+        if viewer is not None and getattr(viewer, 'reference_id', None) == event.get('id') and not viewer.answered:
+            viewer.answered = True; viewer.close()
+
     def open_reference_viewer(self, event, answer, buttons):
         """The canvas reference up close; an answer there answers the card (its buttons close too)."""
         if not buttons or not any(b.isEnabled() for b in buttons):
-            self.status.setText('That canvas reference is already answered.'); return
+            state = (self.reference_cards.get(event.get('id')) or {}).get('state')
+            self.status.setText(self.REFERENCE_CLOSED[state][1] if state in self.REFERENCE_CLOSED else 'That canvas reference is already answered.')
+            if state == 'replaced': self.transcript.jump_to_latest()
+            return
         if getattr(self, 'reference_viewer', None) is not None: self.reference_viewer.close()
 
         def answered(action, extra):
@@ -2906,7 +2931,7 @@ class CreativeAgentDocker(DockWidget):
         self.tabs.setCurrentIndex(self.chat_tab)
         self.auto_approve.forget()
         self.goal = None; self.plan_bar.hide(); self.move_bar.hide(); self.current_move = None; self.question_id = None; self.question_controls = []; self.closeup_question_id = None; self.closeup_controls = []
-        self.sharpen_controls = []; self.canvas_reference_controls = []; self.effect_build_controls = []; self.effect_build_cards = []
+        self.sharpen_controls = []; self.canvas_reference_controls = []; self.effect_build_controls = []; self.effect_build_cards = []; self.reference_cards = {}
         self.sharpen_row.hide(); self.plan_steps.set_side_task(False)
         self.pending_references = []; self.attached_references = []; self.show_references()
         self.paint_only.chat_ended()
@@ -3458,6 +3483,9 @@ class CreativeAgentDocker(DockWidget):
             buttons = self.choice_card(event.get('title') or 'Canvas edit reference', paragraphs[0], choices, answer,
                                        event.get('image_path'), notes=paragraphs[1:], on_picture=lambda: self.open_reference_viewer(event, answer, buttons))
             self.canvas_reference_controls = buttons
+            self.reference_cards[reference_id] = {'buttons': buttons, 'layout': self.last_card_layout, 'state': None}
+        elif kind == 'canvas_reference_closed':
+            self.close_reference_card(event)
         elif kind == 'effect_build':
             self.show_effect_build(event)
         elif kind == 'shapes_model_ready':
