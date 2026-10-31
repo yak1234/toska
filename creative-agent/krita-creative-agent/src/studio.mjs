@@ -76,7 +76,7 @@ import { piReader, studyModelRoute, STUDY_MODEL } from './folder-study.ts';
 import { withholdImages, sentImage } from './folder-study-chat.ts';
 import { constants as fsConstants, realpathSync } from 'node:fs';
 import { open as openFile } from 'node:fs/promises';
-import { canvasReferencer, canvasReferenceRequest, referenceMoveNote, referencePlacement } from './canvas-reference.ts';
+import { canvasReferencer, canvasReferenceRequest, referenceMoveNote, referencePlacement, typedAnswer } from './canvas-reference.ts';
 import { assertAiImageAllowed, assetBackend, attachAsset, pngFromImage, requestAssetImage } from './assets.mjs';
 import { decodeRgba } from './png-rgba.ts';
 import { blendIntoGoal, adoptEditedGoal, originalGoal, goalView } from './goal-edit.ts';
@@ -320,6 +320,9 @@ function planStepRequest(goal) {
 
 // How long a decision-key lookup may take before the connection state is left as it was (refreshDecisionsConnected).
 const DECISIONS_LOOKUP_MS = 2000;
+/** The status while a canvas reference card waits: a typed answer works too (answerCanvasReferenceTyped). */
+const REFERENCE_WAITING = 'The canvas reference waits for your answer beside the chat. Type yes to use it, or say what to change.';
+
 export class StudioRuntime extends PaintingRuntime {
   constructor(options) {
     super(options);
@@ -376,7 +379,7 @@ export class StudioRuntime extends PaintingRuntime {
       generate: ({prompt, input, aspect}) => requestAssetImage(this, {mode:'edit', prompt, inputs:[input], aspect, fetchImpl:this.imageFetch}),
       decode: data => this.decodeImage(data),
       findArea: part => this.proposeArea(part, {quiet:true}),
-      emit: event => this.emit(event),
+      emit: event => { if (event.type === 'canvas_reference') this.referenceWaiting = event.id; this.emit(event); },   // the card the chat now waits on
       persist: () => this.persist(),
       publish: () => this.publish(),
       busy: () => this.busy,
@@ -462,6 +465,18 @@ export class StudioRuntime extends PaintingRuntime {
     if (held) { await this.prompt(held.text, {...held.command, canvas_reference:record.id, reference_resumed:true}); return; }
     await this.prompt(`Paint the canvas reference: ${record.instruction}${record.part ? ' in ' + record.part : ''}.`,
       {chat_mode:'agent', move_kind:'canvas_reference', canvas_reference:record.id, display_text:('Canvas reference: ' + record.instruction).slice(0, 500)});
+  }
+  /** A typed message answers the waiting canvas reference card: agreeing words use it, refusing words discard it, anything
+   * else edits the reference in those words (Describe edits). The transcript keeps what was typed. */
+  async answerCanvasReferenceTyped(record, text, command) {
+    await this.remember('user', text, command.message_id);
+    const kind = typedAnswer(text);
+    this.referenceWaiting = null;
+    await this.canvasReference.answer({id:record.id, action:kind === 'edit' ? 'retry' : kind, ...(kind === 'edit' ? {text} : {})});
+    if (this.busy) return;
+    const open = this.referenceWaiting && this.goal.canvas_references?.[this.referenceWaiting]?.state === 'ready';
+    if (open) this.setActivity('awaiting_user', REFERENCE_WAITING);
+    else if (kind === 'discard') this.setActivity('idle', 'Ready for your next message.');
   }
   /** The painter's instructions while a canvas reference's area is set (canvas-reference.ts referenceMoveNote), or ''. */
   canvasReferenceNote() {
@@ -3546,6 +3561,14 @@ export class StudioRuntime extends PaintingRuntime {
     // A chat on a signed-out OAuth model (e.g. Codex) says how to sign in again; it keeps its model.
     await this.recheckSignIn(this.study.provider); this.assertConnected(this.study.provider);
     if (command.chat_mode && command.chat_mode !== this.mode) await this.setMode(command.chat_mode);
+    // A typed answer to the canvas reference card the chat waits on (canvas-reference.ts typedAnswer; the artist typed "yes go
+    // ahead", 2026-10-31, and the painter got it without the reference). A panel button or a command ends the wait instead.
+    const waiting = this.referenceWaiting ? this.goal.canvas_references?.[this.referenceWaiting] : null;
+    if (waiting && !this.busy) {
+      const button = ['move_kind', 'start_plan', 'canvas_reference', 'reference_resumed', 'sharpen_resumed'].some(key => command[key]);
+      if (waiting.state === 'ready' && !button && text?.trim() && !text.trim().startsWith('/')) return this.answerCanvasReferenceTyped(waiting, text, command);
+      this.referenceWaiting = null;
+    }
     if (this.goal.pending_plan_edit && !this.busy) {
       if (FOLDER_ANSWERS.includes(text?.trim())) return this.answerPlanEdit(text.trim(), command);
       this.goal.pending_plan_edit = null;                           // another message: the edited PLAN.md is not followed
@@ -3590,7 +3613,7 @@ export class StudioRuntime extends PaintingRuntime {
       const referenceAsk = canvasReferenceRequest(text);
       if (referenceAsk) {
         const made = await this.canvasReference.start(referenceAsk);
-        this.setActivity(made ? 'awaiting_user' : 'idle', made ? 'The canvas reference waits for your answer beside the chat.' : 'Say what the canvas reference should change.');
+        this.setActivity(made ? 'awaiting_user' : 'idle', made ? REFERENCE_WAITING : 'Say what the canvas reference should change.');
         return;
       }
       // "use 05-modern-skyline.png as the goal": the goal picker, typed. It changes the goal and paints nothing.
@@ -3652,7 +3675,7 @@ export class StudioRuntime extends PaintingRuntime {
       const areaRequest = answered?.select_area?.request && answered.options?.includes(text.trim()) ? answered.select_area.request : addAnswer?.request ?? single?.request ?? null;
       const movePrompt = areaRequest ? `${areaRequest}\n\n(The artist answered "${answered.question}": ${text.trim()}.)` : modelText;
       if (this.mode === 'agent' && !moveKind && await this.holdForSharpen(text, command)) return;
-      if (this.mode === 'agent' && !moveKind && await this.holdForCanvasReference(text, command)) { this.setActivity('awaiting_user', 'The canvas reference waits for your answer beside the chat.'); return; }
+      if (this.mode === 'agent' && !moveKind && await this.holdForCanvasReference(text, command)) { this.setActivity('awaiting_user', REFERENCE_WAITING); return; }
       // The move is the artist's held request when a card answered it (its button is no request: review, 2026-10-24).
       const typed = !optionAnswer && !areaRequest && !addAnswer && !/^you decide[.!]*$/i.test(text.trim());
       if (this.mode === 'agent') { await this.runMove(movePrompt, images, {...command, display_text:areaRequest ?? text, typed, ...(moveKind ? {move_kind:moveKind} : {})}); return; }

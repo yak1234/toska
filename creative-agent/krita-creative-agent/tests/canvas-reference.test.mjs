@@ -7,7 +7,7 @@ import { mkdtemp, readFile, rm, writeFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { canvasReferenceRequest, editPrompt, differenceMask, canvasMask, compareImage, canvasReferencer, referenceMoveNote, referencePlacement,
+import { canvasReferenceRequest, typedAnswer, editPrompt, differenceMask, canvasMask, compareImage, canvasReferencer, referenceMoveNote, referencePlacement,
   CANVAS_REFERENCE_OPTIONS, WIDE_SHARE, MASK_RULES } from '../src/canvas-reference.ts';
 import { decodeRgba } from '../src/png-rgba.ts';
 import { decodePlane, encodeRgba } from '../src/shapes/png.ts';
@@ -80,6 +80,22 @@ test('no change but the drift is an empty mask; a whole new picture covers most 
   for (let i = 0; i < inverted.data.length; i += 4) { inverted.data[i] = 255 - inverted.data[i]; inverted.data[i + 1] = 255 - inverted.data[i + 1]; }
   const other = differenceMask(canvas, inverted);
   assert.ok(other.share > WIDE_SHARE, 'a different picture: ' + other.share);
+});
+
+test('a fine change (detail on small figures, below the normal threshold) is found by the fine pass, and says so', () => {
+  // The artist's chat, 2026-10-31: a soldier turned into a decorated general measured ΔE under 12 everywhere, so the area
+  // came out empty and the card had nothing to use. A faint change: the fine pass finds it; a clear change: the normal pass.
+  const canvas = picture(200, 150);
+  const faint = copy(canvas);
+  for (let y = 60; y < 100; y++) for (let x = 120; x < 150; x++) { const i = (y * 200 + x) * 4; faint.data[i] = Math.min(255, faint.data[i] + 18); faint.data[i + 2] = Math.max(0, faint.data[i + 2] - 9); }
+  const normal = differenceMask(canvas, faint, { rules: { ...MASK_RULES, fine: 0 } });
+  assert.equal(normal.bounds, null, 'below the normal threshold');
+  const found = differenceMask(canvas, faint);
+  assert.ok(found.bounds, 'the fine pass finds it'); assert.equal(found.fine, true);
+  assert.ok(inside(found, 135, 80)); assert.ok(!inside(found, 30, 30), 'only the changed part');
+  const clear = differenceMask(canvas, paint(copy(canvas), [100, 40, 40, 30], [250, 250, 250]));
+  assert.equal(clear.fine, false, 'a clear change never needs the fine pass');
+  assert.equal(MASK_RULES.fine, 6);
 });
 
 test('an area ("in the sky") keeps the mask inside it', () => {
@@ -253,12 +269,87 @@ test('while a move paints, Use waits: the card is shown again', async () => {
   } finally { await close(); }
 });
 
-test('no visible change: the card offers only Try again and Discard', async () => {
+test('no visible change: Use is still offered; with no area and no mark it says how to mark one (never a dead end)', async () => {
   const { host, close } = await fakeHost({ changed: [] });
+  try {
+    const referencer = canvasReferencer(host);
+    await referencer.start({ instruction: 'add more ghosts', part: null });
+    const [card] = cards(host);
+    assert.deepEqual(card.options, ['Use as the target', 'Try again', 'Discard']); assert.match(card.message, /no clear change/);
+    assert.match(card.message, /click the picture/i, 'the viewer is how to look closer and mark');
+    await referencer.answer({ id: card.id, action: 'use' });
+    assert.equal(host.used.length, 0);
+    assert.ok(host.events.some(e => e.type === 'action' && /mark/i.test(e.message)), 'it says how to mark the area');
+    assert.equal(cards(host).length, 2, 'the card is shown again'); assert.equal(host.goal.canvas_references[card.id].state, 'ready');
+  } finally { await close(); }
+});
+
+test('the card carries what the viewer needs: the reference, the canvas it was made from, the area, and the fine pass', async () => {
+  const { host, directory, close } = await fakeHost();
   try {
     await canvasReferencer(host).start({ instruction: 'add more ghosts', part: null });
     const [card] = cards(host);
-    assert.deepEqual(card.options, ['Try again', 'Discard']); assert.match(card.message, /no clear change/);
+    for (const key of ['reference_path', 'canvas_path', 'mask_path']) { assert.ok(card[key]?.startsWith(directory), key); assert.ok(existsSync(card[key]), key); }
+    assert.deepEqual(card.mask_size, [200, 150]); assert.equal(card.fine, false);
+    assert.deepEqual(decodeRgba(await readFile(card.canvas_path)).width, 200, 'the canvas view as it was');
+  } finally { await close(); }
+});
+
+test('a mark is the area: with nothing found, the mark at canvas size; with a change found, the change inside the mark', async () => {
+  const box = (x0, y0, x1, y1) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  {
+    const { host, close } = await fakeHost({ changed: [] });
+    try {
+      const referencer = canvasReferencer(host);
+      await referencer.start({ instruction: 'more detailed soldiers', part: null });
+      await referencer.answer({ id: cards(host)[0].id, action: 'use', area: box(0.1, 0.1, 0.3, 0.4) });
+      assert.equal(host.used.length, 1);
+      const [x, y, w, h] = host.used[0].area.bounds;
+      assert.ok(Math.abs(x - 80) <= 6 && Math.abs(y - 60) <= 6 && Math.abs(w - 160) <= 10 && Math.abs(h - 180) <= 10, 'the marked box on the 800 x 600 canvas: ' + [x, y, w, h]);
+      assert.ok(Math.abs(host.used[0].area.share - 0.06) < 0.01, 'a sixth of a tenth: ' + host.used[0].area.share);
+    } finally { await close(); }
+  }
+  {
+    const { host, close } = await fakeHost({ changed: [[100, 40, 40, 30], [20, 100, 30, 20]] });
+    try {
+      const referencer = canvasReferencer(host);
+      await referencer.start({ instruction: 'add more ghosts', part: null });
+      await referencer.answer({ id: cards(host)[0].id, action: 'use', area: box(0.45, 0.2, 0.8, 0.55) });
+      const [x, y, w, h] = host.used[0].area.bounds;
+      assert.ok(x >= 340 && x + w <= 650 && y >= 110 && y + h <= 340, 'only the change inside the mark: ' + [x, y, w, h]);
+    } finally { await close(); }
+  }
+});
+
+test('Describe edits: Try again with words edits the reference itself, keeps the mark, and says both instructions', async () => {
+  const { host, close } = await fakeHost();
+  try {
+    const referencer = canvasReferencer(host);
+    await referencer.start({ instruction: 'add more ghosts', part: null });
+    const first = cards(host)[0], reference = await readFile(host.goal.canvas_references[first.id].reference_path);
+    const mark = [[0.4, 0.2], [0.8, 0.2], [0.8, 0.6], [0.4, 0.6]];
+    await referencer.answer({ id: first.id, action: 'retry', text: 'make the ghost older', area: mark });
+    assert.equal(host.generated.length, 2);
+    assert.deepEqual(host.generated[1].input.data, reference, 'the image model gets the reference, not the canvas');
+    assert.match(host.generated[1].prompt, /make the ghost older/); assert.doesNotMatch(host.generated[1].prompt, /add more ghosts/);
+    const second = cards(host)[1], record = host.goal.canvas_references[second.id];
+    assert.equal(record.instruction, 'make the ghost older'); assert.deepEqual(record.edits, ['add more ghosts']);
+    assert.deepEqual(record.area, mark, 'the mark stays with the edit');
+    assert.match(second.message, /add more ghosts.*make the ghost older/s);
+    await referencer.answer({ id: second.id, action: 'retry' });
+    assert.deepEqual(host.goal.canvas_references[cards(host)[2].id].area, mark, 'Try again keeps the mark too');
+  } finally { await close(); }
+});
+
+test('a mark that is not a polygon in 0–1 canvas coordinates is refused, and nothing is painted', async () => {
+  const { host, close } = await fakeHost();
+  try {
+    const referencer = canvasReferencer(host);
+    await referencer.start({ instruction: 'add more ghosts', part: null });
+    for (const area of [[[0, 0], [1, 1]], [[0, 0], [2, 0], [0, 1]], 'the left', [[0, 0], [1, 0], ['a', 1]]]) {
+      await referencer.answer({ id: cards(host)[0].id, action: 'use', area });
+      assert.equal(host.used.length, 0, JSON.stringify(area));
+    }
   } finally { await close(); }
 });
 
@@ -353,4 +444,11 @@ test('when the goal cannot be changed the move still paints toward the reference
     assert.equal(host.goal.canvas_references[cards(host)[0].id].goal, undefined);
     assert.ok(host.events.some(e => e.type === 'action' && /goal image could not be read.*this move only/i.test(e.message)));
   } finally { await close(); }
+});
+
+test('a typed answer while the card waits (the artist typed "yes go ahead", 2026-10-31): yes uses it, no discards it, anything else edits it', () => {
+  for (const yes of ['yes go ahead', 'Yes', 'ok', 'okay, use it', 'go for it!', 'looks good', 'sure, paint it', 'use as the target', 'perfect']) assert.equal(typedAnswer(yes), 'use', yes);
+  for (const no of ['no', 'discard', 'cancel it', 'nope', 'never mind', 'discard it please']) assert.equal(typedAnswer(no), 'discard', no);
+  for (const edit of ['make the general older', 'yes but make the general older', 'no, the general should have a beard', 'more snow', 'go ahead and add a flag'])
+    assert.equal(typedAnswer(edit), 'edit', edit);
 });

@@ -241,3 +241,32 @@ test('a sharpened goal: the edit goes into both pictures, the painter is shown i
     assert.equal(told, 2);
   } finally { await h.close(); }
 });
+
+test('a typed answer while the card waits answers the card (the artist typed "yes go ahead", 2026-10-31); a card left behind does not', { timeout: 60000 }, async () => {
+  const { h, painted } = await agentChat((req, n) => n === 1 ? call('finish_move', { summary: 'Painted the change.' }) : { content: 'Done.' });
+  try {
+    await h.runtime.prompt('/canvas-edit-ref make the soldiers more detailed');
+    assert.match(h.events.findLast(e => e.type === 'status').message, /type yes to use it/i, 'the status says a typed answer works');
+    // An edit in words: the reference is edited, nothing is painted.
+    await h.runtime.prompt('make the general older');
+    assert.equal(painted.length, 0, 'never a move painted blind');
+    assert.equal(h.images.length, 2);
+    const [first, second] = cards(h);
+    assert.equal(h.runtime.goal.canvas_references[first.id].state, 'replaced');
+    assert.deepEqual(h.runtime.goal.canvas_references[second.id].edits, ['make the soldiers more detailed']);
+    assert.ok(h.runtime.goal.messages.some(m => m.role === 'user' && m.text === 'make the general older'), 'the transcript keeps it');
+    // Yes: Use as the target, and the move paints toward the reference.
+    await h.runtime.prompt('yes go ahead');
+    assert.equal(h.runtime.goal.canvas_references[second.id].state, 'used');
+    assert.ok(painted.length >= 1); assert.match(JSON.stringify(painted[0].messages), /CANVAS REFERENCE: the artist approved/);
+    // A card the artist walked past is not answered by later messages.
+    await h.runtime.prompt('/canvas-edit-ref more snow');
+    const third = cards(h).at(-1);
+    await h.runtime.prompt('Kept. Continue my request with the next move.', { chat_mode: 'agent', move_kind: 'continue' });
+    assert.equal(h.runtime.goal.canvas_references[third.id].state, 'ready', 'a panel button is not an answer to the card');
+    const before = painted.length;
+    await h.runtime.prompt('yes');
+    assert.equal(h.runtime.goal.canvas_references[third.id].state, 'ready', 'the card stopped waiting when another message came');
+    assert.ok(painted.length > before, 'yes went to the painter as an ordinary message');
+  } finally { await h.close(); }
+});

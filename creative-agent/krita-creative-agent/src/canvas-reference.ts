@@ -21,11 +21,18 @@
 //      0.8-1.25 and offset, least squares) over the pixels the shift found unchanged, so a model that warms, lightens or
 //      flattens the whole picture changes nothing, while the change itself (a third of the picture) cannot cancel itself;
 //   2. both pictures are box-blurred (MASK_RULES.blur of the long side, at least 1 px) and compared in CIELAB (ΔE76);
-//   3. the ΔE is thresholded at MASK_RULES.threshold;
+//   3. the ΔE is thresholded at MASK_RULES.threshold, and when that finds nothing, at MASK_RULES.fine (detail on small
+//      figures: the artist's chat of 2026-10-31, a soldier made a decorated general, measured under ΔE 12 everywhere);
 //   4. specks (connected pieces smaller than MASK_RULES.speck of the picture) are removed, and holes as small filled;
 //   5. the area grows by MASK_RULES.dilate of the long side (at least 3 px), so the paint overlaps the change's edge;
 //   6. with a part's area, only what lies inside it.
 // More than WIDE_SHARE of the canvas: the card warns that the model changed a lot.
+//
+// The viewer (openspec canvas-reference-viewer; the panel's canvas_reference_viewer.py) answers with more than a button:
+//   area: the artist's mark, a polygon in 0–1 canvas coordinates. It limits the comparison of every later picture, and Use
+//         paints the found area inside it, or the whole mark when nothing was found there;
+//   text: Describe edits. Try again with words edits the reference itself (the image model gets the reference), like
+//         ChatGPT's editor; Try again alone makes a new picture from the canvas with every instruction so far.
 // The studio's calls come in as a small host, so this module imports no .mjs.
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -35,7 +42,9 @@ import { decodePlane, encodePlane, encodeRgb, encodeRgba, type Plane } from './s
 
 export type Rect = [number, number, number, number];
 export type Rgba = { width: number; height: number; data: Uint8Array };
-export type Mask = { width: number; height: number; data: Uint8Array; share: number; bounds: Rect | null };
+export type Mask = { width: number; height: number; data: Uint8Array; share: number; bounds: Rect | null; fine?: boolean };
+/** The artist's mark in the viewer: a polygon in 0–1 canvas coordinates (a box is four points). */
+export type Mark = [number, number][];
 
 export const CANVAS_REFERENCE_OPTIONS = Object.freeze({ use: 'Use as the target', goal: 'Use as the new goal', retry: 'Try again', discard: 'Discard' } as const);
 export type CanvasReferenceAction = keyof typeof CANVAS_REFERENCE_OPTIONS;
@@ -48,6 +57,8 @@ export const MASK_RULES = Object.freeze({
   blur: 0.004,
   /** ΔE76 (CIELAB) from which a pixel differs. */
   threshold: 12,
+  /** The fine pass's ΔE, used only when the normal one finds nothing (0: no fine pass). */
+  fine: 6,
   /** Pieces (and holes) smaller than this share of the picture are specks. */
   speck: 0.002,
   /** The area grows by this share of the long side. */
@@ -67,6 +78,20 @@ export function canvasReferenceRequest(text: string | undefined): { instruction:
   const said = (match[1] ?? '').trim().replace(/[.!]+$/, '').trim();
   const part = /^(.*\S)\s+in\s+(the\s+(?:[\p{L}\p{N}'-]+\s*){1,5})$/iu.exec(said);
   return part ? { instruction: part[1]!.trim(), part: part[2]!.trim() } : { instruction: said, part: null };
+}
+
+const YES = new Set('yes yeah yep yup ok okay sure fine great perfect good looks sounds go ahead for it do use this that paint apply as the target please lets let\'s'.split(' '));
+const NO = new Set('no nope nah discard cancel drop it this that never mind please'.split(' '));
+const AFFIRM = new Set('yes yeah yep yup ok okay sure fine great perfect good go use paint apply'.split(' '));
+/** A typed message while a canvas reference card waits (the artist, 2026-10-31, typed "yes go ahead"): made only of
+ * agreeing words, Use as the target; only of refusing words, Discard; anything else is an edit of the reference in those
+ * words. */
+export function typedAnswer(text: string): 'use' | 'discard' | 'edit' {
+  const words = String(text).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, ' ').split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 8) return 'edit';
+  if (words.every(w => YES.has(w)) && words.some(w => AFFIRM.has(w))) return 'use';
+  if (words.every(w => NO.has(w)) && words.some(w => !['it', 'this', 'that', 'please'].includes(w))) return 'discard';
+  return 'edit';
 }
 
 /** The edit prompt: the change, and everything else kept exactly. */
@@ -192,9 +217,43 @@ function measure(data: Uint8Array, width: number, height: number): { share: numb
   return { share: n / (width * height), bounds: n ? [x0, y0, x1 - x0 + 1, y1 - y0 + 1] : null };
 }
 
+/** The viewer's mark, checked: at least three points, each two numbers from 0 to 1. Undefined or null: no mark. */
+export function readMark(area: unknown): Mark | null {
+  if (area === undefined || area === null) return null;
+  const ok = Array.isArray(area) && area.length >= 3 && area.length <= 4096 && area.every(point => Array.isArray(point) && point.length === 2
+    && point.every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1));
+  if (!ok) throw new Error('The marked area could not be read: mark it again in the picture.');
+  return (area as number[][]).map(([x, y]) => [x!, y!]);
+}
+
+/** The mark as a plane `w` x `h` (255 inside; even-odd rule at each pixel's centre). */
+export function markPlane(mark: Mark, w: number, h: number): Uint8Array {
+  const out = new Uint8Array(w * h), xs: number[] = [];
+  for (let y = 0; y < h; y++) {
+    const cy = (y + 0.5) / h; xs.length = 0;
+    for (let i = 0, j = mark.length - 1; i < mark.length; j = i++) {
+      const [xi, yi] = mark[i]!, [xj, yj] = mark[j]!;
+      if ((yi > cy) !== (yj > cy)) xs.push(xi + (cy - yi) / (yj - yi) * (xj - xi));
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const x0 = Math.max(0, Math.ceil(xs[k]! * w - 0.5)), x1 = Math.min(w - 1, Math.floor(xs[k + 1]! * w - 0.5));
+      if (x1 >= x0) out.fill(255, y * w + x0, y * w + x1 + 1);
+    }
+  }
+  return out;
+}
+
 /** Where `reference` differs from `canvas` (the same size): 255 inside, 0 outside, its share and bounds. `within` (one
  * byte a pixel, >= 128 inside) keeps it to a part's area. */
 export function differenceMask(canvas: Rgba, reference: Rgba, { within, rules = MASK_RULES }: { within?: Uint8Array | null; rules?: typeof MASK_RULES } = {}): Mask {
+  const normal = differenceAt(canvas, reference, within, rules, rules.threshold);
+  if (normal.bounds || !rules.fine || rules.fine >= rules.threshold) return { ...normal, fine: false };
+  const fine = differenceAt(canvas, reference, within, rules, rules.fine);
+  return fine.bounds ? { ...fine, fine: true } : { ...normal, fine: false };
+}
+
+function differenceAt(canvas: Rgba, reference: Rgba, within: Uint8Array | null | undefined, rules: typeof MASK_RULES, threshold: number): Mask {
   const { width, height } = canvas, n = width * height;
   if (reference.width !== width || reference.height !== height) throw new Error('The canvas and the reference are compared at one size.');
   const long = Math.max(width, height), blur = Math.max(1, Math.round(long * rules.blur));
@@ -206,7 +265,7 @@ export function differenceMask(canvas: Rgba, reference: Rgba, { within, rules = 
   for (let p = 0; p < n; p++) if (delta[p]! < rules.threshold) { calm[p] = 1; calmCount++; }
   if (calmCount > n * 0.05) delta = diff(lab(fitTone(canvasRgb, raw, calm)));
   let mask: Uint8Array = new Uint8Array(n);
-  for (let p = 0; p < n; p++) if (delta[p]! >= rules.threshold) mask[p] = 255;
+  for (let p = 0; p < n; p++) if (delta[p]! >= threshold) mask[p] = 255;
   const least = Math.max(4, Math.round(n * rules.speck));
   dropSmall(mask, width, height, 255, least); dropSmall(mask, width, height, 0, least);
   mask = dilate(mask, width, height, Math.max(MIN_DILATE, Math.round(long * rules.dilate)));
@@ -278,6 +337,14 @@ export type CanvasReferenceRecord = {
   state: 'ready' | 'used' | 'discarded' | 'replaced'; goal?: boolean;
   reference_path: string; reference_size: [number, number]; compare_path: string; mask_path: string; mask_size: [number, number];
   canvas: [number, number]; share: number; bounds: Rect | null; wide: boolean; model: string; made_at: string; asset_id?: string;
+  /** The canvas view the reference was made from (the viewer's Before). */
+  canvas_path?: string;
+  /** The area came from the fine pass (detail on small figures). */
+  fine?: boolean;
+  /** The artist's mark (0–1 canvas coordinates): every later picture is compared inside it, and Use paints inside it. */
+  area?: Mark | null;
+  /** Earlier instructions this one edits (Describe edits), oldest first. */
+  edits?: string[];
 };
 /** A used canvas reference as the likeness target of the moves painting toward it (the artist, 2026-10-25: an edit is not
  * measured against the goal): the reference over the whole canvas. Outside its area it is the canvas, and Krita blocks
@@ -343,24 +410,33 @@ export function canvasReferencer(host: CanvasReferenceHost) {
     return (host.goal.canvas_references ??= {});
   };
   const card = (record: CanvasReferenceRecord, notes: string[]) => {
-    const asked = `“${record.instruction}”${record.part ? ` in ${record.part}` : ''}`;
+    const asked = [...(record.edits ?? []), record.instruction].map(said => `“${said}”`).join(', then ') + (record.part ? ` in ${record.part}` : '');
+    const marked = record.area ? ' inside the area you marked' : '';
     const lines = [record.bounds
-      ? `A reference of ${asked}: the canvas (left) and the reference (right). The change covers ${percent(record.share)}% of the canvas, outlined in red. Nothing is painted until you use it.`
-      : `A reference of ${asked}: the canvas (left) and the reference (right). The reference shows no clear change from the canvas: try again, or say the change differently.`];
+      ? `A reference of ${asked}: the canvas (left) and the reference (right). The change covers ${percent(record.share)}% of the canvas${marked}, outlined in red. Nothing is painted until you use it. Click the picture to look closer.`
+      : `A reference of ${asked}: the canvas (left) and the reference (right). The reference shows no clear change from the canvas${marked}. Click the picture to look closer: mark the area to change and use it, try again, or say the change differently.`];
+    if (record.fine && record.bounds) lines.push('The change is fine detail, found by a closer comparison: click the picture to check it up close.');
     if (record.wide) lines.push(`The model changed a lot (${percent(record.share)}% of the canvas): try a narrower instruction, or name an area (… in the sky).`);
     if (record.step_key) lines.push('The plan step waits for your answer: it paints after it, toward the reference when you use it.');
     lines.push(...notes);
-    const options = record.bounds ? [CANVAS_REFERENCE_OPTIONS.use, ...(host.makeGoal && host.hasGoal?.() ? [CANVAS_REFERENCE_OPTIONS.goal] : []),
-      CANVAS_REFERENCE_OPTIONS.retry, CANVAS_REFERENCE_OPTIONS.discard] : [CANVAS_REFERENCE_OPTIONS.retry, CANVAS_REFERENCE_OPTIONS.discard];
+    // Use is always offered: with no area found, the artist marks one in the viewer (never a dead end).
+    const options = [CANVAS_REFERENCE_OPTIONS.use, ...(host.makeGoal && host.hasGoal?.() ? [CANVAS_REFERENCE_OPTIONS.goal] : []),
+      CANVAS_REFERENCE_OPTIONS.retry, CANVAS_REFERENCE_OPTIONS.discard];
     host.emit({ type: 'canvas_reference', id: record.id, title: 'Canvas edit reference', message: lines.join('\n\n'), image_path: record.compare_path,
       options, actions: options.map(label => (Object.keys(CANVAS_REFERENCE_OPTIONS) as CanvasReferenceAction[]).find(k => CANVAS_REFERENCE_OPTIONS[k] === label)),
-      share: record.share, wide: record.wide, bounds: record.bounds, auto_approve: false });
+      share: record.share, wide: record.wide, bounds: record.bounds, auto_approve: false,
+      // The viewer: the reference, the canvas it was made from (Before), the found area and the mark.
+      reference_path: record.reference_path, canvas_path: record.canvas_path, mask_path: record.mask_path, mask_size: record.mask_size,
+      fine: record.fine ?? false, area: record.area ?? null, edits: record.edits ?? [] });
   };
   const drop = async (record: CanvasReferenceRecord) => {
     if (host.study) await rm(join(host.study.directory, FOLDER, record.id), { recursive: true, force: true });
   };
 
-  async function start({ instruction, part, step_key }: { instruction: string; part: string | null; step_key?: string }): Promise<CanvasReferenceRecord | null> {
+  /** A new reference. `from`: the picture to edit (Describe edits: the last reference), the canvas otherwise; `edits`: the
+   * instructions before this one; `area`: the artist's mark. */
+  async function start({ instruction, part, step_key, area = null, edits = [], from }: { instruction: string; part: string | null; step_key?: string;
+    area?: Mark | null; edits?: string[]; from?: Buffer }): Promise<CanvasReferenceRecord | null> {
     const goal = host.goal, study = host.study;
     if (!goal || !study) throw new Error('Start a chat first: a canvas reference belongs to a chat.');
     if (!instruction.trim()) { say('Say what to change: /canvas-edit-ref add more snow on the roofs (add "in the sky" to change one part).'); return null; }
@@ -377,21 +453,25 @@ export function canvasReferencer(host: CanvasReferenceHost) {
       if (found) within = await partWithin(found, [w, h], canvas);
       else notes.push(`${part[0]!.toUpperCase() + part.slice(1)} was not found, so the whole canvas is compared.`);
     }
-    const made = await host.generate({ prompt: editPrompt(instruction, part), input: { data: view, mimeType: 'image/png' }, aspect: aspectOf(seen.width, seen.height) });
+    if (area) { const marked = markPlane(area, w, h); within = within ? within.map((v, p) => v >= 128 && marked[p]! ? 255 : 0) : marked; }
+    // Describe edits sends the last reference and the new words; Try again sends the canvas and every instruction so far.
+    const said = from ? instruction : [...edits, instruction].join('; then ');
+    const made = await host.generate({ prompt: editPrompt(said, part), input: { data: from ?? view, mimeType: 'image/png' }, aspect: aspectOf(seen.width, seen.height) });
     goal.ai_images_used = (goal.ai_images_used ?? 0) + 1;     // the image exists: it counts
     const raw = await host.decode(made.data);
     if (!raw) throw new Error('The image model’s picture could not be read.');
     const small = resized(pixels, w, h), other = resized(raw, w, h), mask = differenceMask(small, other, { within });
     const id = randomUUID().slice(0, 12), folder = join(study.directory, FOLDER, id);
     await mkdir(folder, { recursive: true });
-    const size = referenceSize(canvas), files = { reference: join(folder, 'reference.png'), compare: join(folder, 'compare.png'), mask: join(folder, 'mask.png') };
+    const size = referenceSize(canvas), files = { reference: join(folder, 'reference.png'), compare: join(folder, 'compare.png'), mask: join(folder, 'mask.png'), canvas: join(folder, 'canvas.png') };
+    await writeFile(files.canvas, encodeRgba(pixels));
     await writeFile(files.reference, encodeRgba(resized(raw, size[0], size[1])));
     await writeFile(files.compare, encodeRgb(compareImage(small, other, mask)));
     await writeFile(files.mask, encodePlane(mask));
     const bounds = mask.bounds ? canvasMask(mask, canvas).bounds : null;
     const record: CanvasReferenceRecord = { id, instruction, part, ...(step_key ? { step_key } : {}), state: 'ready', reference_path: files.reference, reference_size: size,
       compare_path: files.compare, mask_path: files.mask, mask_size: [w, h], canvas, share: mask.share, bounds, wide: mask.share > WIDE_SHARE, model: made.model,
-      made_at: new Date().toISOString() };
+      made_at: new Date().toISOString(), canvas_path: files.canvas, fine: mask.fine ?? false, area, ...(edits.length ? { edits } : {}) };
     records()[id] = record;
     if (!goal.canvas_reference_notice) { notes.push(NOTICE[host.backend()] ?? NOTICE.codex); goal.canvas_reference_notice = true; }
     await host.persist(); host.publish();
@@ -399,21 +479,37 @@ export function canvasReferencer(host: CanvasReferenceHost) {
     return record;
   }
 
-  async function answer({ id, action }: { id?: unknown; action?: unknown }): Promise<void> {
+  async function answer({ id, action, area, text }: { id?: unknown; action?: unknown; area?: unknown; text?: unknown }): Promise<void> {
     const record = typeof id === 'string' ? host.goal?.canvas_references?.[id] : undefined;
     if (!record || record.state !== 'ready') { say('That canvas reference is no longer open.'); return; }
+    let mark: Mark | null;
+    try { mark = readMark(area); } catch (error) { say((error as Error).message); card(record, []); return; }
+    const words = typeof text === 'string' ? text.trim() : '';
     if (action === 'discard') {
       record.state = 'discarded'; await drop(record);
       await host.persist(); host.publish(); say('Discarded the canvas reference.');
       await host.discarded?.(record);
     } else if (action === 'retry') {
+      const kept = mark ?? record.area ?? null, step = record.step_key ? { step_key: record.step_key } : {};
+      const from = words ? await readFile(record.reference_path) : undefined;      // read before the folder goes
       record.state = 'replaced'; await drop(record); await host.persist();
-      await start({ instruction: record.instruction, part: record.part, ...(record.step_key ? { step_key: record.step_key } : {}) });
+      if (words) await start({ instruction: words, part: null, area: kept, edits: [...(record.edits ?? []), record.instruction], from, ...step });
+      else await start({ instruction: record.instruction, part: record.part, area: kept, edits: record.edits ?? [], ...step });
     } else if (action === 'use' || (action === 'goal' && host.makeGoal)) {
-      if (!record.bounds) { say('The reference shows no change to paint.'); return; }
+      if (!record.bounds && !mark) {
+        say('Nothing changed clearly enough to find the area. Click the picture, mark the area to change, then press Use as the target.');
+        card(record, []); return;
+      }
       if (host.busy()) { say('A move is painting: stop it or wait for it, then press Use as the target.'); card(record, []); return; }
-      const [w, h] = record.mask_size, plane = decodePlane(await readFile(record.mask_path), { width: w, height: h });
-      const area = canvasMask({ ...plane, ...measure(plane.data, w, h) }, record.canvas);
+      const [w, h] = record.mask_size, found = decodePlane(await readFile(record.mask_path), { width: w, height: h });
+      let data = found.data;
+      if (mark) {                      // the change inside the mark, or the whole mark when nothing was found there
+        const marked = markPlane(mark, w, h), both = found.data.map((v, p) => v >= 128 && marked[p]! ? 255 : 0);
+        data = both.some(v => v) ? both : marked;
+        if (!data.some(v => v)) { say('The marked area is too small: mark it again in the picture.'); card(record, []); return; }
+        record.area = mark;
+      }
+      const area = canvasMask({ width: w, height: h, data, ...measure(data, w, h) }, record.canvas);
       const file = join(host.study!.directory, FOLDER, record.id, 'area.png');
       await writeFile(file, encodePlane(area.plane));
       if (action === 'goal') {
