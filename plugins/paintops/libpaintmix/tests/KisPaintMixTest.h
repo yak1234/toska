@@ -23,6 +23,8 @@ private Q_SLOTS:
     void testBlendPixelsRgbMatchesKritaOver();
     void testBlendPixelsOneColourOverTransparentIsExact();
     void testBlendPixelsTinyAlphaIsFinite();
+    void testBlendPixelsBgra16AndFloatNumeric();
+    void testBlendPixelsCopyAlpha();
     void testGoldenVectors();
     void testSpeed();
 };

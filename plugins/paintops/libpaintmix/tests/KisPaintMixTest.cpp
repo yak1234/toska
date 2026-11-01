@@ -277,7 +277,10 @@ void KisPaintMixTest::testBlendPixelsTinyAlphaIsFinite()
 
             const uint16_t s16[4] = {26000, 6000, 59000, 0};
             uint16_t d16[4] = {10000, 20000, 30000, 0};
+            const uint16_t d16In[4] = {10000, 20000, 30000, 0};
             blendPixels(m, b, PixelFormat::Bgra16, reinterpret_cast<uint8_t *>(d16), reinterpret_cast<const uint8_t *>(s16), true, 1, 0.7f);
+            // Both alphas are 0 (1e-7 is below one 16-bit step), so the pixel is left exactly as it was.
+            QVERIFY(std::memcmp(d16, d16In, sizeof(d16)) == 0);
 
             const uint8_t s8[4] = {10, 20, 30, 0};
             uint8_t d8[4] = {40, 50, 60, 0};
@@ -285,6 +288,50 @@ void KisPaintMixTest::testBlendPixelsTinyAlphaIsFinite()
             QCOMPARE(int(d8[0]), 40);
         }
     }
+}
+
+void KisPaintMixTest::testBlendPixelsBgra16AndFloatNumeric()
+{
+    // Over, op 0.5, sa 1, da 0.5: a = 0.5 + 0.5 * 0.5 = 0.75, t = 0.5 / 0.75 = 2/3. Expected values are written out by hand.
+    // Bgra16: dst B,G,R,A = 13107,26214,39321,32768 (0.2,0.4,0.6, da 32768/65535); src B,G,R,A = 0,13107,52428,65535 (R 0.8, G 0.2, B 0).
+    {
+        const double da = 32768.0 / 65535.0;
+        const double a = 0.5 + da * 0.5;
+        const double t = 0.5 / a;
+        const double r = 0.6 + (0.8 - 0.6) * t, g = 0.4 + (0.2 - 0.4) * t, b = 0.2 + (0.0 - 0.2) * t;
+        uint16_t dst[4] = {13107, 26214, 39321, 32768};
+        const uint16_t src[4] = {0, 13107, 52428, 65535};
+        blendPixels(Model::Rgb, Blend::Over, PixelFormat::Bgra16, reinterpret_cast<uint8_t *>(dst), reinterpret_cast<const uint8_t *>(src), true, 1, 0.5f);
+        QVERIFY2(std::abs(int(dst[0]) - int(b * 65535 + 0.5)) <= 1, qPrintable(QString::number(dst[0])));
+        QVERIFY2(std::abs(int(dst[1]) - int(g * 65535 + 0.5)) <= 1, qPrintable(QString::number(dst[1])));
+        QVERIFY2(std::abs(int(dst[2]) - int(r * 65535 + 0.5)) <= 1, qPrintable(QString::number(dst[2])));
+        QVERIFY2(std::abs(int(dst[3]) - int(a * 65535 + 0.5)) <= 1, qPrintable(QString::number(dst[3])));
+        // Hand values: B 0.0667 -> 4369, G 0.2667 -> 17476, R 0.7333 -> 48059 (+-1), A 0.75 -> 49152 (+-1).
+        QVERIFY(std::abs(int(dst[0]) - 4369) <= 1 && std::abs(int(dst[1]) - 17476) <= 1);
+        QVERIFY(std::abs(int(dst[2]) - 48059) <= 2 && std::abs(int(dst[3]) - 49152) <= 1);
+    }
+    // RgbaF32: R,G,B,A order.
+    {
+        float dst[4] = {0.2f, 0.4f, 0.6f, 0.5f};
+        const float src[4] = {0.8f, 0.2f, 0.0f, 1.0f};
+        blendPixels(Model::Rgb, Blend::Over, PixelFormat::RgbaF32, reinterpret_cast<uint8_t *>(dst), reinterpret_cast<const uint8_t *>(src), true, 1, 0.5f);
+        QVERIFY2(std::fabs(dst[0] - 0.6f) < 1e-5f, qPrintable(QString::number(dst[0])));
+        QVERIFY2(std::fabs(dst[1] - 0.26666667f) < 1e-5f, qPrintable(QString::number(dst[1])));
+        QVERIFY2(std::fabs(dst[2] - 0.2f) < 1e-5f, qPrintable(QString::number(dst[2])));
+        QVERIFY2(std::fabs(dst[3] - 0.75f) < 1e-6f, qPrintable(QString::number(dst[3])));
+    }
+}
+
+void KisPaintMixTest::testBlendPixelsCopyAlpha()
+{
+    // Copy, op 0.5, sa 1, da 0.5: a = 0.5 + 0.5 * 0.5 = 0.75; t = 0.5 / (0.5 + 0.25) = 2/3.
+    float dst[4] = {0.2f, 0.4f, 0.6f, 0.5f};
+    const float src[4] = {0.8f, 0.2f, 0.0f, 1.0f};
+    blendPixels(Model::Rgb, Blend::Copy, PixelFormat::RgbaF32, reinterpret_cast<uint8_t *>(dst), reinterpret_cast<const uint8_t *>(src), true, 1, 0.5f);
+    QVERIFY2(std::fabs(dst[3] - 0.75f) < 1e-6f, qPrintable(QString::number(dst[3])));
+    QVERIFY2(std::fabs(dst[0] - (0.2f + 0.6f * 2.0f / 3.0f)) < 1e-5f, qPrintable(QString::number(dst[0])));
+    QVERIFY2(std::fabs(dst[1] - (0.4f - 0.2f * 2.0f / 3.0f)) < 1e-5f, qPrintable(QString::number(dst[1])));
+    QVERIFY2(std::fabs(dst[2] - (0.6f - 0.6f * 2.0f / 3.0f)) < 1e-5f, qPrintable(QString::number(dst[2])));
 }
 
 void KisPaintMixTest::testGoldenVectors()
@@ -335,7 +382,9 @@ void KisPaintMixTest::testGoldenVectors()
             };
             const Rgb got = mix2(m, rd("a"), rd("b"), float(row.value("t").toDouble()));
             const Rgb want = rd("out");
-            QVERIFY2(std::fabs(got.r - want.r) < 1e-6f && std::fabs(got.g - want.g) < 1e-6f && std::fabs(got.b - want.b) < 1e-6f,
+            // spectral and perceptual use fast-math / libm pow and cbrt, which differ across platforms on CI.
+            const float tol = (m == Model::Spectral || m == Model::Perceptual) ? 1e-5f : 1e-6f;
+            QVERIFY2(std::fabs(got.r - want.r) < tol && std::fabs(got.g - want.g) < tol && std::fabs(got.b - want.b) < tol,
                      modelId(m));
         }
     }
