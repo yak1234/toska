@@ -17,6 +17,14 @@ private Q_SLOTS:
     void testUnmixedColoursRoundTripExactly();
     void testSpectralBlueYellowIsGreen();
     void testSpectralMatchesLibmypaint();
+    void testLinearBlackWhiteHalf();
+    void testPerceptualBlackWhiteHalf();
+    void testMixManyEqualsMix2();
+    void testBlendPixelsRgbMatchesKritaOver();
+    void testBlendPixelsOneColourOverTransparentIsExact();
+    void testBlendPixelsTinyAlphaIsFinite();
+    void testGoldenVectors();
+    void testSpeed();
 };
 
 #endif // KISPAINTMIXTEST_H

@@ -7,6 +7,19 @@
 
 #include <KisPaintMix.h>
 
+#include <KoColorSpace.h>
+#include <KoColorSpaceRegistry.h>
+#include <KoCompositeOpRegistry.h>
+#include <KoCompositeOp.h>
+
+#include <QElapsedTimer>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcessEnvironment>
+#include <vector>
+
 #include <cmath>
 #include <cstring>
 #include <random>
@@ -26,7 +39,7 @@ Rgb randomRgb(std::mt19937 &gen)
     return {d(gen), d(gen), d(gen)};
 }
 
-const Model allModels[] = {Model::Rgb, Model::Spectral};
+const Model allModels[] = {Model::Rgb, Model::LinearLight, Model::Perceptual, Model::Spectral};
 
 // Test-local copy of libmypaint 1.6.1 mix_colors (helpers.c 521-600) with powf, as the reference for fastpow.
 const float T_MATRIX_SMALL[3][10] = {{0.026595621243689f,0.049779426257903f,0.022449850859496f,-0.218453689278271f
@@ -157,6 +170,194 @@ void KisPaintMixTest::testSpectralMatchesLibmypaint()
         QVERIFY2(std::fabs(got.g - ref.g) < 2e-3f, qPrintable(QString::number(i)));
         QVERIFY2(std::fabs(got.b - ref.b) < 2e-3f, qPrintable(QString::number(i)));
     }
+}
+
+void KisPaintMixTest::testLinearBlackWhiteHalf()
+{
+    const Rgb m = mix2(Model::LinearLight, {0, 0, 0}, {1, 1, 1}, 0.5f);
+    QVERIFY(std::fabs(m.r - 187.5f / 255) <= 0.5f / 255);
+    QVERIFY(std::fabs(m.g - 187.5f / 255) <= 0.5f / 255);
+    QVERIFY(std::fabs(m.b - 187.5f / 255) <= 0.5f / 255);
+}
+
+void KisPaintMixTest::testPerceptualBlackWhiteHalf()
+{
+    const Rgb m = mix2(Model::Perceptual, {0, 0, 0}, {1, 1, 1}, 0.5f);
+    QVERIFY2(std::fabs(m.r - 79.4f / 255) <= 1.0f / 255, qPrintable(QString::number(m.r * 255)));
+    QVERIFY(std::fabs(m.g - 79.4f / 255) <= 1.0f / 255);
+    QVERIFY(std::fabs(m.b - 79.4f / 255) <= 1.0f / 255);
+}
+
+void KisPaintMixTest::testMixManyEqualsMix2()
+{
+    std::mt19937 gen(99);
+    std::uniform_real_distribution<float> td(0.02f, 0.98f);
+    for (Model m : allModels) {
+        for (int i = 0; i < 50; i++) {
+            const Rgb cs[2] = {randomRgb(gen), randomRgb(gen)};
+            const float t = td(gen);
+            const float w[2] = {1.0f - t, t};
+            const Rgb many = mixMany(m, cs, w, 2);
+            const Rgb two = mix2(m, cs[0], cs[1], t);
+            const float worst = std::max({std::fabs(many.r - two.r), std::fabs(many.g - two.g), std::fabs(many.b - two.b)});
+            QVERIFY2(worst < 1e-6f, qPrintable(QString("%1 %2").arg(modelId(m)).arg(worst)));
+        }
+    }
+}
+
+void KisPaintMixTest::testBlendPixelsRgbMatchesKritaOver()
+{
+    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
+    QVERIFY(cs);
+    const KoCompositeOp *op = cs->compositeOp(COMPOSITE_OVER);
+    QVERIFY(op);
+
+    const int n = 1000;
+    std::mt19937 gen(31337);
+    std::uniform_int_distribution<int> bd(0, 255);
+    std::vector<uint8_t> src(n * 4), dstA(n * 4), dstB;
+    for (auto &v : src) v = uint8_t(bd(gen));
+    for (auto &v : dstA) v = uint8_t(bd(gen));
+    dstB = dstA;
+
+    KoCompositeOp::ParameterInfo params;
+    params.dstRowStart = dstB.data();
+    params.dstRowStride = n * 4;
+    params.srcRowStart = src.data();
+    params.srcRowStride = n * 4;
+    params.maskRowStart = nullptr;
+    params.maskRowStride = 0;
+    params.rows = 1;
+    params.cols = n;
+    params.opacity = 1.0f;
+    params.flow = 1.0f;
+    params.channelFlags = QBitArray();
+    op->composite(params);
+
+    blendPixels(Model::Rgb, Blend::Over, PixelFormat::Bgra8, dstA.data(), src.data(), false, n, 1.0f);
+
+    int worst = 0;
+    for (int i = 0; i < n; i++) {
+        const int sa = src[i * 4 + 3], da = dstB[i * 4 + 3];
+        // Krita leaves the colour of a fully transparent result undefined.
+        for (int c = 0; c < 4; c++) {
+            if (c < 3 && dstB[i * 4 + 3] == 0) continue;
+            worst = std::max(worst, std::abs(int(dstA[i * 4 + c]) - int(dstB[i * 4 + c])));
+        }
+        Q_UNUSED(sa);
+        Q_UNUSED(da);
+    }
+    QVERIFY2(worst <= 1, qPrintable(QString::number(worst)));
+}
+
+void KisPaintMixTest::testBlendPixelsOneColourOverTransparentIsExact()
+{
+    for (Model m : allModels) {
+        const uint8_t src[4] = {133, 77, 201, 255};
+        uint8_t dst[8 * 4] = {};
+        blendPixels(m, Blend::Over, PixelFormat::Bgra8, dst, src, true, 8, 1.0f);
+        for (int i = 0; i < 8; i++) {
+            QVERIFY(std::memcmp(dst + i * 4, src, 4) == 0);
+        }
+        const float srcF[4] = {0.52f, 0.3f, 0.79f, 1.0f};
+        float dstF[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        blendPixels(m, Blend::Over, PixelFormat::RgbaF32, reinterpret_cast<uint8_t *>(dstF), reinterpret_cast<const uint8_t *>(srcF), true, 1, 1.0f);
+        QVERIFY(std::memcmp(dstF, srcF, sizeof(srcF)) == 0);
+    }
+}
+
+void KisPaintMixTest::testBlendPixelsTinyAlphaIsFinite()
+{
+    for (Model m : allModels) {
+        for (Blend b : {Blend::Over, Blend::Copy}) {
+            const float srcF[4] = {0.9f, 0.1f, 0.4f, 1e-7f};
+            float dstF[4] = {0.2f, 0.6f, 0.3f, 1e-7f};
+            blendPixels(m, b, PixelFormat::RgbaF32, reinterpret_cast<uint8_t *>(dstF), reinterpret_cast<const uint8_t *>(srcF), true, 1, 0.7f);
+            for (float v : dstF) QVERIFY(std::isfinite(v));
+
+            const uint16_t s16[4] = {26000, 6000, 59000, 0};
+            uint16_t d16[4] = {10000, 20000, 30000, 0};
+            blendPixels(m, b, PixelFormat::Bgra16, reinterpret_cast<uint8_t *>(d16), reinterpret_cast<const uint8_t *>(s16), true, 1, 0.7f);
+
+            const uint8_t s8[4] = {10, 20, 30, 0};
+            uint8_t d8[4] = {40, 50, 60, 0};
+            blendPixels(m, b, PixelFormat::Bgra8, d8, s8, true, 1, 0.7f);
+            QCOMPARE(int(d8[0]), 40);
+        }
+    }
+}
+
+void KisPaintMixTest::testGoldenVectors()
+{
+    const QString writePath = QProcessEnvironment::systemEnvironment().value("KIS_PAINTMIX_WRITE_GOLDEN");
+    std::mt19937 gen(20261101);
+    std::uniform_real_distribution<float> td(0.0f, 1.0f);
+
+    QJsonObject root;
+    QJsonObject expected;
+    auto arr = [](Rgb c) { return QJsonArray{double(c.r), double(c.g), double(c.b)}; };
+    for (Model m : allModels) {
+        QJsonArray rows;
+        for (int i = 0; i < 64; i++) {
+            const Rgb a = randomRgb(gen);
+            const Rgb b = randomRgb(gen);
+            const float t = td(gen);
+            QJsonObject row;
+            row["a"] = arr(a);
+            row["b"] = arr(b);
+            row["t"] = double(t);
+            row["out"] = arr(mix2(m, a, b, t));
+            rows.append(row);
+        }
+        root[modelId(m)] = rows;
+    }
+
+    if (!writePath.isEmpty()) {
+        QFile f(writePath);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        f.close();
+        return;
+    }
+
+    QFile f(QString(FILES_DATA_DIR) + "golden.json");
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+    QVERIFY(doc.isObject());
+    for (Model m : allModels) {
+        const QJsonArray rows = doc.object().value(modelId(m)).toArray();
+        QCOMPARE(rows.size(), 64);
+        for (const QJsonValue &v : rows) {
+            const QJsonObject row = v.toObject();
+            auto rd = [&](const char *k) {
+                const QJsonArray a = row.value(k).toArray();
+                return Rgb{float(a[0].toDouble()), float(a[1].toDouble()), float(a[2].toDouble())};
+            };
+            const Rgb got = mix2(m, rd("a"), rd("b"), float(row.value("t").toDouble()));
+            const Rgb want = rd("out");
+            QVERIFY2(std::fabs(got.r - want.r) < 1e-6f && std::fabs(got.g - want.g) < 1e-6f && std::fabs(got.b - want.b) < 1e-6f,
+                     modelId(m));
+        }
+    }
+}
+
+void KisPaintMixTest::testSpeed()
+{
+#ifndef NDEBUG
+    QSKIP("speed is measured in release builds only");
+#endif
+    const int n = 2000000;
+    std::mt19937 gen(5);
+    std::uniform_int_distribution<int> bd(0, 255);
+    std::vector<uint8_t> dst(size_t(n) * 4), src(size_t(n) * 4);
+    for (auto &v : dst) v = uint8_t(bd(gen));
+    for (auto &v : src) v = uint8_t(bd(gen));
+    QElapsedTimer timer;
+    timer.start();
+    blendPixels(Model::Spectral, Blend::Over, PixelFormat::Bgra8, dst.data(), src.data(), false, n, 1.0f);
+    const qint64 ms = timer.elapsed();
+    qInfo() << "spectral blendPixels, 2,000,000 pixels:" << ms << "ms";
+    QVERIFY2(ms <= 500, qPrintable(QString::number(ms)));
 }
 
 SIMPLE_TEST_MAIN(KisPaintMixTest)
