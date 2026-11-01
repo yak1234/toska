@@ -74,6 +74,24 @@ with the new mixing and once without, everything else fixed. Luna and the artist
 cleaner, which reads better). Parts 3 and 4 proceed when both prefer the new mixing; otherwise we stop and look at why.
 The same A/B is repeated after part 4 for the pigment model.
 
+## Amendment 2026-11-01: a mixing policy decides, not the painter
+
+The user (before the first pilot): "Agents can't it be a yaml determinism python tool"; after it: "You should have
+added that earlier when I asked". Pilot P1 confirmed it: with mixing offered, the painter used it 0 times.
+
+- **Mixing policy (YAML, bundled):** which mixing model each kind of pass uses, applied deterministically to every
+  paint pass by the companion: underpainting/block-in and accents/details → `rgb`; finish, refine, blend, glaze and
+  atmosphere passes → `spectral` (later `pigment`). A rule applies only when the pass's preset has a measured card for
+  that model; otherwise `rgb`. The painter may still override per pass. The policy file can be edited without code.
+- **When mixing happens** (painting practice, Claude's call): plan mixes on the palette first (`mix_colors`), block in
+  without mixing, mix during the middle layers, finish details and accents clean.
+- **Luna's roles** (later, optional): label a pass the policy cannot classify ("blending existing colour or laying new
+  opaque colour?") and check a mixing pass for mud (undo and retry the other model). Never per stroke.
+- **Benchmark plumbing:** test chats get the mixing switch (`TOSKA_MIXING`) through the test driver, and Luna judges every
+  pair in both orders (the pilot showed left-side bias).
+- **Pilot design:** the A/B must reach blending stages — the painter works from a description with the goal shown only
+  to the judges, or the run continues into refine and finish after the underpainting.
+
 ## Sibling changes (not in this scope)
 - `brush-carries-paint`: paint memory, a dirty brush and per-bristle colour in Hairy. Depends on this change.
 - `wet-paint`: the wet stroke buffer and whole-stroke passes. Depends on this change and uses the "mix in wet paint" switch.
