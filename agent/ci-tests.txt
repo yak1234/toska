@@ -66,3 +66,4 @@ KisClippingUtilsTest
 TestNodeView
 KisMacosFullScreenTest
 KisPaintMixTest
+KisMyPaintOpTest

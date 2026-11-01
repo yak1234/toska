@@ -20,15 +20,33 @@
 #include <KoCompositeOpRegistry.h>
 #include <KoMixColorsOp.h>
 
+#include <KisPaintMix.h>
+
 using namespace std;
+
+namespace {
+// MyPaintSurface is the first member of libmypaint's MyPaintSurface2 (a C struct), so the two pointers convert.
+KisMyPaintSurface::MyPaintSurfaceInternal *internalSurface(MyPaintSurface *surface)
+{
+    return static_cast<KisMyPaintSurface::MyPaintSurfaceInternal*>(reinterpret_cast<MyPaintSurface2*>(surface));
+}
+}
 
 void destroy_internal_surface_callback(MyPaintSurface *surface)
 {
-    KisMyPaintSurface::MyPaintSurfaceInternal *ptr = static_cast<KisMyPaintSurface::MyPaintSurfaceInternal*>(surface);
+    KisMyPaintSurface::MyPaintSurfaceInternal *ptr = internalSurface(surface);
     delete ptr;
 }
 
-KisMyPaintSurface::KisMyPaintSurface(KisPainter *painter, KisPaintDeviceSP paintNode, KisImageSP image)
+namespace {
+// Spectral mixing is defined on 0..1 (float colour spaces may hold more)
+KisPaintMix::Rgb clampedRgb(float r, float g, float b)
+{
+    return KisPaintMix::Rgb{qBound(0.0f, r, 1.0f), qBound(0.0f, g, 1.0f), qBound(0.0f, b, 1.0f)};
+}
+}
+
+KisMyPaintSurface::KisMyPaintSurface(KisPainter *painter, KisPaintDeviceSP paintNode, KisImageSP image, bool sampleMerged)
     : m_painter(painter)
     , m_imageDevice(paintNode)
     , m_image(image)
@@ -46,12 +64,16 @@ KisMyPaintSurface::KisMyPaintSurface(KisPainter *painter, KisPaintDeviceSP paint
     m_tempPainter->setChannelFlags(painter->channelFlags());
     m_tempPainter->copyMirrorInformationFrom(painter);
     m_surface = new MyPaintSurfaceInternal();
-    mypaint_surface_init(m_surface);
+    mypaint_surface_init(&m_surface->parent);
     m_surface->m_owner = this;
 
-    m_surface->draw_dab = this->draw_dab;
-    m_surface->get_color = this->get_color;
-    m_surface->destroy = destroy_internal_surface_callback;
+    m_surface->parent.draw_dab = this->draw_dab;
+    m_surface->parent.get_color = this->get_color;
+    m_surface->parent.destroy = destroy_internal_surface_callback;
+    // mypaint_brush_stroke_to_2 calls only these two (never end_atomic_multi, which stays null)
+    m_surface->draw_dab_pigment = this->draw_dab_pigment;
+    m_surface->get_color_pigment = this->get_color_pigment;
+    m_sampleMerged = sampleMerged && image.data();
     m_surface->bitDepth = m_precisePainterWrapper.overlayColorSpace()->channels()[0]->channelValueType();
 
     // devices for mask information
@@ -61,14 +83,14 @@ KisMyPaintSurface::KisMyPaintSurface(KisPainter *painter, KisPaintDeviceSP paint
 
 KisMyPaintSurface::~KisMyPaintSurface()
 {
-    mypaint_surface_unref(m_surface);
+    mypaint_surface_unref(&m_surface->parent);
 }
 
 int KisMyPaintSurface::draw_dab(MyPaintSurface *self, float x, float y, float radius, float color_r, float color_g,
                                 float color_b, float opaque, float hardness, float color_a,
                                 float aspect_ratio, float angle, float lock_alpha, float colorize) {
 
-    MyPaintSurfaceInternal *surface = static_cast<MyPaintSurfaceInternal*>(self);
+    MyPaintSurfaceInternal *surface = internalSurface(self);
 
     if (surface->bitDepth == KoChannelInfo::UINT8) {
         return surface->m_owner->drawDabImpl<quint8>(self, x, y, radius, color_r, color_g,
@@ -97,7 +119,7 @@ int KisMyPaintSurface::draw_dab(MyPaintSurface *self, float x, float y, float ra
 void KisMyPaintSurface::get_color(MyPaintSurface *self, float x, float y, float radius,
                             float * color_r, float * color_g, float * color_b, float * color_a) {
 
-    MyPaintSurfaceInternal *surface = static_cast<MyPaintSurfaceInternal*>(self);
+    MyPaintSurfaceInternal *surface = internalSurface(self);
     if (surface->bitDepth == KoChannelInfo::UINT8) {
         surface->m_owner->getColorImpl<quint8>(self, x, y, radius, color_r, color_g, color_b, color_a);
     }
@@ -115,11 +137,69 @@ void KisMyPaintSurface::get_color(MyPaintSurface *self, float x, float y, float 
 }
 
 
+int KisMyPaintSurface::draw_dab_pigment(MyPaintSurface2 *self, float x, float y, float radius,
+                                        float color_r, float color_g, float color_b, float opaque, float hardness,
+                                        float color_a, float aspect_ratio, float angle, float lock_alpha,
+                                        float colorize, float posterize, float posterize_num, float paint)
+{
+    Q_UNUSED(posterize);
+    Q_UNUSED(posterize_num);
+    MyPaintSurfaceInternal *surface = static_cast<MyPaintSurfaceInternal*>(self);
+    MyPaintSurface *plain = &self->parent;
+    paint = qBound(0.0f, paint, 1.0f);
+
+    if (surface->bitDepth == KoChannelInfo::UINT8) {
+        return surface->m_owner->drawDabImpl<quint8>(plain, x, y, radius, color_r, color_g, color_b, opaque,
+                                                     hardness, color_a, aspect_ratio, angle, lock_alpha, colorize,
+                                                     paint);
+    } else if (surface->bitDepth == KoChannelInfo::UINT16) {
+        return surface->m_owner->drawDabImpl<quint16>(plain, x, y, radius, color_r, color_g, color_b, opaque,
+                                                      hardness, color_a, aspect_ratio, angle, lock_alpha, colorize,
+                                                      paint);
+    }
+#if defined HAVE_OPENEXR
+    else if (surface->bitDepth == KoChannelInfo::FLOAT16) {
+        return surface->m_owner->drawDabImpl<half>(plain, x, y, radius, color_r, color_g, color_b, opaque,
+                                                   hardness, color_a, aspect_ratio, angle, lock_alpha, colorize,
+                                                   paint);
+    }
+#endif
+    else {
+        return surface->m_owner->drawDabImpl<float>(plain, x, y, radius, color_r, color_g, color_b, opaque,
+                                                    hardness, color_a, aspect_ratio, angle, lock_alpha, colorize,
+                                                    paint);
+    }
+}
+
+void KisMyPaintSurface::get_color_pigment(MyPaintSurface2 *self, float x, float y, float radius,
+                                          float * color_r, float * color_g, float * color_b, float * color_a,
+                                          float paint)
+{
+    MyPaintSurfaceInternal *surface = static_cast<MyPaintSurfaceInternal*>(self);
+    MyPaintSurface *plain = &self->parent;
+    paint = qMin(paint, 1.0f);
+
+    if (surface->bitDepth == KoChannelInfo::UINT8) {
+        surface->m_owner->getColorImpl<quint8>(plain, x, y, radius, color_r, color_g, color_b, color_a, paint);
+    } else if (surface->bitDepth == KoChannelInfo::UINT16) {
+        surface->m_owner->getColorImpl<quint16>(plain, x, y, radius, color_r, color_g, color_b, color_a, paint);
+    }
+#if defined HAVE_OPENEXR
+    else if (surface->bitDepth == KoChannelInfo::FLOAT16) {
+        surface->m_owner->getColorImpl<half>(plain, x, y, radius, color_r, color_g, color_b, color_a, paint);
+    }
+#endif
+    else {
+        surface->m_owner->getColorImpl<float>(plain, x, y, radius, color_r, color_g, color_b, color_a, paint);
+    }
+}
+
 /*GIMP's draw_dab and get_color code*/
 template <typename channelType>
 int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float radius, float color_r, float color_g,
                                 float color_b, float opaque, float hardness, float color_a,
-                                float aspect_ratio, float angle, float lock_alpha, float colorize) {
+                                float aspect_ratio, float angle, float lock_alpha, float colorize,
+                                float paint) {
 
     Q_UNUSED(self);
     Q_UNUSED(lock_alpha);
@@ -218,6 +298,32 @@ int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float
         if (eraser) {
             alpha = 1 - (opaque*base_alpha);
             a = dst_alpha * alpha ;
+        } else if (paint > 0.0f) {
+            // Toska: libmypaint's tiled surface (mypaint-tiled-surface.c 442-471): the normal blend at
+            // alpha * (1 - paint), then the spectral blend at alpha * paint (libmypaint's integer
+            // MAX(opacity, 150) workaround is not needed in float and is not ported)
+            const float normal_alpha = alpha * (1.0f - paint);
+            a = normal_alpha * (color_a - dst_alpha) + dst_alpha;
+            if (a > 0.0f) {
+                float src_term = (normal_alpha * color_a) / a;
+                float dst_term = 1.0f - src_term;
+                r = color_r * src_term + r * dst_term;
+                g = color_g * src_term + g * dst_term;
+                b = color_b * src_term + b * dst_term;
+            }
+
+            const float paint_alpha = alpha * paint;
+            const float below_alpha = a;
+            a = paint_alpha * (color_a - below_alpha) + below_alpha;
+            if (a > 0.0f) {
+                const float t = qBound(0.0f, (paint_alpha * color_a) / a, 1.0f);
+                const KisPaintMix::Rgb mixed = KisPaintMix::mix2(KisPaintMix::Model::Spectral,
+                                                                 clampedRgb(r, g, b),
+                                                                 clampedRgb(color_r, color_g, color_b), t);
+                r = mixed.r;
+                g = mixed.g;
+                b = mixed.b;
+            }
         } else {
             if (a > 0.0f) {
                 float src_term = (alpha * color_a) / a;
@@ -226,6 +332,9 @@ int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float
                 g = color_g * src_term + g * dst_term;
                 b = color_b * src_term + b * dst_term;
             }
+        }
+
+        if (!eraser) {
 
             if (colorize > 0.0f && base_alpha > 0.0f) {
 
@@ -277,7 +386,7 @@ int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float
 
 template <typename channelType>
 void KisMyPaintSurface::getColorImpl(MyPaintSurface *self, float x, float y, float radius,
-                            float * color_r, float * color_g, float * color_b, float * color_a) {
+                            float * color_r, float * color_g, float * color_b, float * color_a, float paint) {
     Q_UNUSED(self);
     if (radius < 1.0f)
         radius = 1.0f;
@@ -300,7 +409,15 @@ void KisMyPaintSurface::getColorImpl(MyPaintSurface *self, float x, float y, flo
 
     m_precisePainterWrapper.readRect(dabRectAligned);
     KisPaintDeviceSP activeDev = m_precisePainterWrapper.overlay();
-    if(m_image) {
+    if (m_sampleMerged) {
+        // Toska (ToskaMyPaintSampleMerged): read the image's projection, as Color Smudge's
+        // KisColorSmudgeSourceImage does, converted into the painted layer's colour space
+        m_backgroundPainter->device()->clear();
+        m_image->blockUpdates();
+        m_backgroundPainter->bitBlt(dabRectAligned.topLeft(), m_image->projection(), dabRectAligned);
+        m_image->unblockUpdates();
+        activeDev = m_backgroundPainter->device();
+    } else if(m_image) {
         //m_image->blockUpdates();
         m_backgroundPainter->device()->clear();
         m_backgroundPainter->bitBlt(dabRectAligned.topLeft(), activeDev, dabRectAligned);
@@ -368,6 +485,35 @@ void KisMyPaintSurface::getColorImpl(MyPaintSurface *self, float x, float y, flo
             *color_b = CLAMP(b, 0.0f, 1.0f);
             *color_a = CLAMP(a, 0.0f, 1.0f);
         }
+
+        if (paint > 0.0f) {
+            // Toska: lerp(RGB average, spectral average weighted by weight * alpha, paint)
+            QVector<KisPaintMix::Rgb> pixels(size);
+            QVector<float> pixelWeights(size);
+            const int pixelSize = m_blendDevice->pixelSize();
+            const quint8 *data = m_blendDevice->data();
+            float spectralWeight = 0.0f;
+            for (quint32 i = 0; i < size; i++) {
+                const channelType *px = reinterpret_cast<const channelType*>(data + i * pixelSize);
+                float pr = px[2] / unitValue;
+                float pg = px[1] / unitValue;
+                float pb = px[0] / unitValue;
+                if (unitValue == 1.0f) {
+                    swap(pr, pb);
+                }
+                const float pa = qBound(0.0f, float(px[3] / unitValue), 1.0f);
+                pixels[i] = clampedRgb(pr, pg, pb);
+                pixelWeights[i] = qMax(0, int(weights[i])) * pa;
+                spectralWeight += pixelWeights[i];
+            }
+            if (spectralWeight > 0.0f) {
+                const KisPaintMix::Rgb spectral = KisPaintMix::mixMany(KisPaintMix::Model::Spectral, pixels.constData(),
+                                                                       pixelWeights.constData(), int(size));
+                *color_r = *color_r + (spectral.r - *color_r) * paint;
+                *color_g = *color_g + (spectral.g - *color_g) * paint;
+                *color_b = *color_b + (spectral.b - *color_b) * paint;
+            }
+        }
     }
 
     delete [] weights;
@@ -378,6 +524,10 @@ KisPainter* KisMyPaintSurface::painter() {
 }
 
 MyPaintSurface* KisMyPaintSurface::surface() {
+    return &m_surface->parent;
+}
+
+MyPaintSurface2* KisMyPaintSurface::surface2() {
     return m_surface;
 }
 

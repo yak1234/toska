@@ -24,6 +24,15 @@ private Q_SLOTS:
     void testDab();
     void testGetColor();
     void testLoading();
+
+    // Toska: libmypaint's spectral paint_mode, for presets that opt in
+    void testLegacyUnlessPaintMode();
+    void testSpectralDabBlueOnYellowIsGreen();
+    void testUnmixedDabIsExact();
+    void testSpectralDab16BitAndFloat();
+    void testEraserIgnoresPaintMode();
+    void testGetColorPigmentAveragesSpectrally();
+    void testSampleMergedReadsBelow();
 };
 
 #endif // KIS_MYPAINTOP_TEST_H

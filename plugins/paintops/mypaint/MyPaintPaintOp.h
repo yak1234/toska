@@ -27,6 +27,19 @@ public:
     KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPainter * painter, KisNodeSP node, KisImageSP image);
     ~KisMyPaintPaintOp() override;
 
+    /**
+     * Toska: whether the brush paints through libmypaint's mypaint_brush_stroke_to_2 (spectral paint_mode) rather
+     * than the legacy mypaint_brush_stroke_to: libmypaint's own legacy_smudge test, negated.
+     */
+    static bool usesPaintMode(MyPaintBrush *brush);
+
+    /**
+     * Toska: sets the brush's paint_mode base value from the preset. ToskaMyPaintPaintMode (0..1) overrides it when
+     * present; otherwise a preset whose MyPaint JSON does not name paint_mode gets 0 (libmypaint's default is 1, but
+     * Krita has always painted such presets with the legacy entry point, which ignores paint_mode).
+     */
+    static void applyToskaPaintMode(MyPaintBrush *brush, const KisPaintOpSettingsSP settings);
+
 protected:
 
     KisSpacingInformation paintAt(const KisPaintInformation& info) override;
@@ -37,6 +50,7 @@ protected:
 
 private:
     KisSpacingInformation computeSpacing(const KisPaintInformation &info, qreal lodScale) const;
+    void strokeTo(const KisPaintInformation &info, double dtime);
 
 private:
     QScopedPointer<KisMyPaintPaintOpPreset> m_brush;
@@ -46,6 +60,7 @@ private:
     KisImageWSP m_image;
     double m_dtime, m_radius, m_previousTime = 0;
     bool m_isStrokeStarted;
+    bool m_paintMode {false};
 };
 
 #endif // KIS_MY_PAINTOP_H_

@@ -21,6 +21,10 @@
 #include <kis_paintop_settings.h>
 #include <kis_spacing_information.h>
 #include <libmypaint/mypaint-brush.h>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+#include "MyPaintSensorPack.h"
 
 KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPainter *painter, KisNodeSP /*node*/, KisImageSP image)
     : KisPaintOp (painter) {
@@ -28,9 +32,12 @@ KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPai
     m_image = image;
 
     m_brush.reset(new KisMyPaintPaintOpPreset());
-    m_surface.reset(new KisMyPaintSurface(this->painter(), nullptr, m_image));
+    m_surface.reset(new KisMyPaintSurface(this->painter(), nullptr, m_image,
+                                          settings->getBool("ToskaMyPaintSampleMerged", false)));
 
     m_brush->apply(settings);
+    applyToskaPaintMode(m_brush->brush(), settings);
+    m_paintMode = usesPaintMode(m_brush->brush());
 
     if (settings->getBool("EraserMode")) {
 
@@ -55,6 +62,39 @@ KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPai
 KisMyPaintPaintOp::~KisMyPaintPaintOp() {
 }
 
+bool KisMyPaintPaintOp::usesPaintMode(MyPaintBrush *brush)
+{
+    return !(mypaint_brush_get_base_value(brush, MYPAINT_BRUSH_SETTING_PAINT_MODE) <= 0
+             && mypaint_brush_is_constant(brush, MYPAINT_BRUSH_SETTING_PAINT_MODE));
+}
+
+void KisMyPaintPaintOp::applyToskaPaintMode(MyPaintBrush *brush, const KisPaintOpSettingsSP settings)
+{
+    if (settings->hasProperty("ToskaMyPaintPaintMode")) {
+        const float paintMode = qBound(0.0f, float(settings->getDouble("ToskaMyPaintPaintMode")), 1.0f);
+        mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_PAINT_MODE, paintMode);
+        return;
+    }
+
+    const QJsonObject brushSettings =
+        QJsonDocument::fromJson(settings->getProperty(MYPAINT_JSON).toByteArray()).object().value("settings").toObject();
+    if (!brushSettings.contains("paint_mode")) {
+        mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_PAINT_MODE, 0.0f);
+    }
+}
+
+void KisMyPaintPaintOp::strokeTo(const KisPaintInformation &info, double dtime)
+{
+    if (m_paintMode) {
+        // stroke_to_2 also counts dabs differently, so only presets with paint_mode take it
+        mypaint_brush_stroke_to_2(m_brush->brush(), m_surface->surface2(), info.pos().x(), info.pos().y(),
+                                  info.pressure(), info.xTilt(), info.yTilt(), dtime, 1.0f, 0.0f, 0.0f);
+    } else {
+        mypaint_brush_stroke_to(m_brush->brush(), m_surface->surface(), info.pos().x(), info.pos().y(),
+                                info.pressure(), info.xTilt(), info.yTilt(), dtime);
+    }
+}
+
 KisSpacingInformation KisMyPaintPaintOp::paintAt(const KisPaintInformation& info) {
 
     if (!painter()) {
@@ -70,8 +110,7 @@ KisSpacingInformation KisMyPaintPaintOp::paintAt(const KisPaintInformation& info
     m_isStrokeStarted = mypaint_brush_get_state(m_brush->brush(), MYPAINT_BRUSH_STATE_STROKE_STARTED);
     if (!m_isStrokeStarted) {
 
-        mypaint_brush_stroke_to(m_brush->brush(), m_surface->surface(), info.pos().x(), info.pos().y(), info.pressure(),
-                               info.xTilt(), info.yTilt(), 1.0f);
+        strokeTo(info, 1.0f);
 
         m_dtime = 0.015;
     }
@@ -79,8 +118,7 @@ KisSpacingInformation KisMyPaintPaintOp::paintAt(const KisPaintInformation& info
         m_dtime = abs(info.currentTime() - m_previousTime)*0.001;
     }
 
-    mypaint_brush_stroke_to(m_brush->brush(), m_surface->surface(), info.pos().x(), info.pos().y(), info.pressure(),
-                           info.xTilt(), info.yTilt(), m_dtime);
+    strokeTo(info, m_dtime);
 
     m_previousTime = info.currentTime();
 
