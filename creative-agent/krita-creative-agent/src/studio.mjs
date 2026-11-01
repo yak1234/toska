@@ -2069,6 +2069,12 @@ export class StudioRuntime extends PaintingRuntime {
     await this.persist(); this.publish();
     return area;
   }
+  /** The kind of the plan step painted now (project-folder.ts folderStepKind; the Agent move's step, else the current one, as
+   * additionStepNow reads it), for the mixing policy's pass kind (colour-mixing/mixing-policy.ts); null outside a plan. */
+  paintStepKind() {
+    const index = this.mode === 'agent' ? this.currentMove?.step : this.goal?.current_step, step = Number.isInteger(index) ? this.goal?.brief?.steps?.[index] : null;
+    return step ? folderStepKind(step) : null;
+  }
   /** The element (its step title) a folder element step paints now, or null: an Agent move's element step, or Autopilot's
    * current step when it is an element's. */
   elementStepPart() {

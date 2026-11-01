@@ -23,6 +23,7 @@ import { recipeTool } from './recipe-tool.mjs';
 import { contourTool } from './contour-tool.mjs';
 import { brushCards, CATALOG, measuredModels, mixingModelCards } from './brush-catalog.mjs';
 import { withMixing } from './colour-mixing/pass-mixing.ts';
+import { SHIPPED_POLICY, SHIPPED_POLICY_ERROR, derivePassKind } from './colour-mixing/mixing-policy.ts';
 import { mixColorsTool } from './colour-mixing/mix-tool.ts';
 import { COMIC_OPERATIONS, CRAFT_OPERATIONS, mutates } from './craft.mjs';
 import { assetTools } from './assets.mjs';
@@ -391,8 +392,12 @@ export function paintingTools(runtime) {
     },
   ];
   shapeLimits(runtime, tools);
-  // mixing -> mixing_model, refused without a catalog card; wrapped before the batch captures paint_pass's execute.
-  withMixing(tools.find(t => t.name === 'paint_pass'), () => CATALOG);
+  // mixing -> mixing_model, refused without a catalog card; a pass that names no model gets the mixing policy's model for
+  // its kind (mixing-policy.ts: the reference tools' pass_kind, else the plan step painting now, else the preset's job).
+  // Wrapped before the batch, paint_recipe and the reference tools capture paint_pass's execute, so every pass goes through it.
+  if (SHIPPED_POLICY_ERROR) runtime.diagnostics?.record?.({ type: 'mixing_policy_invalid', error: SHIPPED_POLICY_ERROR });
+  withMixing(tools.find(t => t.name === 'paint_pass'), () => CATALOG,
+    { policy: () => SHIPPED_POLICY, stepKind: () => runtime.paintStepKind?.() ?? null, derive: derivePassKind });
   if (measuredModels(CATALOG).length) tools.push(mixColorsTool({ catalog: () => CATALOG }));   // not offered until a model has a card
   helpLookup(runtime, tools);
   tools.push(recipeTool(runtime, tools.find(t=>t.name==='paint_pass').execute));

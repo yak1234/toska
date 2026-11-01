@@ -11,6 +11,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import {Type} from 'typebox';
 import {containedFile,imageContent} from './files.mjs';
 import {scopePlan,loadAreaMask,scopedShare,chipLine} from './paint-only-here.ts';
+import {referencePassKind} from './colour-mixing/mixing-policy.ts';
 import {referenceSchema,edgeSchema,surfaceSchema,generateReferencePlan,generateEdgePlan,generateSurfacePlan,analysisCopy,estimateReferenceStrokes,DEFAULT_STEPS,REFERENCE_GENERATOR_VERSION,cropToAspect,EDGE_LIMIT} from './reference-generator.mjs';
 import {EDGE_SPACING_MAX} from './reference-limits.ts';
 // Strokes per native call. Each call re-reads the canvas and journals its receipt; at 128 that
@@ -328,7 +329,10 @@ export function referenceTools(runtime,executePass,fillRegion){
      const count=Math.min(runtime.config?.reference_batch??REFERENCE_BATCH,pass.strokes.length-job.offset);
      if(!job.pending){job.pending={id:'reference-'+job.id+'-'+job.pass+'-'+job.offset,count};await save();}
      const args={name:job.recipe.name+' · '+pass.name,preset:pass.preset??job.recipe.preset,region:job.recipe.target,
-       strokes:pass.strokes.slice(job.offset,job.offset+count),...(pass.smudge_rate?{smudge_overlay:true,smudge_rate:pass.smudge_rate}:{}),...(job.layer_id?{continue_layer_id:job.layer_id}:{})};
+       strokes:pass.strokes.slice(job.offset,job.offset+count),...(pass.smudge_rate?{smudge_overlay:true,smudge_rate:pass.smudge_rate}:{}),...(job.layer_id?{continue_layer_id:job.layer_id}:{}),
+       // The mixing policy's pass kind (mixing-policy.ts): a transfer underpaints, surface blends, edges are details. paint_pass's
+       // mixing wrapper reads it and never sends it to the plugin.
+       pass_kind:referencePassKind(job.recipe.mode)};
      const rate=runtime.referenceStrokeRate,eta=rate>0&&job.total>=20000?Math.ceil((job.total-job.completed)/rate/60):0;   // a long underpainting says how long is left
      runtime.emit({type:'status',phase:'painting',message:job.recipe.name+' · '+pass.name+' · '+job.completed.toLocaleString('en-US')+'/'+job.total.toLocaleString('en-US')+' strokes'+(eta?` · about ${eta} min left`:'')});
      const began=Date.now(),result=await executePass(job.pending.id,args,signal);accept(result.details,job.pending);current=result.details;await save();

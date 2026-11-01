@@ -3,13 +3,15 @@
 // The catalog gate for colour mixing (colour-mixing plan, task 6). A mixing model reaches the painter, and a (preset, model)
 // pair reaches the plugin, only when brush-catalog.json `mixing` holds a measured card for it:
 //   mixing.models[model] = card string; mixing.presets[preset] = { cards: { [model]: card }, default?: model }.
-// rgb is the upstream behaviour and always allowed: it sends nothing. A preset's default applies when a pass names no model.
-// Mechanism only: the catalog comes in as an argument, so this module imports no .mjs.
+// rgb is the upstream behaviour and always allowed: it sends nothing. With a mixing policy (mixing-policy.ts, task 6a) a pass
+// that names no model gets the policy's model for its kind; without one (older callers) the preset's default applies.
+// Mechanism only: the catalog and policy come in as arguments, so this module imports no .mjs (and only types from the policy).
 import type { MixModel } from './mix.ts';
 import { MIX_MODELS } from './mix.ts';
+import type { MixingPolicy, PassKind } from './mixing-policy.ts';
 
 export type PresetMixing = { cards?: Partial<Record<MixModel, string>>; default?: MixModel };
-export type MixingCatalog = { mixing?: { models?: Partial<Record<MixModel, string>>; presets?: Record<string, PresetMixing> } };
+export type MixingCatalog = { mixing?: { models?: Partial<Record<MixModel, string>>; presets?: Record<string, PresetMixing> }; jobs?: Record<string, readonly string[]> };
 
 const isModel = (name: string): name is MixModel => (MIX_MODELS as readonly string[]).includes(name);
 
@@ -36,12 +38,16 @@ function measuredPairs(catalog: MixingCatalog): string {
   return rows.map(([name, models]) => `${name}: ${models.join(', ')}`).join('; ');
 }
 
-/** What the plugin gets for a pass: `mixing_model`, or nothing (rgb, or no model and no default), or the refusal. */
-export function passMixing(args: { preset: string; mixing?: MixModel | string }, catalog: MixingCatalog): { mixing_model?: MixModel } | { error: string } {
+/** What the plugin gets for a pass: `mixing_model`, or nothing (rgb), or the refusal. Order: the pass's explicit `mixing`
+ * (refused without a card) > the policy's model for the pass kind, where the preset has a card for it > rgb. Without a
+ * policy, the preset's default stands in for the policy. A policy never refuses: no card means rgb. */
+export function passMixing(args: { preset: string; mixing?: MixModel | string; kind?: PassKind | string }, catalog: MixingCatalog, policy?: MixingPolicy): { mixing_model?: MixModel } | { error: string } {
   const named = args.mixing;
   if (named === undefined) {
     const own = presetMixing(args.preset, catalog);
-    return own?.default && own.default !== 'rgb' ? { mixing_model: own.default } : {};
+    if (!policy) return own?.default && own.default !== 'rgb' ? { mixing_model: own.default } : {};
+    const model = args.kind && Object.hasOwn(policy.kinds, args.kind) ? policy.kinds[args.kind as PassKind] ?? policy.default : policy.default;
+    return model !== 'rgb' && isModel(model) && own?.cards[model] ? { mixing_model: model } : {};
   }
   if (named === 'rgb') return {};
   const measured = measuredModels(catalog);
@@ -56,13 +62,27 @@ export function passMixing(args: { preset: string; mixing?: MixModel | string },
 
 type Executable = { parameters?: unknown; execute: (id: string, args: any, signal?: AbortSignal, ...rest: any[]) => Promise<any> };
 
-/** Wraps a paint_pass tool so its prompt-facing `mixing` becomes the plugin's `mixing_model` (or is refused); the batch
- * captures this execute, so batch passes get the same handling. */
-export function withMixing<T extends Executable>(tool: T, catalog: () => MixingCatalog): T {
+/** Where withMixing finds the policy and the pass kind: the policy, the kind of the plan step painting now (FolderStepKind,
+ * studio.mjs paintStepKind), and how a kind is derived (mixing-policy.ts derivePassKind, passed in to keep this module's
+ * imports type-only). */
+export type MixingContext = {
+  policy: () => MixingPolicy;
+  stepKind?: () => string | null | undefined;
+  derive: (input: { tool?: string; step?: string | null; preset?: string }, catalog: MixingCatalog) => PassKind;
+};
+
+/** Wraps a paint_pass tool so its prompt-facing `mixing` becomes the plugin's `mixing_model` (or is refused); the batch,
+ * paint_recipe and the reference tools capture this execute, so their passes get the same handling. With a context, a pass
+ * that names no model gets the policy's: its kind is the host's internal `pass_kind` (the reference tools send their own;
+ * never sent to the plugin), else derived from the plan step and the preset's job. */
+export function withMixing<T extends Executable>(tool: T, catalog: () => MixingCatalog, context?: MixingContext): T {
   const inner = tool.execute;
   tool.execute = async (id, args, ...rest) => {
-    const { mixing, ...others } = args ?? {};
-    const sent = passMixing({ preset: others.preset, ...(mixing === undefined ? {} : { mixing }) }, catalog());
+    const { mixing, pass_kind, ...others } = args ?? {};
+    const current = catalog();
+    const kind = context ? (typeof pass_kind === 'string' && pass_kind ? pass_kind
+      : context.derive({ tool: 'paint_pass', step: context.stepKind?.() ?? null, preset: others.preset }, current)) : undefined;
+    const sent = passMixing({ preset: others.preset, ...(mixing === undefined ? {} : { mixing }), ...(kind ? { kind } : {}) }, current, context?.policy());
     if ('error' in sent) throw new Error(sent.error);
     return inner(id, { ...others, ...sent }, ...rest);
   };

@@ -225,6 +225,8 @@ def bundle_companion(root, dependency_root, companion, lock, arch):
     bundle_upscale_worker(root, companion, esbuild)
     shutil.copy2(root / 'src/visual-check-questions.json', companion / 'src/visual-check-questions.json')
     shutil.copy2(root / 'src/brush-catalog.json', companion / 'src/brush-catalog.json')
+    # The mixing policy beside main.mjs, where the bundled colour-mixing/mixing-policy.ts reads './mixing-policy.yaml'.
+    shutil.copy2(root / 'src/colour-mixing/mixing-policy.yaml', companion / 'src/mixing-policy.yaml')
     shutil.copy2(root / 'src/downloaded-models.json', companion / 'src/downloaded-models.json')   # the notices list them
     shutil.copy2(root / 'src/texture-catalogue.json', companion / 'src/texture-catalogue.json')   # texture-library.ts reads it
     # Python for image assets: the sandbox runner beside main.mjs, Pyodide itself, the bundled skills
