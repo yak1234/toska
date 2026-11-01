@@ -1,6 +1,7 @@
 # Pigment-style colour mixing for the agent (future change, not scheduled)
 
-Status: parked by the artist on 20 October 2026. Do not start before Demo v1 (see krita-fork/tasks.md, section 7) is done.
+Status: superseded on 2026-11-01 by [`colour-mixing`](../colour-mixing/proposal.md) (the artist made colour work
+mandatory). Kept for history; earlier status: parked by the artist on 20 October 2026.
 
 ## Idea
 Pigment.O (a Krita colour picker, mixer and sampler plugin, https://krita-artists.org/t/pigment-o-plugin/4531) models how physical

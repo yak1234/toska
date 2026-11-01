@@ -2,6 +2,10 @@
 
 Status: design approved by the artist (2026-10-25: "sure"). Nothing is built yet. Experimental: off by default.
 
+2026-11-01: `live-effects` is folded in as this change's C++ half (design in `../live-effects/proposal.md`): fill-layer
+generators in `plugins/generators/` (focus lines first, then speed lines and light rays) that recipe blocks may target,
+saved with a seed, cached per zoom level, one undo step per change. Planned as a later section of `tasks.md`.
+
 ## Why
 
 The artist (2026-10-25), after `paint_snow`: "how could the agent do it on its own"; "make it a plugin … so it can build

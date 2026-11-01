@@ -181,3 +181,203 @@
 - [ ] On: `paint_effect` fog paints one layer "Effect: fog", faces clear, Undo removes it.
 - [ ] `/new-effect light shafts through the clouds`: a card within 4 minutes; Keep; the next move uses it; Remove effect drops it; Reset empties the artist's folder only.
 - [ ] Report exactly which of these ran, with the card image sent to the artist.
+
+## Part 2: Live effects (C++ generators)
+
+> Folded in on 2026-11-01 from `live-effects` (design: `creative-agent/openspec/changes/live-effects/proposal.md`; Clip Studio evidence: `creative-agent/local-notes/clip-studio-study/README.md`, "Effect lines" and "Screentones"). Same execution rules as Part 1.
+
+**Goal:** Focus lines, speed lines and light rays are fill layers drawn from about fifteen numbers and a seed saved in the `.kra`. Each redraws only when a setting changes and stays sharp at any image size. A change from the agent is one Krita undo step, and the artist can edit the layer by hand in the usual fill-layer dialog. The agent adds and changes these layers through one tool by their settings. A recipe's `rays` block can produce a light-rays layer.
+
+**Architecture:** One C++ plugin, `plugins/generators/liveeffects/`, registers three generators: `focuslines`, `speedlines`, `lightrays`. It is laid out like `screentone/`: a `KisGenerator` subclass, a `KisFilterConfiguration` subclass, a `.ui` widget, a plugin class with a `.json` file, and `tests/`. The geometry is pure maths with QtCore only, in a static library that both the module and the tests link. Line spacing and closure follow the Clip Studio study, and randomness uses a seeded LCG. Two caches:
+- **Our geometry cache:** each configuration builds its polygon list once, keyed by the configuration's XML and the canvas size, guarded by a mutex as `KisScreentoneGeneratorConfiguration::Private::getTemplate()` is.
+- **Krita's pixel cache, already there:** `KisGeneratorLayer::requestUpdateJobsWithStroke` (`libs/image/generator/kis_generator_layer.cpp:117-154`) regenerates only regions not yet prepared, and starts again only when the config fails `compareTo`, the image bounds change or the layer moves. The canvas mipmaps serve each zoom level, so "a cache per zoom level" needs no new per-zoom code.
+
+One libkis change: `FillLayer.setGenerator` calls `layer->setFilter` directly (`libs/libkis/FillLayer.cpp:52-74`), with no undo step. It will run `KisChangeFilterCmd` (`libs/image/commands/kis_change_filter_command.h`) through `DocumentHistory::runPropertyCommand`, as `Node.setName`/`setOpacity` do (`Node.cpp:516,536`). Inside an agent move the change joins that move's step. Python cannot push a `KUndo2Command`, so there is no plugin-only route.
+
+Plugin side: the fill path of `create_layer` already exists (`layer_craft.py:110-121`, `capabilities.validate_generator`); new are `set_fill`, the generators in `capabilities.GENERATOR_CANDIDATES`, and `observe_probe` gaining `live_effects`. Companion: `src/effects/live-effect-tool.ts` provides `live_effect`, a measured card file, and `rays` gains `live: true`.
+
+**Tech Stack:** C++17, Qt5/Qt6 (QtCore and QPainter on `QImage`, no platform APIs), Krita `kritaimage`/`kritaui`, QTest + `kritatestsdk`; plus Part 1's stack.
+
+### Constraints added for Part 2 (Part 1's Global Constraints still apply)
+
+- **Where C++ goes:** only `plugins/generators/liveeffects/`, plus `add_subdirectory(liveeffects)` in `plugins/generators/CMakeLists.txt`. Single exception: the libkis `FillLayer.setGenerator` change, tested in `libs/libkis/tests/TestDocument.cpp`. Nothing under `libs/image` or `libs/ui`.
+- **Builds:** only `nice -n 19 env CMAKE_BUILD_PARALLEL_LEVEL=8 zsh agent/build-macos.sh` (installs into `_install`). Never Homebrew `ninja`, not even `-n`. If `_build/CMakeCache.txt` has `BUILD_TESTING:BOOL=OFF`, stop and ask: `--tests` only takes effect on a fresh configure.
+- **C++ tests:** only `agent/run-tests.sh <program> [functions]`; every new program in `agent/ci-tests.txt`; QTest; files under a `QTemporaryDir` (absolute paths); `QVERIFY` every pointer; widgets built, never shown; no dialogs; do not copy screentone's habit of writing `*_generated.png` into the working folder; generators fetched via `KisGeneratorRegistry::instance()->get(...)` as `KisScreentoneGeneratorTest` does.
+- **Geometry and randomness:** positions as 0–1 shares of width and height, sizes as shares of the long side. The seed is a config property `seed`, saved only in the layer's `.filterconfig` XML (`kis_kra_save_visitor.cpp:480-496`), never a side file. Line `i` draws from its own stream `KisLiveLcg(seed ^ (i * 2654435761u))`, always exactly four draws in a fixed order (spacing, length, width, group), so changing one setting never reshuffles lines it does not touch.
+- **Caps** (clamped; each clamp named in the returned `clamped` list): focus lines ≤ 4000, speed lines ≤ 2000, rays ≤ 64; step ≥ 0.05°; NaN or negative → the setting's default; a whole 6000 × 4500 layer generates in ≤ 5 s (asserted).
+- **Colour:** read with `getColor("color")` as the solid generator does (`plugins/generators/solid/colorgenerator.cpp:78`), so `capabilities.info_object`'s `'#RRGGBB'` path works unchanged.
+- **Gating:** `live_effect` is offered only when `custom_effects` is on, Krita lists the generator, and `src/effects/live-catalog.json` holds a measured card for it.
+- **Live tests:** MCP `creative_test_*` on copies only, `width=6000 height=4500`; never `brush_probe`; before `install-app.sh` check `pgrep -fl "Toska.app/Contents/MacOS"` and `mount | grep -i toska` and ask the artist to quit if either finds anything; one install and one restart per batch.
+- **Portability:** no Cocoa, no `Q_OS_MACOS` branches; Windows and Linux CI must build the plugin.
+
+### Review Focus (Part 2)
+
+6. Reload and edit stability: a saved and reloaded layer redraws the same pixels; changing width, length or taper moves no line's angle. → Task 10 `widthChangeKeepsEveryAngle`; Task 12 `testLiveEffectKraRoundTripSamePixels`.
+7. Undo: an agent setting change is one step, undo restores the exact previous pixels; an identical config adds no step. → Task 12 `testSetGeneratorIsOneUndoStep`, `testSetGeneratorSameConfigAddsNoStep`.
+8. Absurd settings never hang; they are clamped and named (`spacing_angle 0`, `count 1e9`, `width NaN`, `spacing_distance -1`). → Task 10 `capsHoldForAbsurdSettings`; Task 14 `test_set_fill_refuses_unknown_keys_and_clamps_numbers`.
+9. Patch seams: Krita renders generators in parallel patches (`kis_generator_stroke_strategy.cpp:39-54`); a line crossing a patch edge must match the whole-canvas render. → Task 11 `patchesMatchWholeRender`.
+10. Observe slowdown (the New Moscow filter-mask failure): 1, 5 and 10 live layers at 6000 × 4500 stay close to none. → Task 14 `test_observe_probe_adds_live_effect_layers`; Task 16 measurement.
+11. Offering a generator before it has a card. → Task 15 `a generator without a measured card is not offered`.
+
+---
+
+### Task 10: Effect-line geometry and the seeded LCG (pure C++)
+
+**Files:**
+- Create: `plugins/generators/liveeffects/KisLiveEffectsGeometry.h`, `KisLiveEffectsGeometry.cpp`, `plugins/generators/liveeffects/CMakeLists.txt` (`add_library(kritaliveeffectsgeometry STATIC …)`, `POSITION_INDEPENDENT_CODE ON`, linking `Qt::Core Qt::Gui`; precedent: the static libraries in `plugins/tools/basictools/CMakeLists.txt`)
+- Create: `plugins/generators/liveeffects/tests/CMakeLists.txt`, `tests/KisLiveEffectsGeometryTest.{h,cpp}`
+- Modify: `plugins/generators/CMakeLists.txt` (`add_subdirectory(liveeffects)`), `agent/ci-tests.txt` (`KisLiveEffectsGeometryTest`)
+
+**Interfaces:**
+- Produces:
+  - `struct KisLiveLcg { explicit KisLiveLcg(quint32 seed); qreal next(); }` — `next()`: `x = x * 1103515245u + 1234567u`, returns `((x >> 16) & 0x7fff) / 32768.0`.
+  - `struct KisFocusLinesSettings { QPointF centre; qreal innerRx, innerRy, rotationDeg; bool byDistance; qreal stepDeg, stepDistance, spacingJitter, length, lengthJitter, width, widthJitter, taper; int groupSize; qreal groupGap, groupJitter; quint32 seed; }` (`centre` 0–1 share; radii, lengths, widths, `stepDistance` shares of the long side)
+  - `struct KisSpeedLinesSettings { qreal angleDeg, centreOffset, band; int count; qreal length, lengthJitter, width, widthJitter, taper; quint32 seed; }`
+  - `struct KisLightRaysSettings { QPointF source; int count; qreal spreadDeg, softness, falloff; quint32 seed; }` (`source` in −0.5 to 1.5, so a ray can start outside the frame)
+  - `QVector<qreal> focusLineAngles(const KisFocusLinesSettings &, QSize canvas, QStringList *clamped = nullptr);`
+  - `QVector<QPolygonF> focusLinePolygons(const KisFocusLinesSettings &, QSize canvas, QStringList *clamped = nullptr);` (canvas pixels)
+  - `QVector<QPolygonF> speedLinePolygons(const KisSpeedLinesSettings &, QSize canvas, QStringList *clamped = nullptr);`
+  - `qreal lightRaysAlpha(const KisLightRaysSettings &, QSize canvas, QPointF pixel);` (analytic, 0–1)
+  - `int liveEffectsGeometryBuilds();` (test hook: counts polygon-builder calls)
+
+**Spacing and closure algorithm** (the only body this plan fixes):
+
+```
+long = max(canvas.w, canvas.h); a = 0; i = 0; angles = []
+radiusAt(θ) = rx*ry / sqrt((ry*cos(θ-φ))² + (rx*sin(θ-φ))²)   // px, rx = innerRx*long, ry = innerRy*long, φ = rotation
+              (if rx or ry is 0: 0.1*long, so distance spacing has a radius to measure along)
+while a < 360 - 1e-9 and i < 4000:
+    angles.push(rotationDeg + a)
+    rng = KisLiveLcg(seed ^ (i * 2654435761u)); uSpace, uLen, uWidth, uGroup = rng.next() ×4   // always four
+    base = byDistance ? degrees(atan(stepDistance*long / radiusAt(rotationDeg + a))) : stepDeg
+    base = clamp(base, 0.05, 90)
+    n = max(1, round((360 - a) / base)); step = (360 - a) / n           // stretch so the circle closes evenly
+    if n > 1: step *= 1 + spacingJitter * (2*uSpace - 1)                 // never jitter the closing step
+    if groupSize > 0 and (i + 1) % groupSize == 0:
+        step += (groupGap - 1) * step * (1 + groupJitter * (2*uGroup - 1))
+    a += step; i += 1
+```
+
+Each line is a quad: inner end on the inner ellipse at its angle; outer end at radius `radiusAt + length*long*(1 + lengthJitter*(2uLen−1))`; outer width `width*long*(1 + widthJitter*(2uWidth−1))`; inner width `outer*(1 − taper)` (taper 1 = triangle). Speed lines put `count/2` lines on each side of the centre line, direction negated on the second side; each line's offset across the band comes from its own stream.
+
+- [ ] **Step 1: Write the failing tests** in `KisLiveEffectsGeometryTest`:
+  - `lcgMatchesClipStudioConstants`: seed 1 gives 0.514434814453125, then 0.464874267578125.
+  - `byAngleTenDegreesGivesThirtySixEvenLines`: 36 angles, every gap 10 ± 1e-9.
+  - `lastStepIsStretchedToCloseTheCircle`: a 7° step gives 51 lines; every gap, last-to-first included, is 360/51 ± 1e-9.
+  - `byDistanceIsEvenAlongAnEllipse`: rx 0.3, ry 0.1, distance 0.01; neighbour arc length within ±10% of 0.01 × long side.
+  - `sameSeedSameLines`; `seedChangesLines` (polygons differ).
+  - `widthChangeKeepsEveryAngle`: spacing jitter 0.5; changing width, length or taper leaves `focusLineAngles` identical.
+  - `groupingAddsTheGap`: group 5, gap 3, no jitter; every fifth gap is 3× the others.
+  - `speedLinesSplitAroundTheCentreLine`: count 40 → 20 per side, opposite directions.
+  - `raysFadeWithDistance`: alpha falls along a ray.
+  - `raysCountMatches`: sampling a circle around the source finds `count` peaks.
+  - `capsHoldForAbsurdSettings`: `stepDeg 0` → ≤ 4000 angles, `clamped` contains `"spacing_angle"`; `width` NaN → default, `"width"` named; speed `count` 10^9 → 2000; all in < 100 ms.
+- [ ] **Step 2: Build and run; expect FAIL.** `nice -n 19 env CMAKE_BUILD_PARALLEL_LEVEL=8 zsh agent/build-macos.sh` fails to compile: `KisLiveEffectsGeometry.h` not found, or no definitions.
+- [ ] **Step 3: Implement** `KisLiveEffectsGeometry.cpp` to the algorithm and interfaces above.
+- [ ] **Step 4: Build and run; expect PASS.** `agent/run-tests.sh KisLiveEffectsGeometryTest` reports `Totals: 14 passed, 0 failed`.
+- [ ] **Step 5: Commit** `Live effects geometry: focus-line spacing by angle or distance with the last step stretched to close the circle, speed lines and rays, a seeded LCG per line`.
+
+### Task 11: The focus-lines generator (configuration, generate, plugin)
+
+**Files:**
+- Create in `plugins/generators/liveeffects/`: `KisLiveEffectsConfiguration.{h,cpp}` (base for all three: `color`, `opacity`, `seed`, the geometry cache), `KisFocusLinesGenerator.{h,cpp}`, `KisLiveEffectsGeneratorPlugin.{h,cpp}`, `KritaLiveEffectsGenerator.json` (as `KritaScreentoneGenerator.json`: `"Id": "Live Effects Generator"`, `"X-KDE-Library": "kritaliveeffectsgenerator"`, `"X-Krita-Version": "28"`), `tests/KisFocusLinesGeneratorTest.{h,cpp}`
+- Modify: `liveeffects/CMakeLists.txt` (`kis_add_library(kritaliveeffectsgenerator MODULE …)` linking `kritaui kritaliveeffectsgeometry`, installed to `${KRITA_PLUGIN_INSTALL_DIR}`), `agent/ci-tests.txt`
+
+**Interfaces:**
+- Consumes: Task 10.
+- Produces:
+  - `KisFocusLinesGenerator : KisGenerator` — id `focuslines`, category `KoID("basic")`, label `i18n("&Focus Lines...")`, `setSupportsPainting(true)`, `allowsSplittingIntoPatches()` default (true).
+  - `KisLiveEffectsConfiguration : KisFilterConfiguration` with `const QVector<QPolygonF> &polygons(QSize canvas) const`; cache key `toXML()` + canvas size; the cache is shared by `clone()` (safe: the key, not the setters, decides rebuilds).
+  - Properties (snake_case as screentone's): `center_x center_y inner_rx inner_ry rotation spacing_mode(0 angle, 1 distance) spacing_angle spacing_distance spacing_jitter length length_jitter width width_jitter taper group_size group_gap group_jitter color opacity seed`.
+  - `factoryConfiguration()` sets every default (so `FillLayer.filterConfig()` and `capabilities._generators` list them all), seed 1. `defaultConfiguration()` (the dialog path, `kis_wdg_generator.cpp:36,124`) draws a fresh seed from `QRandomGenerator::global()`. *Assumption: `defaultConfiguration` is only used for new dialog layers; check its callers first.*
+  - `generate(dst, size, config, updater)`: canvas = `dst.paintDevice()->defaultBounds()->bounds()` (as `simplexnoisegenerator.cpp:52`); keep polygons whose bounding rect meets the patch; draw antialiased with `QPainter` into a patch-sized `QImage::Format_Alpha8` translated by the patch's top-left; use it as a selection and lay the colour over it as screentone's generate does (foreground `bitBlt` through a `KisSelection`).
+- [ ] **Step 1: Write the failing tests** in `KisFocusLinesGeneratorTest` (through the registry, `rgb8` devices): `registryHasFocusLines`; `factoryConfigurationListsEverySetting` (20 names); `sameSeedSamePixels`; `seedChangesPixels`; `xmlRoundTripKeepsSettingsAndSeed` (`toXML` → `fromXML` on a fresh factory config: `compareTo` true, identical pixels); `patchesMatchWholeRender` (600×450 in one call equals 7×5 uneven patches, byte for byte); `sharpAtAnySize` (1200×900 halved with `KisTransformWorker` vs 600×450: mean absolute alpha difference < 3/255); `geometryBuiltOncePerSettings` (four patches → 1 build; changed `width` → 2; same XML again → no new build); `wholeCanvasUnderFiveSeconds` (6000×4500, defaults, single thread).
+- [ ] **Step 2: Build; run `agent/run-tests.sh KisFocusLinesGeneratorTest`; expect FAIL** (registry has no `focuslines`).
+- [ ] **Step 3: Implement** configuration, generator and plugin (`KisGeneratorRegistry::instance()->add(new KisFocusLinesGenerator())`, as `KisScreentoneGeneratorPlugin.cpp`).
+- [ ] **Step 4: Build; run both test programs; expect PASS.**
+- [ ] **Step 5: Commit** `Focus lines fill layer: drawn from settings and a seed saved with the layer, geometry built once per settings, sharp at any size`.
+
+### Task 12: Changing a fill layer from a script is one undo step (libkis)
+
+**Files:**
+- Modify: `libs/libkis/FillLayer.cpp:52-74`, `libs/libkis/FillLayer.h` (docstring: one undo step, joining an open macro or agent move), `libs/libkis/tests/TestDocument.{h,cpp}`
+
+**Interfaces:**
+- Produces: `FillLayer.setGenerator(name, config)`, same signature and return as now.
+  - Layer in an image: `after = cfg->cloneWithResourcesSnapshot()`, `before = layer->filter()->cloneWithResourcesSnapshot()`, then `DocumentHistory::runPropertyCommand(image(), new KisChangeFilterCmd(layer, before, after), "FillLayer.setGenerator()")`, keeping the existing `forceUpdateTimedNode` wait.
+  - Same config (`before->compareTo(after)`): returns true, no step.
+  - Layer not yet in an image: `setFilter` as before, no step.
+- [ ] **Step 1: Write the failing tests** in `TestDocument`: `testSetGeneratorIsOneUndoStep` (a `color` fill layer red → blue; `undoCount` +1; undo restores red pixels exactly); `testSetGeneratorSameConfigAddsNoStep`; `testSetGeneratorInsideAgentMoveJoinsIt` (`beginAgentMove("x")`, two `setGenerator`, `endAgentMove` → one step); `testLiveEffectKraRoundTripSamePixels` (a `focuslines` layer at 600×450, seed 7, saved to `QTemporaryDir`/a.kra, reopened with `Krita.openDocument`: equal `pixelData`, `filterConfig().property("seed") == 7`; needs the installed plugin, which `run-tests.sh`'s `KRITA_PLUGIN_PATH` provides).
+- [ ] **Step 2: Build; run `agent/run-tests.sh TestDocument`; expect FAIL** on the first three (`undoCount` unchanged).
+- [ ] **Step 3: Implement** as above.
+- [ ] **Step 4: Run `agent/run-tests.sh TestDocument TestDocumentHistory TestPythonAgentMove`; expect PASS.**
+- [ ] **Step 5: Commit** `libkis: FillLayer.setGenerator is one undo step (KisChangeFilterCmd through the script history), so a live effect's setting change undoes exactly`.
+
+### Task 13: Speed lines, light rays, and the three config widgets
+
+**Files:**
+- Create in `plugins/generators/liveeffects/`: `KisSpeedLinesGenerator.{h,cpp}`, `KisLightRaysGenerator.{h,cpp}`, `KisFocusLinesConfigWidget.{h,cpp,ui}`, `KisSpeedLinesConfigWidget.{h,cpp,ui}`, `KisLightRaysConfigWidget.{h,cpp,ui}`, `tests/KisSpeedLinesGeneratorTest.cpp`, `tests/KisLightRaysGeneratorTest.cpp`, `tests/KisLiveEffectsConfigWidgetTest.cpp` (links `kritaui`)
+- Modify: the plugin class (register all three), `CMakeLists.txt` (`ki18n_wrap_ui`), `agent/ci-tests.txt`
+
+**Interfaces:**
+- Speed lines: `angle center_offset band count length length_jitter width width_jitter taper color opacity seed`.
+- Light rays: `source_x source_y count spread softness falloff color opacity seed` (per pixel via `lightRaysAlpha`, no blur, so patches cannot seam).
+- Each widget: a `KisConfigWidget` with `setConfiguration`/`configuration`, plain Qt widgets as screentone's; a **New seed** button; `sigConfigurationUpdated` fires once per edit.
+- [ ] **Step 1: Write the failing tests**: `speedLinesSameSeedSamePixels`, `speedLinesPatchesMatchWholeRender`, `raysPatchesMatchWholeRender`, `raysSharpAtAnySize`; per widget `widgetRoundTripKeepsEverySetting` (`setConfiguration(c)` → `configuration()->compareTo(c)`); `newSeedChangesOnlyTheSeed`. Widgets constructed, never shown.
+- [ ] **Step 2: Build; run the three programs; expect FAIL.**
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Build; run all five live-effects programs plus `TestDocument`; expect PASS.**
+- [ ] **Step 5: Commit** `Speed lines and light rays fill layers, and a settings dialog for each live effect so the artist can edit them by hand`.
+
+### Task 14: Plugin side: offer the generators, `set_fill`, observe with live layers
+
+**Files:**
+- Modify: `creative-agent/krita-mcp/krita-plugin/kritamcp/capabilities.py` (`GENERATOR_CANDIDATES` adds `'focuslines', 'speedlines', 'lightrays'`; `GENERATOR_SETTINGS` gains `color: {'type': 'color', 'default': '#000000'}` for each; `MANIFEST_VERSION` → 4)
+- Modify: `layer_craft.py` (`SET_FILL_FIELDS = ('layer_id', 'generator_config', 'expected_revision')`, `_craft_validate_set_fill`, `_craft_set_fill`, `_craft_restore_fill`)
+- Modify: `creative_tools.py` (operation list at line 625 and its validate/apply/reject branches beside `set_layer` at lines 698, 788, 924, 1920; `observe_probe` at line 238 gains `live_effects` 0–20, adding that many `focuslines` fill layers, removed afterwards like its probe paint layers)
+- Modify: `protection.py:194,331` (`set_fill` restores like `set_layer`)
+- Test: `creative-agent/krita-creative-agent/tests/test_live_effects_craft.py` (fakes from `test_snow_craft.py`)
+
+**Interfaces:**
+- Produces native operation `set_fill {layer_id, generator_config}`: only an agent-owned fill layer whose generator is one of the three; keys and types checked against the manifest; numbers clamped to the C++ caps with each clamp named; calls `FillLayer.setGenerator(name, info)` (one undo step after Task 12); returns `{prior: {generator, config}, clamped: [...]}`. Rejecting the pass calls `setGenerator` with `prior`.
+- Produces `observe_probe {layers?, live_effects?}` returning `ms` as now plus `live_effects: N`.
+- [ ] **Step 1: Write the failing tests**: `test_new_generators_are_offered_when_krita_has_them`; `test_set_fill_changes_only_agent_fill_layers` (the artist's fill layer refused, naming why); `test_set_fill_refuses_unknown_keys_and_clamps_numbers` (`width` NaN, `count` 1e9, unknown `foo`); `test_set_fill_reject_restores_prior_config`; `test_observe_probe_adds_live_effect_layers` (N fill layers added, then all removed).
+- [ ] **Step 2: Run them; expect FAIL** (Part 1's plugin suite command with `-p 'test_live_effects*.py'`).
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them, then the whole plugin suite (`-p 'test_*.py'`); expect PASS.**
+- [ ] **Step 5: Commit** `Live effects in the plugin: offered as fill generators, changed by settings with set_fill (one undo step), observe_probe times live layers`.
+
+### Task 15: Companion: `live_effect`, catalog cards, and `rays` targeting the generator
+
+**Files:**
+- Create: `krita-creative-agent/src/effects/live-effect-tool.ts`, `krita-creative-agent/src/effects/live-catalog.json` (starts as `{ "cards": {} }`; filled by Task 16)
+- Modify: `src/effects/recipe.ts` (`rays` gains `live: Type.Optional(Type.Boolean())`); `src/effects/effect-tool.ts` (a resolved `rays` block with `live: true` becomes a `live_effect` add in the same move; if `lightrays` is missing or has no card, fall back to the numpy block and say so in the notes); `src/tools.mjs` (push `liveEffectTools(...)` beside `effectTools`); `src/studio.mjs` (offered only with `custom_effects` on); `src/tool-catalogue.ts` (`live_effect` timing from Task 16)
+- Test: `krita-creative-agent/tests/live-effect-tool.test.mjs`
+
+**Interfaces:**
+- Consumes: native `create_layer` (type `fill`), Task 14's `set_fill`, `krita_capabilities`.
+- Produces:
+  - `type LiveEffect = 'focus_lines' | 'speed_lines' | 'light_rays'` → `focuslines | speedlines | lightrays`.
+  - `liveEffectTools(runtime, deps: { createLayer(p): Promise<Result>; setFill(p): Promise<Result>; generators(): Promise<Record<string, Record<string, Spec>>> }): ToolDefinition[]` — one tool `live_effect { effect: LiveEffect, layer_id?: string, settings: Record<string, number | string> }`: without `layer_id` adds a layer `Live: <effect>` with a random 31-bit `seed` unless given; with `layer_id` calls `set_fill`.
+  - `liveCards(catalog): string`: one line per card (effect, what it is for, measured ms at 6000×4500).
+  - `liveRaysSettings(block: ResolvedBlock): Record<string, number>`: `from_point` → `source_x/y`, `from` side → a source outside that edge, `count`, `spread_deg` → `spread`, `opacity` → `opacity × 100`.
+- [ ] **Step 1: Write the failing tests**: `adds a focus-lines layer with a seed and the settings given`; `changing one setting sends only set_fill with that layer`; `a generator without a measured card is not offered`; `off by default: no live_effect`; `a live rays block makes a light-rays layer in the same move`; `without the lightrays generator a live rays block paints numpy rays and says so`; `unknown settings are refused with the list of known ones`.
+- [ ] **Step 2: Run `npm run test:unit`; expect FAIL.**
+- [ ] **Step 3: Implement** in strict TS on the pattern of `effect-tool.ts`.
+- [ ] **Step 4: Run; expect PASS;** `npx tsc --noEmit -p .` clean.
+- [ ] **Step 5: Commit** `live_effect: the agent adds or changes focus lines, speed lines and light rays by their settings; a recipe's rays block can make a live layer`.
+
+### Task 16: Live check, cards, observe cost and A/B (Toska, copies at 6000 × 4500)
+
+One build and install for all of this; never install over a running app (pgrep + mount); ask for a single restart.
+
+- [ ] **Reload:** `creative_test_start width=6000 height=4500`; add focus lines with `live_effect`; save, close and reopen the copy; pixels equal by checksum of `projectionPixelData`; zoom 400% and 12.5%, lines stay crisp.
+- [ ] **Undo:** change `spacing_angle` 5 → 10; Undo History shows one new step; undo, checksum equals the one before.
+- [ ] **Hand edit:** open the layer's Properties dialog by hand (the artist, or `creative_test_command` if it can without a dialog); edit one setting; the agent's `filterConfig()` shows it.
+- [ ] **Cards:** for each generator render sparse, default and dense settings; record ms per layer, covered share and a thumbnail into `src/effects/live-catalog.json`; rerun `npm run test:unit`.
+- [ ] **Observe cost:** `observe_probe` with `live_effects` 0, 1, 5, 10, three runs each, medians recorded in `local-notes/`. **Pass:** each median ≤ 1.25 × the median with none. On a fail, stop and report; do not tune live.
+- [ ] **A/B:** the same scene copy with and without a focus-lines layer; Luna (decision client) judges "the subject reads as the focus" blind; both images sent to the artist.
+- [ ] **Speed lines and rays:** repeat the reload and undo checks.
+- [ ] **Report:** exactly which checks ran, the numbers, and "committed locally" or "published (<sha>)".
+
+Notes: assumptions not confirmed in code — `defaultConfiguration()` used only for new dialog layers (Task 11); whether Task 16's dialog check can run without opening a dialog; the 1.25× observe threshold and 5 s generate cap are planning numbers, not the artist's.
