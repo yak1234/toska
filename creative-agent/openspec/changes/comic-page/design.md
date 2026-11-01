@@ -1,3 +1,5 @@
+> **Superseded 2026-11-01:** written for the old proposal (stock Krita 5.3.3, rectangle panels, no tones or effect lines). Redone after the rewritten `proposal.md` is approved; kept until then for its page-structure and lettering decisions.
+
 ## Context
 
 Every canvas change goes through the creative operation journal in `creative_tools.py`: validate, record intent, mutate, record a pass, checkpoint. Passes are layers; reject hides what a pass made. New paint from a plan step or an Agent move goes into a stage group at the top of the painting (`_creative_stage_group`), and craft layers find their parent through `_craft_container`.

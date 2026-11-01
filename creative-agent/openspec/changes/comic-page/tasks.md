@@ -1,3 +1,5 @@
+> **Superseded 2026-11-01:** written for the old proposal (stock Krita 5.3.3, rectangle panels, no tones or effect lines). Redone after the rewritten `proposal.md` is approved; kept until then for its page-structure and lettering decisions.
+
 Test rule for every task: tests write only to temporary folders they remove, and run through `npm run test:unit` (JS) or `unittest discover` (Python). Live checks use a disposable document and delete their study folder afterwards, pass or fail. Live checks wait until no painting session is active in Krita.
 
 ## 1. Layout

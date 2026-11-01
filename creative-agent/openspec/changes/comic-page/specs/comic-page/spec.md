@@ -1,3 +1,5 @@
+> **Superseded 2026-11-01:** written for the old proposal (stock Krita 5.3.3, rectangle panels, no tones or effect lines). Redone after the rewritten `proposal.md` is approved; kept until then for its page-structure and lettering decisions.
+
 ## ADDED Requirements
 
 ### Requirement: Page layouts
