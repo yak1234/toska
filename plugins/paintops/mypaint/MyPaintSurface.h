@@ -22,6 +22,13 @@
 #include <libmypaint/mypaint-brush.h>
 #include <libmypaint/mypaint-surface.h>
 
+#include <memory>
+
+namespace KisPaintMix {
+class LogSpectrumCache;
+class SpectralDabMixer;
+}
+
 class KisMyPaintSurface
 {
 public:
@@ -108,6 +115,15 @@ private:
     KisFixedPaintDeviceSP m_blendDevice;
     KisFixedPaintDeviceSP m_maskDevice;
     bool m_sampleMerged {false};
+    // Toska: log spectra of the canvas colours the spectral blend and sample have met, and the dab blend's memo
+    // (made on first use)
+    std::unique_ptr<KisPaintMix::LogSpectrumCache> m_logSpectra;
+    std::unique_ptr<KisPaintMix::SpectralDabMixer> m_dabMixer;
+    struct SampleWeights;
+    std::unique_ptr<SampleWeights> m_sampleWeights;
+    KisPaintMix::LogSpectrumCache &logSpectra();
+    KisPaintMix::SpectralDabMixer &dabMixer();
+    SampleWeights &sampleWeights();
 
 };
 

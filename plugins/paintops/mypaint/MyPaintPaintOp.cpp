@@ -22,6 +22,8 @@
 #include <kis_spacing_information.h>
 #include <libmypaint/mypaint-brush.h>
 
+#include <cstring>
+
 KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPainter *painter, KisNodeSP /*node*/, KisImageSP image)
     : KisPaintOp (painter) {
 
@@ -75,6 +77,40 @@ void KisMyPaintPaintOp::applyToskaPaintMode(MyPaintBrush *brush, const KisPaintO
         mypaint_brush_set_mapping_n(brush, MYPAINT_BRUSH_SETTING_PAINT_MODE, MyPaintBrushInput(input), 0);
     }
     mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_PAINT_MODE, paintMode);
+    if (paintMode > 0.0f) {
+        primeForStrokeTo2(brush);
+    }
+}
+
+namespace {
+int primingDab(MyPaintSurface2 *, float, float, float, float, float, float, float, float, float, float, float, float,
+               float, float, float, float)
+{
+    return 0;
+}
+
+void primingColor(MyPaintSurface2 *, float, float, float, float *r, float *g, float *b, float *a, float)
+{
+    *r = *g = *b = 0.0f;
+    *a = 1.0f;
+}
+}
+
+void KisMyPaintPaintOp::primeForStrokeTo2(MyPaintBrush *brush)
+{
+    MyPaintSurface2 nothing;
+    memset(&nothing, 0, sizeof nothing);
+    nothing.draw_dab_pigment = primingDab;
+    nothing.get_color_pigment = primingColor;
+    // tracking noise would skip input (and draw from the brush's random numbers) before the settings are computed
+    const float noise = mypaint_brush_get_base_value(brush, MYPAINT_BRUSH_SETTING_TRACKING_NOISE);
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_TRACKING_NOISE, 0.0f);
+    mypaint_brush_reset(brush);
+    // the first call only resets the state; the second moves nowhere (no dab) and computes the settings at its end
+    mypaint_brush_stroke_to_2(brush, &nothing, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0, 1.0f, 0.0f, 0.0f);
+    mypaint_brush_stroke_to_2(brush, &nothing, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.01, 1.0f, 0.0f, 0.0f);
+    mypaint_brush_set_base_value(brush, MYPAINT_BRUSH_SETTING_TRACKING_NOISE, noise);
+    mypaint_brush_reset(brush);
 }
 
 int KisMyPaintPaintOp::strokeBrushTo(MyPaintBrush *brush, KisMyPaintSurface *surface, float x, float y,

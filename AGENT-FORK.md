@@ -181,10 +181,10 @@ Keep this table current: every upstream file the `krita-agent` branch changes, a
 | `libs/ui/KisWelcomePageWidget.h`, `KisWelcomePageWidget.cpp` | When `KisAppIdentity::hasOwnWelcome()`: loads `:/welcome/toska-welcome.jpg` and paints it under the page (`paintEvent()`, laid out by `KisWelcomeBackgroundLayout.h`); in every other build the pixmap is null and `paintEvent()` calls `QWidget::paintEvent()` only | Toska welcome page |
 | `libs/ui/tests/CMakeLists.txt`, `agent/ci-tests.txt` | Adds `KisWelcomeBackgroundLayoutTest` | Toska welcome page |
 | `plugins/paintops/CMakeLists.txt` | One line: `add_subdirectory( libpaintmix )` after `libpaintop` (the colour-mixing library). `agent/ci-tests.txt` gains `KisPaintMixTest` | colour mixing (task 1) |
-| `plugins/paintops/mypaint/MyPaintSurface.h`, `MyPaintSurface.cpp` | The internal surface struct derives from libmypaint's `MyPaintSurface2` (`surface2()`); `draw_dab_pigment` and `get_color_pigment`; a `paint` argument through `drawDabImpl` (normal blend at `alpha * (1 - paint)`, then the spectral one at `alpha * paint`; skipped at `paint` 0, the legacy path) and `getColorImpl` (`paint < 0`: unchanged); a `sampleMerged` constructor argument that reads the projection | colour mixing (task 2) |
-| `plugins/paintops/mypaint/MyPaintPaintOp.h`, `MyPaintPaintOp.cpp` | `usesPaintMode()`, `applyToskaPaintMode()` (paint_mode set to `ToskaMyPaintPaintMode`, or 0 without it, its mappings cleared: the preset's own JSON `paint_mode` never opts in), `strokeBrushTo()`: `mypaint_brush_stroke_to_2` only when `usesPaintMode`, otherwise the legacy `mypaint_brush_stroke_to`; `ToskaMyPaintSampleMerged` to the surface | colour mixing (task 2) |
+| `plugins/paintops/mypaint/MyPaintSurface.h`, `MyPaintSurface.cpp` | The internal surface struct derives from libmypaint's `MyPaintSurface2` (`surface2()`); `draw_dab_pigment` and `get_color_pigment`; a `paint` argument through `drawDabImpl` (normal blend at `alpha * (1 - paint)`, then the spectral one at `alpha * paint`; skipped at `paint` 0, the legacy path) and `getColorImpl` (`paint < 0`: unchanged); a `sampleMerged` constructor argument that reads the projection. Task 7a: the spectral dab blend goes through `KisPaintMix::SpectralDabMixer` (memoised, one per surface), the spectral sample through `SpectralAverage` with equal pixels' weights summed first (`SampleWeights`); at `paint` 1 the normal part of the dab is skipped (it left the pixel unchanged) | colour mixing (tasks 2, 7a) |
+| `plugins/paintops/mypaint/MyPaintPaintOp.h`, `MyPaintPaintOp.cpp` | `usesPaintMode()`, `applyToskaPaintMode()` (paint_mode set to `ToskaMyPaintPaintMode`, or 0 without it, its mappings cleared: the preset's own JSON `paint_mode` never opts in), `strokeBrushTo()`: `mypaint_brush_stroke_to_2` only when `usesPaintMode`, otherwise the legacy `mypaint_brush_stroke_to`; `ToskaMyPaintSampleMerged` to the surface. Task 7a: `primeForStrokeTo2()` (two empty `stroke_to_2` calls and a reset, from `applyToskaPaintMode` when the mode is above 0) so libmypaint's first `stroke_to_2` dab does not read uninitialised settings | colour mixing (tasks 2, 7a) |
 | `plugins/paintops/mypaint/CMakeLists.txt`, `tests/CMakeLists.txt` | Link `kritapaintmix` | colour mixing (task 2) |
-| `plugins/paintops/mypaint/tests/kis_mypaintop_test.h`, `kis_mypaintop_test.cpp` | Nine paint-mode tests (`testDab`, `testGetColor`, `testLoading` unchanged). `agent/ci-tests.txt` gains `KisMyPaintOpTest` | colour mixing (task 2) |
+| `plugins/paintops/mypaint/tests/kis_mypaintop_test.h`, `kis_mypaintop_test.cpp` | Nine paint-mode tests (`testDab`, `testGetColor`, `testLoading` unchanged). `agent/ci-tests.txt` gains `KisMyPaintOpTest`. Task 7a: six more (strokes against images painted before the speed work, `tests/data/spectral_before_*.png`; sample exactness; stroke start; smudge weights; Marker fringes and ripple) and `benchmarkSpectralPaintMode` (prints legacy and spectral times and their ratio) | colour mixing (tasks 2, 7a) |
 
 Our own files for the identity: `cmake/modules/KritaAppIdentity.cmake`, `libs/global/KisAppIdentity.{h,cpp}`,
 `libs/global/config-app-identity.h.cmake`; tests `libs/global/tests/KisAppIdentityTest.{h,cpp}`,
@@ -1135,6 +1135,18 @@ JSON `paint_mode` (base value or mappings; libmypaint's default is 1) never opts
 `ToskaMyPaintSampleMerged` makes `get_color` read the image's projection. Every other preset paints through the legacy
 `mypaint_brush_stroke_to` byte-identically. Run with
 `agent/run-tests.sh KisMyPaintOpTest`.
+
+Speed (task 7a): the dab blend and the colour sample work in the log domain (`LogSpectrum`, cached per colour in
+`LogSpectrumCache`, fastlog2/fastpow2 four bands at a time with GCC's vector extension where available).
+`SpectralDabMixer` memoises mix2 per (canvas colour, interval of t, 512 knots) for the dab's colour and interpolates in
+t (within 0.033/255 of mix2); `SpectralAverage` is mixMany over every sampled pixel, equal pixels summed first. Strokes
+stay within 1/255 of the code before (`testSpectralStrokesMatchBefore`). `benchmarkSpectralPaintMode` prints the ratio
+(Release build): Wet Paint Plus 4.2x before, 1.54x after; Marker Plain 1.66x before, 1.15x after. Tried and
+dropped: sampling a subset of pixels (moved Wet Paint Plus strokes by 5/255), 128 or 256 knots (Marker Plain by 4/255),
+a 16-bit overlay for spectral strokes (removes Marker Plain's 8-bit ripple, but Wet Paint Plus 2.0x).
+libmypaint 1.6.1 reads `SETTING(DABS_PER_*)` into the brush state before computing the settings, so a brush's first
+`stroke_to_2` dab used uninitialised memory (spectral strokes started up to two dab spacings off, differently from run
+to run); `primeForStrokeTo2` computes the settings once first.
 
 ## Plugin craft: live checks (krita-fork 5.1 stamps, 5.3 tools)
 

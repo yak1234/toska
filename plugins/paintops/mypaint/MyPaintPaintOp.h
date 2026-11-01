@@ -40,6 +40,15 @@ public:
      */
     static void applyToskaPaintMode(MyPaintBrush *brush, const KisPaintOpSettingsSP settings);
 
+    /**
+     * Toska: libmypaint 1.6.1's update_states_and_setting_values copies SETTING(DABS_PER_*) into the brush state
+     * before it computes the settings, so the first dab of a brush's first stroke_to_2 reads uninitialised memory
+     * (state_based_dab_count and opaque_linearize use those states; the legacy path reads base values). Two empty
+     * stroke_to_2 calls on a surface that paints nothing compute the settings once, and a reset makes the next stroke
+     * start afresh. applyToskaPaintMode calls it for presets that opt in.
+     */
+    static void primeForStrokeTo2(MyPaintBrush *brush);
+
     /// Toska: one stroke_to through the entry point usesPaintMode() picks (the paintop's own path)
     static int strokeBrushTo(MyPaintBrush *brush, KisMyPaintSurface *surface, float x, float y, float pressure,
                              float xtilt, float ytilt, double dtime);

@@ -22,6 +22,8 @@
 
 #include <KisPaintMix.h>
 
+#include <cstring>
+
 using namespace std;
 
 namespace {
@@ -84,6 +86,87 @@ KisMyPaintSurface::KisMyPaintSurface(KisPainter *painter, KisPaintDeviceSP paint
 KisMyPaintSurface::~KisMyPaintSurface()
 {
     mypaint_surface_unref(&m_surface->parent);
+}
+
+KisPaintMix::LogSpectrumCache &KisMyPaintSurface::logSpectra()
+{
+    if (!m_logSpectra) {
+        m_logSpectra.reset(new KisPaintMix::LogSpectrumCache());
+    }
+    return *m_logSpectra;
+}
+
+// Sums the spectral sample's weights per distinct pixel (its raw channel values, up to 16 bytes) with linear probing;
+// entries of older samples are told apart by their generation.
+struct KisMyPaintSurface::SampleWeights {
+    static const int Size = 1024;
+    static const int Limit = 512;
+    struct Entry {
+        quint32 key[4];
+        float weight;
+        quint32 generation;
+    };
+    Entry entries[Size];
+    int used[Limit];
+    int count {0};
+    quint32 generation {0};
+
+    SampleWeights()
+    {
+        for (Entry &e : entries) {
+            e.generation = 0;
+        }
+    }
+
+    void restart()
+    {
+        count = 0;
+        if (++generation == 0) {
+            for (Entry &e : entries) {
+                e.generation = 0;
+            }
+            generation = 1;
+        }
+    }
+
+    Entry *find(quint32 h, const quint32 *key)
+    {
+        for (quint32 slot = h & (Size - 1);; slot = (slot + 1) & (Size - 1)) {
+            Entry &e = entries[slot];
+            if (e.generation != generation) return nullptr;
+            if (e.key[0] == key[0] && e.key[1] == key[1] && e.key[2] == key[2] && e.key[3] == key[3]) return &e;
+        }
+    }
+
+    Entry *insert(quint32 h, const quint32 *key)
+    {
+        quint32 slot = h & (Size - 1);
+        while (entries[slot].generation == generation) {
+            slot = (slot + 1) & (Size - 1);
+        }
+        Entry &e = entries[slot];
+        memcpy(e.key, key, sizeof e.key);
+        e.weight = 0.0f;
+        e.generation = generation;
+        used[count++] = int(slot);
+        return &e;
+    }
+};
+
+KisMyPaintSurface::SampleWeights &KisMyPaintSurface::sampleWeights()
+{
+    if (!m_sampleWeights) {
+        m_sampleWeights.reset(new SampleWeights());
+    }
+    return *m_sampleWeights;
+}
+
+KisPaintMix::SpectralDabMixer &KisMyPaintSurface::dabMixer()
+{
+    if (!m_dabMixer) {
+        m_dabMixer.reset(new KisPaintMix::SpectralDabMixer(logSpectra()));
+    }
+    return *m_dabMixer;
 }
 
 int KisMyPaintSurface::draw_dab(MyPaintSurface *self, float x, float y, float radius, float color_r, float color_g,
@@ -250,6 +333,12 @@ int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float
     // as using the sequential iterator
     quint8* maskPointer = m_maskDevice->data();
 
+    // Toska: the spectral blend's mixer, set to this dab's colour
+    KisPaintMix::SpectralDabMixer *mixer = nullptr;
+    if (paint > 0.0f) {
+        mixer = &dabMixer();
+        mixer->setTop(clampedRgb(color_r, color_g, color_b));
+    }
 
     while(it.nextPixel()) {
 
@@ -302,14 +391,18 @@ int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float
             // Toska: libmypaint's tiled surface (mypaint-tiled-surface.c 442-471): the normal blend at
             // alpha * (1 - paint), then the spectral blend at alpha * paint (libmypaint's integer
             // MAX(opacity, 150) workaround is not needed in float and is not ported)
-            const float normal_alpha = alpha * (1.0f - paint);
-            a = normal_alpha * (color_a - dst_alpha) + dst_alpha;
-            if (a > 0.0f) {
-                float src_term = (normal_alpha * color_a) / a;
-                float dst_term = 1.0f - src_term;
-                r = color_r * src_term + r * dst_term;
-                g = color_g * src_term + g * dst_term;
-                b = color_b * src_term + b * dst_term;
+            // (at paint 1 the normal part leaves the pixel as it is: skipped)
+            a = dst_alpha;
+            if (paint < 1.0f) {
+                const float normal_alpha = alpha * (1.0f - paint);
+                a = normal_alpha * (color_a - dst_alpha) + dst_alpha;
+                if (a > 0.0f) {
+                    float src_term = (normal_alpha * color_a) / a;
+                    float dst_term = 1.0f - src_term;
+                    r = color_r * src_term + r * dst_term;
+                    g = color_g * src_term + g * dst_term;
+                    b = color_b * src_term + b * dst_term;
+                }
             }
 
             const float paint_alpha = alpha * paint;
@@ -317,9 +410,7 @@ int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float
             a = paint_alpha * (color_a - below_alpha) + below_alpha;
             if (a > 0.0f) {
                 const float t = qBound(0.0f, (paint_alpha * color_a) / a, 1.0f);
-                const KisPaintMix::Rgb mixed = KisPaintMix::mix2(KisPaintMix::Model::Spectral,
-                                                                 clampedRgb(r, g, b),
-                                                                 clampedRgb(color_r, color_g, color_b), t);
+                const KisPaintMix::Rgb mixed = mixer->mix(clampedRgb(r, g, b), t);
                 r = mixed.r;
                 g = mixed.g;
                 b = mixed.b;
@@ -487,28 +578,48 @@ void KisMyPaintSurface::getColorImpl(MyPaintSurface *self, float x, float y, flo
         }
 
         if (paint > 0.0f) {
-            // Toska: lerp(RGB average, spectral average weighted by weight * alpha, paint)
-            QVector<KisPaintMix::Rgb> pixels(size);
-            QVector<float> pixelWeights(size);
+            // Toska: lerp(RGB average, spectral average weighted by weight * alpha, paint). Every pixel counts (a
+            // subset, as libmypaint's tiled surface samples, moved strokes by up to 5/255): equal pixels' weights are
+            // summed first, so each distinct pixel is converted, and its log spectrum looked up, once per sample.
+            KisPaintMix::SpectralAverage average(logSpectra());
             const int pixelSize = m_blendDevice->pixelSize();
             const quint8 *data = m_blendDevice->data();
-            float spectralWeight = 0.0f;
-            for (quint32 i = 0; i < size; i++) {
-                const channelType *px = reinterpret_cast<const channelType*>(data + i * pixelSize);
-                float pr = px[2] / unitValue;
-                float pg = px[1] / unitValue;
-                float pb = px[0] / unitValue;
-                if (unitValue == 1.0f) {
-                    swap(pr, pb);
+            SampleWeights &table = sampleWeights();
+            auto flushTable = [&]() {
+                for (int k = 0; k < table.count; k++) {
+                    const SampleWeights::Entry &e = table.entries[table.used[k]];
+                    const channelType *px = reinterpret_cast<const channelType*>(e.key);
+                    float pr = px[2] / unitValue;
+                    float pg = px[1] / unitValue;
+                    float pb = px[0] / unitValue;
+                    if (unitValue == 1.0f) {
+                        swap(pr, pb);
+                    }
+                    const float pa = qBound(0.0f, float(px[3] / unitValue), 1.0f);
+                    average.add(clampedRgb(pr, pg, pb), e.weight * pa);
                 }
-                const float pa = qBound(0.0f, float(px[3] / unitValue), 1.0f);
-                pixels[i] = clampedRgb(pr, pg, pb);
-                pixelWeights[i] = qMax(0, int(weights[i])) * pa;
-                spectralWeight += pixelWeights[i];
+                table.restart();
+            };
+            table.restart();
+            for (quint32 i = 0; i < size; i++) {
+                if (weights[i] <= 0) continue;
+                quint32 key[4] = {0, 0, 0, 0};
+                memcpy(key, data + i * pixelSize, 4 * sizeof(channelType));
+                quint32 h = (key[0] * 0x9E3779B1u) ^ (key[1] * 0x85EBCA77u) ^ (key[2] * 0xC2B2AE3Du)
+                    ^ (key[3] * 0x27D4EB2Fu);
+                h ^= h >> 15;
+                SampleWeights::Entry *e = table.find(h, key);
+                if (!e) {
+                    if (table.count == SampleWeights::Limit) {
+                        flushTable();
+                    }
+                    e = table.insert(h, key);
+                }
+                e->weight += weights[i];
             }
-            if (spectralWeight > 0.0f) {
-                const KisPaintMix::Rgb spectral = KisPaintMix::mixMany(KisPaintMix::Model::Spectral, pixels.constData(),
-                                                                       pixelWeights.constData(), int(size));
+            flushTable();
+            if (!average.isEmpty()) {
+                const KisPaintMix::Rgb spectral = average.result();
                 *color_r = *color_r + (spectral.r - *color_r) * paint;
                 *color_g = *color_g + (spectral.g - *color_g) * paint;
                 *color_b = *color_b + (spectral.b - *color_b) * paint;

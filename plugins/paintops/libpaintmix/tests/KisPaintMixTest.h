@@ -27,6 +27,13 @@ private Q_SLOTS:
     void testBlendPixelsCopyAlpha();
     void testGoldenVectors();
     void testSpeed();
+
+    // the log-domain path the MyPaint surface takes (task 7a)
+    void testLogSpectrumCacheIsExact();
+    void testMixLogSpectraIsMix2();
+    void testDabMixerMatchesMix2();
+    void testDabMixerKeepsExactCases();
+    void testSpectralAverageMatchesMixMany();
 };
 
 #endif // KISPAINTMIXTEST_H

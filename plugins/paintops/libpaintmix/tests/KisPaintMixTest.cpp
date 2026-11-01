@@ -23,6 +23,8 @@
 #include <cmath>
 #include <cstring>
 #include <random>
+#include <memory>
+#include <algorithm>
 
 using namespace KisPaintMix;
 
@@ -407,6 +409,132 @@ void KisPaintMixTest::testSpeed()
     const qint64 ms = timer.elapsed();
     qInfo() << "spectral blendPixels, 2,000,000 pixels:" << ms << "ms";
     QVERIFY2(ms <= 500, qPrintable(QString::number(ms)));
+}
+
+namespace {
+
+float maxChannelDifference(Rgb a, Rgb b)
+{
+    return std::max({std::fabs(a.r - b.r), std::fabs(a.g - b.g), std::fabs(a.b - b.b)});
+}
+
+// 8-bit colours, as the MyPaint surface meets them on an 8-bit layer
+Rgb random8Bit(std::mt19937 &gen)
+{
+    std::uniform_int_distribution<int> d(0, 255);
+    return {d(gen) / 255.0f, d(gen) / 255.0f, d(gen) / 255.0f};
+}
+
+}
+
+void KisPaintMixTest::testLogSpectrumCacheIsExact()
+{
+    std::unique_ptr<LogSpectrumCache> cache(new LogSpectrumCache());
+    std::mt19937 gen(31);
+    std::vector<Rgb> colours;
+    for (int i = 0; i < 3000; i++) {
+        colours.push_back(i % 3 == 0 && !colours.empty() ? colours[gen() % colours.size()] : randomRgb(gen));
+    }
+    for (const Rgb &c : colours) {
+        LogSpectrum direct;
+        toLogSpectrum(c, direct);
+        const LogSpectrum &cached = cache->get(c);
+        QVERIFY(std::memcmp(&direct, &cached, sizeof direct) == 0);
+        QCOMPARE(direct.band[10], 0.0f);
+        QCOMPARE(direct.band[11], 0.0f);
+    }
+}
+
+void KisPaintMixTest::testMixLogSpectraIsMix2()
+{
+    std::mt19937 gen(32);
+    std::uniform_real_distribution<float> td(0.0f, 1.0f);
+    float worst = 0.0f;
+    for (int i = 0; i < 20000; i++) {
+        const Rgb a = randomRgb(gen);
+        const Rgb b = randomRgb(gen);
+        const float t = td(gen);
+        LogSpectrum la, lb;
+        toLogSpectrum(a, la);
+        toLogSpectrum(b, lb);
+        worst = std::max(worst, maxChannelDifference(mixLogSpectra(la, lb, t), mix2(Model::Spectral, a, b, t)));
+    }
+    qDebug() << "mixLogSpectra - mix2, largest:" << worst * 255 << "/255";
+    QVERIFY(worst <= 1e-5f);
+}
+
+void KisPaintMixTest::testDabMixerMatchesMix2()
+{
+    std::unique_ptr<LogSpectrumCache> cache(new LogSpectrumCache());
+    std::unique_ptr<SpectralDabMixer> mixer(new SpectralDabMixer(*cache));
+    std::mt19937 gen(33);
+    std::uniform_real_distribution<float> td(0.0f, 1.0f);
+    const Rgb tops[] = {random8Bit(gen), random8Bit(gen), {0, 0, 0}, {1, 1, 1}, {0, 33 / 255.0f, 133 / 255.0f}};
+    float worst = 0.0f;
+    // tops change and come back: the memo must never answer for another top colour
+    for (int round = 0; round < 3; round++) {
+        for (const Rgb &top : tops) {
+            mixer->setTop(top);
+            for (int i = 0; i < 4000; i++) {
+                const Rgb bottom = i % 4 == 0 ? Rgb{0, 0, 0} : random8Bit(gen);
+                const float t = td(gen);
+                worst = std::max(worst, maxChannelDifference(mixer->mix(bottom, t), mix2(Model::Spectral, bottom, top, t)));
+            }
+        }
+    }
+    qDebug() << "SpectralDabMixer - mix2, largest:" << worst * 255 << "/255";
+    QVERIFY(worst <= 1.5e-4f);
+}
+
+void KisPaintMixTest::testDabMixerKeepsExactCases()
+{
+    std::unique_ptr<LogSpectrumCache> cache(new LogSpectrumCache());
+    std::unique_ptr<SpectralDabMixer> mixer(new SpectralDabMixer(*cache));
+    std::mt19937 gen(34);
+    for (int i = 0; i < 200; i++) {
+        const Rgb top = randomRgb(gen);
+        const Rgb bottom = randomRgb(gen);
+        mixer->setTop(top);
+        QVERIFY(bitwiseEqual(mixer->mix(bottom, 0.0f), bottom));
+        QVERIFY(bitwiseEqual(mixer->mix(bottom, 1.0f), top));
+        QVERIFY(bitwiseEqual(mixer->mix(top, 0.37f), top));
+    }
+}
+
+void KisPaintMixTest::testSpectralAverageMatchesMixMany()
+{
+    std::unique_ptr<LogSpectrumCache> cache(new LogSpectrumCache());
+    std::mt19937 gen(35);
+    std::uniform_real_distribution<float> wd(-10.0f, 255.0f);
+    float worst = 0.0f;
+    for (int i = 0; i < 2000; i++) {
+        const int n = 1 + i % 50;
+        std::vector<Rgb> colours(n);
+        std::vector<float> weights(n);
+        SpectralAverage average(*cache);
+        for (int k = 0; k < n; k++) {
+            // runs of equal colours, as rows of a flat canvas give
+            colours[k] = k > 0 && gen() % 3 == 0 ? colours[k - 1] : random8Bit(gen);
+            weights[k] = wd(gen);
+            average.add(colours[k], weights[k]);
+        }
+        const Rgb expected = mixMany(Model::Spectral, colours.data(), weights.data(), n);
+        if (average.isEmpty()) {
+            QVERIFY(bitwiseEqual(average.result(), Rgb{0, 0, 0}));
+            continue;
+        }
+        worst = std::max(worst, maxChannelDifference(average.result(), expected));
+    }
+    qDebug() << "SpectralAverage - mixMany, largest:" << worst * 255 << "/255";
+    QVERIFY(worst <= 2e-4f);
+
+    // one colour, many times: exact
+    SpectralAverage one(*cache);
+    const Rgb c {51 / 255.0f, 133 / 255.0f, 7 / 255.0f};
+    for (int k = 0; k < 100; k++) {
+        one.add(c, 1.0f + k);
+    }
+    QVERIFY(bitwiseEqual(one.result(), c));
 }
 
 SIMPLE_TEST_MAIN(KisPaintMixTest)

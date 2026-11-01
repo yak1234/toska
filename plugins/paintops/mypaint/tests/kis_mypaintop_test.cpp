@@ -27,12 +27,20 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QElapsedTimer>
+#include <QColor>
+#include <functional>
+#include <random>
+#include <kis_algebra_2d.h>
+#include <algorithm>
 
 #include "kis_mypaintop_test.h"
 #include "MyPaintPaintOp.h"
 #include "MyPaintSurface.h"
 #include "MyPaintSensorPack.h"
 #include "MyPaintPaintOpSettings.h"
+
+#include <KisPaintMix.h>
 
 #include <qimage_test_util.h>
 
@@ -446,6 +454,506 @@ void KisMyPaintOpTest::testToskaZeroForcesLegacyEvenWithMappings()
     bool absentMode = true;
     QCOMPARE(paintStroke(mypaintSettings(mapped), &absentMode), reference);
     QVERIFY(!absentMode);
+}
+
+namespace {
+
+// Counts the dabs and colour samples a stroke makes and times the samples: the surface's entry points, wrapped
+int g_dabCount = 0;
+float g_firstDabX = 0.0f;
+int g_sampleCount = 0;
+qint64 g_sampleNsecs = 0;
+
+void countingGetColor(MyPaintSurface *self, float x, float y, float radius, float *r, float *g, float *b, float *a)
+{
+    g_sampleCount++;
+    QElapsedTimer t;
+    t.start();
+    KisMyPaintSurface::get_color(self, x, y, radius, r, g, b, a);
+    g_sampleNsecs += t.nsecsElapsed();
+}
+
+void countingGetColorPigment(MyPaintSurface2 *self, float x, float y, float radius, float *r, float *g, float *b,
+                             float *a, float paint)
+{
+    g_sampleCount++;
+    QElapsedTimer t;
+    t.start();
+    KisMyPaintSurface::get_color_pigment(self, x, y, radius, r, g, b, a, paint);
+    g_sampleNsecs += t.nsecsElapsed();
+}
+
+int countingDrawDab(MyPaintSurface *self, float x, float y, float radius, float r, float g, float b, float opaque,
+                    float hardness, float a, float aspect, float angle, float lockAlpha, float colorize)
+{
+    if (g_dabCount++ == 0) {
+        g_firstDabX = x;
+    }
+    return KisMyPaintSurface::draw_dab(self, x, y, radius, r, g, b, opaque, hardness, a, aspect, angle, lockAlpha,
+                                       colorize);
+}
+
+int countingDrawDabPigment(MyPaintSurface2 *self, float x, float y, float radius, float r, float g, float b,
+                           float opaque, float hardness, float a, float aspect, float angle, float lockAlpha,
+                           float colorize, float posterize, float posterizeNum, float paint)
+{
+    if (g_dabCount++ == 0) {
+        g_firstDabX = x;
+    }
+    return KisMyPaintSurface::draw_dab_pigment(self, x, y, radius, r, g, b, opaque, hardness, a, aspect, angle,
+                                               lockAlpha, colorize, posterize, posterizeNum, paint);
+}
+
+struct StrokeSetup {
+    const KoColorSpace *cs {KoColorSpaceRegistry::instance()->rgb8()};
+    int width {2000};
+    int height {2000};
+    float radius {20.0f};
+    int events {200};          ///< motion events, 4 px apart, along y = start.y()
+    float pressure {0.9f};
+    QPointF start {600, 1000};
+    QColor colour {230, 90, 30}; ///< orange #e65a1e
+};
+
+struct StrokeResult {
+    qint64 nsecs {0};
+    int dabs {0};
+    float firstDabX {0.0f};
+    int samples {0};
+    qint64 sampleNsecs {0};
+    KisPaintDeviceSP device;
+};
+
+KisPaintOpSettingsSP presetSettings(const QString &file, const QVariant &toskaPaintMode = QVariant())
+{
+    KisMyPaintPaintOpPreset preset(QString(FILES_DATA_DIR) + "../../brushes/" + file);
+    if (!preset.load(KisGlobalResourcesInterface::instance())) {
+        return nullptr;
+    }
+    KisPaintOpSettingsSP settings = preset.settings()->clone();
+    if (toskaPaintMode.isValid()) {
+        settings->setProperty("ToskaMyPaintPaintMode", toskaPaintMode);
+    }
+    return settings;
+}
+
+/**
+ * A stroke across a blue | yellow ground (the halves meet at width / 2) through the paintop's own entry point
+ * (strokeBrushTo) and a surface set up as the paintop sets it up (an image, no paint node), so get_color reads the
+ * layer as it does live. Only the stroke is timed. tweak changes the brush after the preset is applied.
+ */
+StrokeResult paintPresetStroke(KisPaintOpSettingsSP settings, const StrokeSetup &setup,
+                               const std::function<void(MyPaintBrush *)> &tweak = {})
+{
+    const KoColorSpace *cs = setup.cs;
+    KisImageSP image = new KisImage(new KisSurrogateUndoStore(), setup.width, setup.height, cs, "stroke");
+    KisPaintLayerSP layer = new KisPaintLayer(image, "paint", OPACITY_OPAQUE_U8);
+    image->addNode(layer);
+    KisPaintDeviceSP dev = layer->paintDevice();
+    const int half = setup.width / 2;
+    dev->fill(QRect(0, 0, half, setup.height), rawColor(cs, BLUE[0], BLUE[1], BLUE[2], 1.0f));
+    dev->fill(QRect(half, 0, setup.width - half, setup.height), rawColor(cs, YELLOW[0], YELLOW[1], YELLOW[2], 1.0f));
+
+    KisPainter painter(dev);
+    KisMyPaintSurface surface(&painter, nullptr, image, false);
+    surface.surface()->draw_dab = countingDrawDab;
+    surface.surface2()->draw_dab_pigment = countingDrawDabPigment;
+    surface.surface()->get_color = countingGetColor;
+    surface.surface2()->get_color_pigment = countingGetColorPigment;
+
+    KisMyPaintPaintOpPreset brush;
+    brush.apply(settings);
+    KisMyPaintPaintOp::applyToskaPaintMode(brush.brush(), settings);
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_SLOW_TRACKING, 0.0);
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, std::log(setup.radius));
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_H, setup.colour.hsvHueF());
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_S, setup.colour.hsvSaturationF());
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_V, setup.colour.valueF());
+    if (tweak) {
+        tweak(brush.brush());
+    }
+
+    g_dabCount = 0;
+    g_sampleCount = 0;
+    g_sampleNsecs = 0;
+    QElapsedTimer timer;
+    timer.start();
+    const QPointF start = setup.start;
+    KisMyPaintPaintOp::strokeBrushTo(brush.brush(), &surface, start.x(), start.y(), setup.pressure, 0, 0, 1.0);
+    for (int i = 1; i <= setup.events; i++) {
+        KisMyPaintPaintOp::strokeBrushTo(brush.brush(), &surface, start.x() + i * 4, start.y(), setup.pressure, 0, 0,
+                                         0.015);
+    }
+    StrokeResult result;
+    result.nsecs = timer.nsecsElapsed();
+    result.dabs = g_dabCount;
+    result.firstDabX = g_firstDabX;
+    result.samples = g_sampleCount;
+    result.sampleNsecs = g_sampleNsecs;
+    result.device = dev;
+    return result;
+}
+
+qint64 median(QVector<qint64> v)
+{
+    std::sort(v.begin(), v.end());
+    return v.isEmpty() ? 0 : v[v.size() / 2];
+}
+
+}
+
+namespace {
+
+// The strokes testSpectralStrokesMatchBefore pins: a preset, spectral or legacy, and the largest channel difference
+// (of 255) allowed against the image the code before the speed work painted
+struct PinnedStroke {
+    const char *name;
+    const char *preset;
+    bool spectral;
+    int tolerance;
+};
+
+const PinnedStroke pinnedStrokes[] = {
+    {"wet_paint_spectral", "i)_Wet_Paint_Plus_(mypaint).myb", true, 2},
+    {"marker_plain_spectral", "e)_Marker_Plain_(mypaint).myb", true, 2},
+    {"wet_knife_spectral", "i)_Wet_Knife_Plus_(mypaint).myb", true, 2},
+    {"wet_paint_legacy", "i)_Wet_Paint_Plus_(mypaint).myb", false, 0},
+    {"marker_plain_legacy", "e)_Marker_Plain_(mypaint).myb", false, 0},
+};
+
+StrokeSetup pinnedSetup()
+{
+    StrokeSetup setup;
+    setup.width = 400;
+    setup.height = 200;
+    setup.start = QPointF(100, 100);
+    setup.events = 50;
+    return setup;
+}
+
+}
+
+void KisMyPaintOpTest::testSpectralStrokesMatchBefore()
+{
+    // The images were painted by the code before task 7a (exact mix2 per pixel, every pixel of a colour sample);
+    // TOSKA_WRITE_GOLDEN=<folder> writes them instead of comparing.
+    const QString writeTo = qEnvironmentVariable("TOSKA_WRITE_GOLDEN");
+    const StrokeSetup setup = pinnedSetup();
+    QStringList failures;
+    for (const PinnedStroke &pinned : pinnedStrokes) {
+        KisPaintOpSettingsSP settings = presetSettings(pinned.preset, pinned.spectral ? QVariant(1.0) : QVariant());
+        QVERIFY(settings);
+        const StrokeResult result = paintPresetStroke(settings, setup);
+        QVERIFY(result.device);
+        const QImage painted = result.device->convertToQImage(nullptr, 0, 0, setup.width, setup.height);
+        const QString file = QString("spectral_before_%1.png").arg(pinned.name);
+        if (!writeTo.isEmpty()) {
+            QVERIFY(painted.save(QDir(writeTo).absoluteFilePath(file)));
+            continue;
+        }
+        const QImage before(QString(FILES_DATA_DIR) + file);
+        QVERIFY2(!before.isNull(), qPrintable(file));
+        QCOMPARE(before.size(), painted.size());
+        const QImage a = before.convertToFormat(QImage::Format_ARGB32);
+        const QImage b = painted.convertToFormat(QImage::Format_ARGB32);
+        int worst = 0;
+        int differing = 0;
+        for (int y = 0; y < a.height(); y++) {
+            const QRgb *ra = reinterpret_cast<const QRgb *>(a.constScanLine(y));
+            const QRgb *rb = reinterpret_cast<const QRgb *>(b.constScanLine(y));
+            for (int x = 0; x < a.width(); x++) {
+                const int d = qMax(qMax(qAbs(qRed(ra[x]) - qRed(rb[x])), qAbs(qGreen(ra[x]) - qGreen(rb[x]))),
+                                   qMax(qAbs(qBlue(ra[x]) - qBlue(rb[x])), qAbs(qAlpha(ra[x]) - qAlpha(rb[x]))));
+                worst = qMax(worst, d);
+                differing += d > 0;
+            }
+        }
+        qInfo().noquote() << QString("%1: largest difference %2/255, %3 pixels differ").arg(pinned.name).arg(worst)
+                                 .arg(differing);
+        if (worst > pinned.tolerance) {
+            failures << file;
+        }
+    }
+    QVERIFY2(failures.isEmpty(), qPrintable(failures.join(", ")));
+    if (!writeTo.isEmpty()) {
+        QSKIP("wrote the images");
+    }
+}
+
+namespace {
+
+const float ORANGE[3] = {230.0f / 255, 90.0f / 255, 30.0f / 255};
+
+KisPaintMix::Rgb rgbOf(const float *c)
+{
+    return {c[0], c[1], c[2]};
+}
+
+KisPaintMix::Rgb pixelRgb(KisPaintDeviceSP dev, int x, int y)
+{
+    const QVector<float> p = rawPixel(dev, x, y);
+    return {p[0], p[1], p[2]};
+}
+
+// The mean colour of row y over [x0, x1)
+KisPaintMix::Rgb rowMean(KisPaintDeviceSP dev, int y, int x0, int x1)
+{
+    KisPaintMix::Rgb sum {0, 0, 0};
+    for (int x = x0; x < x1; x++) {
+        const KisPaintMix::Rgb p = pixelRgb(dev, x, y);
+        sum.r += p.r;
+        sum.g += p.g;
+        sum.b += p.b;
+    }
+    const float n = x1 - x0;
+    return {sum.r / n, sum.g / n, sum.b / n};
+}
+
+float maxDifference(KisPaintMix::Rgb a, KisPaintMix::Rgb b)
+{
+    return qMax(qMax(qAbs(a.r - b.r), qAbs(a.g - b.g)), qAbs(a.b - b.b));
+}
+
+// The spectral share t of paint over ground that mix2 needs to give the colour, and how close it gets
+float spectralShare(KisPaintMix::Rgb ground, KisPaintMix::Rgb paint, KisPaintMix::Rgb colour, float *residual)
+{
+    float best = 0.0f;
+    float bestError = 1e9f;
+    for (int i = 0; i <= 10000; i++) {
+        const float t = i / 10000.0f;
+        const float e = maxDifference(KisPaintMix::mix2(KisPaintMix::Model::Spectral, ground, paint, t), colour);
+        if (e < bestError) {
+            bestError = e;
+            best = t;
+        }
+    }
+    *residual = bestError;
+    return best;
+}
+
+// The value of a brush setting at a pressure: its base value plus the pressure mapping, linearly interpolated
+float settingAtPressure(MyPaintBrush *brush, MyPaintBrushSetting setting, float pressure)
+{
+    float value = mypaint_brush_get_base_value(brush, setting);
+    const int n = mypaint_brush_get_mapping_n(brush, setting, MYPAINT_BRUSH_INPUT_PRESSURE);
+    for (int i = 0; i + 1 < n; i++) {
+        float x0, y0, x1, y1;
+        mypaint_brush_get_mapping_point(brush, setting, MYPAINT_BRUSH_INPUT_PRESSURE, i, &x0, &y0);
+        mypaint_brush_get_mapping_point(brush, setting, MYPAINT_BRUSH_INPUT_PRESSURE, i + 1, &x1, &y1);
+        if (pressure >= x0 && pressure <= x1) {
+            value += y0 + (y1 - y0) * (pressure - x0) / (x1 - x0);
+            break;
+        }
+    }
+    return value;
+}
+
+// Marker Plain over the blue half: the stroke of the live probe (orange, radius 20, pressure 0.9)
+StrokeSetup markerSetup(const KoColorSpace *cs)
+{
+    StrokeSetup setup;
+    setup.cs = cs;
+    setup.width = 600;
+    setup.height = 200;
+    setup.start = QPointF(60, 100);
+    setup.events = 120;
+    return setup;
+}
+
+}
+
+void KisMyPaintOpTest::testGetColorPigmentMatchesMixMany()
+{
+    // The spectral sample groups equal pixels and caches their log spectra; it must still be mixMany over every pixel
+    // of the sample square, each weighted as get_color weights it (qRound((1 - rr) * 255) inside the circle, 255
+    // outside it, as Krita's get_color does) times its alpha.
+    const QList<const KoColorSpace *> spaces = {KoColorSpaceRegistry::instance()->rgb8(),
+                                                KoColorSpaceRegistry::instance()->rgb16()};
+    for (const KoColorSpace *cs : spaces) {
+        KisPaintDeviceSP dev = new KisPaintDevice(cs);
+        std::mt19937 gen(7);
+        std::uniform_int_distribution<int> d(0, 255);
+        for (int y = 0; y < 100; y++) {
+            for (int x = 0; x < 100; x++) {
+                // flat patches, noise and translucent pixels
+                const bool flat = (x / 10 + y / 10) % 3 == 0;
+                const float a = (x + y) % 7 == 0 ? d(gen) / 255.0f : 1.0f;
+                dev->setPixel(x, y, flat ? rawColor(cs, BLUE[0], BLUE[1], BLUE[2], 1.0f)
+                                         : rawColor(cs, d(gen) / 255.0f, d(gen) / 255.0f, d(gen) / 255.0f, a));
+            }
+        }
+        KisPainter painter(dev);
+        KisMyPaintSurface surface(&painter, dev);
+        const float cx = 50.3f, cy = 49.6f, radius = 20.0f;
+        float r, g, b, a;
+        KisMyPaintSurface::get_color_pigment(surface.surface2(), cx, cy, radius, &r, &g, &b, &a, 1.0f);
+
+        const QRect square(QPoint(cx - radius, cy - radius), QSize(2 * radius, 2 * radius));
+        KisAlgebra2D::OuterCircle outer(QPointF(cx, cy), radius);
+        QVector<KisPaintMix::Rgb> colours;
+        QVector<float> weights;
+        for (int y = square.top(); y <= square.bottom(); y++) {
+            for (int x = square.left(); x <= square.right(); x++) {
+                float rr = 0.0f;
+                if (outer.fadeSq(QPointF(x, y)) <= 1.0) {
+                    const float yy = y + 0.5f - cy, xx = x + 0.5f - cx;
+                    rr = qMax((yy * yy + xx * xx) / (radius * radius), 0.0f);
+                }
+                const QVector<float> p = rawPixel(dev, x, y);
+                colours << KisPaintMix::Rgb{p[0], p[1], p[2]};
+                weights << qMax(0, int(qRound((1.0f - rr) * 255))) * p[3];
+            }
+        }
+        const KisPaintMix::Rgb expected = KisPaintMix::mixMany(KisPaintMix::Model::Spectral, colours.constData(),
+                                                               weights.constData(), colours.size());
+        const float worst = maxDifference({r, g, b}, expected);
+        qDebug() << cs->id() << "get_color_pigment - mixMany:" << worst * 255 << "/255";
+        QVERIFY2(worst <= 0.5f / 255, qPrintable(cs->id()));
+    }
+}
+
+void KisMyPaintOpTest::testSpectralStrokeStartsLikeLegacy()
+{
+    // libmypaint 1.6.1's first stroke_to_2 dab reads settings before they are computed (uninitialised memory), so the
+    // stroke's first dabs moved by up to two dab spacings from run to run; primed (primeForStrokeTo2), the spectral
+    // stroke starts where the legacy one does, every time.
+    StrokeSetup setup = pinnedSetup();
+    setup.events = 10;
+    const QStringList presets = {"i)_Wet_Paint_Plus_(mypaint).myb", "e)_Marker_Plain_(mypaint).myb"};
+    for (const QString &file : presets) {
+        const StrokeResult legacy = paintPresetStroke(presetSettings(file), setup);
+        for (int i = 0; i < 3; i++) {
+            const StrokeResult spectral = paintPresetStroke(presetSettings(file, 1.0), setup);
+            QCOMPARE(spectral.firstDabX, legacy.firstDabX);
+            QCOMPARE(spectral.dabs, legacy.dabs);
+        }
+    }
+}
+
+void KisMyPaintOpTest::testSpectralSmudgeFavoursBrushColour()
+{
+    // Task 7's live probe saw Wet Paint Plus lay more paint in spectral mode (paint share .91 against .83). Not more
+    // dabs: both paths lay the same dabs, and the stroke is opaque in both, so its colour is the dab colour, the brush
+    // colour smudged with the canvas. libmypaint's spectral smudge (mix_colors, helpers.c 564-606) weights the smudge
+    // colour by s * a / (a + b * (1 - s)), for two opaque colours s / (2 - s) instead of the legacy s, so the brush
+    // colour wins more: at pressure 0.9, s = 0.55 becomes 0.38.
+    const StrokeSetup setup = markerSetup(rgbF32());
+    const QString file = "i)_Wet_Paint_Plus_(mypaint).myb";
+    const StrokeResult legacy = paintPresetStroke(presetSettings(file), setup);
+    const StrokeResult spectral = paintPresetStroke(presetSettings(file, 1.0), setup);
+    QCOMPARE(spectral.dabs, legacy.dabs);
+
+    const KisPaintMix::Rgb ground = rgbOf(BLUE), paint = rgbOf(ORANGE);
+    const KisPaintMix::Rgb l = rowMean(legacy.device, 100, 150, 250);
+    const float legacyShare = (l.r - ground.r) / (paint.r - ground.r);
+    float residual = 0.0f;
+    const float spectralShare_ = spectralShare(ground, paint, rowMean(spectral.device, 100, 150, 250), &residual);
+    QVERIFY(residual < 1.0f / 255);
+
+    // the same share at the band's edge: the dab colour, not the coverage, differs
+    const KisPaintMix::Rgb edge = rowMean(legacy.device, 85, 150, 250);
+    QVERIFY(qAbs((edge.r - ground.r) / (paint.r - ground.r) - legacyShare) < 0.01f);
+
+    // steady state of the smudge: c = s * (alpha * c + (1 - alpha) * ground) + (1 - s) * paint, so the paint share is
+    // (1 - s) / (1 - s * alpha); alpha (how much of the sample is the stroke itself) from the legacy stroke, then the
+    // spectral share predicted with s / (2 - s)
+    KisPaintOpSettingsSP settings = presetSettings(file);
+    KisMyPaintPaintOpPreset brush;
+    brush.apply(settings);
+    const float s = settingAtPressure(brush.brush(), MYPAINT_BRUSH_SETTING_SMUDGE, setup.pressure);
+    const float alpha = (1.0f - (1.0f - s) / legacyShare) / s;
+    const float sSpectral = s / (2.0f - s);
+    const float predicted = (1.0f - sSpectral) / (1.0f - sSpectral * alpha);
+    qDebug() << "smudge" << s << "spectral weight" << sSpectral << "legacy share" << legacyShare << "spectral share"
+             << spectralShare_ << "predicted" << predicted;
+    QVERIFY(spectralShare_ > legacyShare + 0.04f);
+    QVERIFY(qAbs(spectralShare_ - predicted) < 0.01f);
+}
+
+void KisMyPaintOpTest::testMarkerFringesAreTheSpectralModel()
+{
+    // Marker Plain over dark blue (live probe): green, dark fringes on the band's soft edges. The edge pixels are
+    // mix2's spectral mix of the ground and the paint at some share (the model: blue and orange pass through green),
+    // in float as in 8 bits, not an artefact of the blend. (Within 2/255, not exactly: each dab's result is clamped
+    // to 0..1, the red channel here to 0 at first, before the next dab mixes it again.)
+    const StrokeResult stroke = paintPresetStroke(presetSettings("e)_Marker_Plain_(mypaint).myb", 1.0),
+                                                  markerSetup(rgbF32()));
+    const KisPaintMix::Rgb ground = rgbOf(BLUE), paint = rgbOf(ORANGE);
+    int greenRows = 0;
+    for (int y = 81; y <= 85; y++) {
+        const KisPaintMix::Rgb edge = pixelRgb(stroke.device, 200, y);
+        float residual = 0.0f;
+        const float t = spectralShare(ground, paint, edge, &residual);
+        qDebug() << "row" << y << edge.r * 255 << edge.g * 255 << edge.b * 255 << "share" << t << "residual"
+                 << residual * 255;
+        QVERIFY(residual <= 2.0f / 255);
+        greenRows += edge.g > edge.r && edge.g > edge.b;
+    }
+    QVERIFY(greenRows >= 2);
+}
+
+void KisMyPaintOpTest::testMarkerRippleComesFromEightBitBlending()
+{
+    // The dotted ripple along Marker Plain's band (live: R 128-137) is the dabs' spacing, made visible by the
+    // spectral curve and widened by 8 bits: each dab's result is rounded to the layer and the next dabs blend from
+    // there, and a pixel stops moving where one dab changes it by less than half a level. In float (or a 16-bit
+    // layer) the same stroke ripples about a third as much. (libmypaint's own surface keeps 15 bits.)
+    auto rippleRange = [](const KoColorSpace *cs) {
+        const StrokeResult stroke = paintPresetStroke(presetSettings("e)_Marker_Plain_(mypaint).myb", 1.0),
+                                                      markerSetup(cs));
+        float lo = 1.0f, hi = 0.0f;
+        for (int x = 120; x < 280; x++) {
+            const float r = pixelRgb(stroke.device, x, 100).r;
+            lo = qMin(lo, r);
+            hi = qMax(hi, r);
+        }
+        return (hi - lo) * 255;
+    };
+    const float eightBit = rippleRange(KoColorSpaceRegistry::instance()->rgb8());
+    const float floating = rippleRange(rgbF32());
+    qDebug() << "red range along the band: 8-bit" << eightBit << "float" << floating;
+    QVERIFY(floating <= 4.0f);
+    QVERIFY(eightBit >= 2.0f * floating);
+}
+
+void KisMyPaintOpTest::benchmarkSpectralPaintMode()
+{
+    // The same stroke, legacy (no ToskaMyPaintPaintMode) and spectral (ToskaMyPaintPaintMode 1): 200 events of 4 px,
+    // radius 20, pressure 0.9, over a 2000 x 2000 rgb8 blue | yellow ground. The ratio of medians is printed, not
+    // asserted (it means something only in a Release build, and CI machines vary). TOSKA_BENCH_REPS sets the runs per
+    // arm (default 3); TOSKA_BENCH_ONLY=spectral or legacy runs one arm only, for a profiler.
+    const int reps = qMax(1, qEnvironmentVariableIsSet("TOSKA_BENCH_REPS") ? qEnvironmentVariableIntValue("TOSKA_BENCH_REPS") : 3);
+    const QByteArray only = qgetenv("TOSKA_BENCH_ONLY");
+    const StrokeSetup setup;
+    const QStringList presets = {"i)_Wet_Paint_Plus_(mypaint).myb", "e)_Marker_Plain_(mypaint).myb"};
+    Q_FOREACH (const QString &file, presets) {
+        KisPaintOpSettingsSP legacy = presetSettings(file);
+        KisPaintOpSettingsSP spectral = presetSettings(file, 1.0);
+        QVERIFY(legacy);
+        QVERIFY(spectral);
+
+        QVector<qint64> times[2], sampleTimes[2];
+        int dabs[2] = {0, 0}, samples[2] = {0, 0};
+        for (int rep = 0; rep < reps; rep++) {
+            for (int arm = 0; arm < 2; arm++) {
+                if ((arm == 0 && only == "spectral") || (arm == 1 && only == "legacy")) continue;
+                const StrokeResult r = paintPresetStroke(arm == 0 ? legacy : spectral, setup);
+                times[arm] << r.nsecs;
+                sampleTimes[arm] << r.sampleNsecs;
+                dabs[arm] = r.dabs;
+                samples[arm] = r.samples;
+            }
+        }
+        const qint64 l = median(times[0]), s = median(times[1]);
+        qInfo().noquote() << QString("BENCH %1: legacy %2 ms (%3 dabs, %4 samples %5 ms), spectral %6 ms (%7 dabs, "
+                                     "%8 samples %9 ms), ratio %10")
+                                 .arg(file)
+                                 .arg(l / 1e6, 0, 'f', 1).arg(dabs[0]).arg(samples[0])
+                                 .arg(median(sampleTimes[0]) / 1e6, 0, 'f', 1)
+                                 .arg(s / 1e6, 0, 'f', 1).arg(dabs[1]).arg(samples[1])
+                                 .arg(median(sampleTimes[1]) / 1e6, 0, 'f', 1)
+                                 .arg(l > 0 ? double(s) / double(l) : 0.0, 0, 'f', 2);
+    }
 }
 
 SIMPLE_TEST_MAIN(KisMyPaintOpTest)

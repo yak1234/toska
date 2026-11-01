@@ -12,6 +12,8 @@
 #include "KisPaintMix.h"
 #include "KisPaintMixFastMath.h"
 
+#include <cstring>
+
 namespace KisPaintMix {
 
 namespace {
@@ -71,6 +73,229 @@ Rgb fromSpectrum(const float s[10])
     return {clamp01((tmp[0] - WGM_EPSILON) / offset),
             clamp01((tmp[1] - WGM_EPSILON) / offset),
             clamp01((tmp[2] - WGM_EPSILON) / offset)};
+}
+
+namespace {
+
+// The log-domain functions run libmypaint's fastlog2 / fastpow2 on four bands at a time where the compiler has GCC's
+// vector extension (GCC, Clang, MinGW); elsewhere band by band. Same operations per lane, so the same values up to
+// the compiler's choice of fused multiply-adds.
+#if defined(__GNUC__) || defined(__clang__)
+
+typedef float F4 __attribute__((vector_size(16)));
+typedef int32_t I4 __attribute__((vector_size(16)));
+typedef uint32_t U4 __attribute__((vector_size(16)));
+
+inline F4 splat(float v) { return F4{v, v, v, v}; }
+inline U4 splatU(uint32_t v) { return U4{v, v, v, v}; }
+inline F4 load4(const float *p) { F4 v; std::memcpy(&v, p, sizeof v); return v; }
+inline void store4(float *p, F4 v) { std::memcpy(p, &v, sizeof v); }
+inline F4 select4(I4 mask, F4 a, F4 b) { return (F4)(((I4)a & mask) | ((I4)b & ~mask)); }
+
+// fastapprox fastlog2, four lanes
+inline F4 fastlog2x4(F4 x)
+{
+    const U4 vi = (U4)x;
+    const F4 mx = (F4)((vi & splatU(0x007FFFFF)) | splatU(0x3f000000));
+    const F4 y = __builtin_convertvector(vi, F4) * splat(1.1920928955078125e-7f);
+    return y - splat(124.22551499f) - splat(1.498030302f) * mx - splat(1.72587999f) / (splat(0.3520887068f) + mx);
+}
+
+// fastapprox fastpow2, four lanes (the result never reaches 2^31 for the exponents here, <= 0 plus rounding)
+inline F4 fastpow2x4(F4 p)
+{
+    const F4 offset = (F4)((I4)splat(1.0f) & (I4)(p < splat(0.0f)));
+    const F4 clipp = select4((I4)(p < splat(-126.0f)), splat(-126.0f), p);
+    const F4 w = __builtin_convertvector(__builtin_convertvector(clipp, I4), F4);
+    const F4 z = clipp - w + offset;
+    const F4 v = splat(float(1 << 23)) * (clipp + splat(121.2740575f) + splat(27.7280233f) / (splat(4.84252568f) - z)
+                                          - splat(1.49012907f) * z);
+    return (F4)__builtin_convertvector(v, I4);
+}
+
+void logBands(const float in[12], float out[12])
+{
+    for (int i = 0; i < 12; i += 4) {
+        store4(out + i, fastlog2x4(load4(in + i)));
+    }
+}
+
+void powBands(const float in[12], float out[12])
+{
+    for (int i = 0; i < 12; i += 4) {
+        store4(out + i, fastpow2x4(load4(in + i)));
+    }
+}
+
+#else
+
+void logBands(const float in[12], float out[12])
+{
+    for (int i = 0; i < 12; i++) {
+        out[i] = detail::fastlog2(in[i]);
+    }
+}
+
+void powBands(const float in[12], float out[12])
+{
+    for (int i = 0; i < 12; i++) {
+        out[i] = detail::fastpow2(in[i]);
+    }
+}
+
+#endif
+
+}
+
+void toLogSpectrum(Rgb c, LogSpectrum &out)
+{
+    float s[12];
+    toSpectrum(c, s);
+    s[10] = 1.0f;
+    s[11] = 1.0f;
+    logBands(s, out.band);
+    out.band[10] = 0.0f;
+    out.band[11] = 0.0f;
+}
+
+Rgb fromLogSpectrum(const LogSpectrum &s)
+{
+    float linear[12];
+    powBands(s.band, linear);
+    return fromSpectrum(linear);
+}
+
+Rgb mixLogSpectra(const LogSpectrum &a, const LogSpectrum &b, float t)
+{
+    // brushmodes.c: fastpow(spectral_a[i], fac_a) * fastpow(spectral_b[i], fac_b), fastpow(x, p) being
+    // fastpow2(p * fastlog2(x)); the fastlog2 halves come from the log spectra
+    const float u = 1.0f - t;
+    float pa[12], pb[12];
+    for (int i = 0; i < 12; i++) {
+        pa[i] = u * a.band[i];
+        pb[i] = t * b.band[i];
+    }
+    float fa[12], fb[12];
+    powBands(pa, fa);
+    powBands(pb, fb);
+    for (int i = 0; i < 12; i++) {
+        fa[i] *= fb[i];
+    }
+    return fromSpectrum(fa);
+}
+
+LogSpectrumCache::LogSpectrumCache()
+{
+    for (Entry &e : m_entries) {
+        e.valid = false;
+    }
+}
+
+const LogSpectrum &LogSpectrumCache::get(Rgb c)
+{
+    uint32_t key[3];
+    std::memcpy(&key[0], &c.r, 4);
+    std::memcpy(&key[1], &c.g, 4);
+    std::memcpy(&key[2], &c.b, 4);
+    uint32_t h = key[0] * 0x9E3779B1u;
+    h ^= key[1] * 0x85EBCA77u;
+    h ^= key[2] * 0xC2B2AE3Du;
+    h ^= h >> 15;
+    Entry &e = m_entries[h & (Size - 1)];
+    if (!e.valid || e.key[0] != key[0] || e.key[1] != key[1] || e.key[2] != key[2]) {
+        e.key[0] = key[0];
+        e.key[1] = key[1];
+        e.key[2] = key[2];
+        e.valid = true;
+        toLogSpectrum(c, e.log);
+    }
+    return e.log;
+}
+
+SpectralAverage::SpectralAverage(LogSpectrumCache &cache)
+    : m_cache(cache)
+{
+    for (float &v : m_acc) {
+        v = 0.0f;
+    }
+}
+
+void SpectralAverage::startRun(Rgb c, float weight)
+{
+    flush();
+    m_run = c;
+    m_runWeight = weight;
+}
+
+void SpectralAverage::flush()
+{
+    if (!(m_runWeight > 0.0f)) return;
+    if (!m_any) {
+        m_first = m_run;
+        m_any = true;
+    } else if (m_run != m_first) {
+        m_mixed = true;
+    }
+    const LogSpectrum &l = m_cache.get(m_run);
+    for (int i = 0; i < 12; i++) {
+        m_acc[i] += m_runWeight * l.band[i];
+    }
+    m_sum += m_runWeight;
+    m_runWeight = 0.0f;
+}
+
+bool SpectralAverage::isEmpty() const
+{
+    return !m_any && !(m_runWeight > 0.0f);
+}
+
+Rgb SpectralAverage::result()
+{
+    flush();
+    if (!m_any) return {0.0f, 0.0f, 0.0f};
+    if (!m_mixed) return m_first;
+    LogSpectrum mean;
+    const float scale = 1.0f / m_sum;
+    for (int i = 0; i < 12; i++) {
+        mean.band[i] = m_acc[i] * scale;
+    }
+    return fromLogSpectrum(mean);
+}
+
+SpectralDabMixer::SpectralDabMixer(LogSpectrumCache &cache)
+    : m_cache(cache)
+{
+    for (Entry &e : m_entries) {
+        e.generation = 0;
+    }
+    setTop({0.0f, 0.0f, 0.0f});
+}
+
+void SpectralDabMixer::setTop(Rgb top)
+{
+    if (m_generation != 0 && std::memcmp(&top, &m_top, sizeof top) == 0) return;
+    m_top = top;
+    toLogSpectrum(top, m_topLog);
+    m_generation++;
+    if (m_generation == 0) {
+        // after 2^32 colours: forget every entry rather than mistake an old one for new
+        for (Entry &e : m_entries) {
+            e.generation = 0;
+        }
+        m_generation = 1;
+    }
+}
+
+const SpectralDabMixer::Entry *SpectralDabMixer::fill(uint32_t slot, Rgb bottom, Key key, uint32_t knot)
+{
+    Entry &e = m_entries[slot];
+    const LogSpectrum &bottomLog = m_cache.get(bottom);
+    e.key = key;
+    e.knot = knot;
+    e.generation = m_generation;
+    e.low = mixLogSpectra(bottomLog, m_topLog, float(knot) / Knots);
+    e.high = mixLogSpectra(bottomLog, m_topLog, float(knot + 1) / Knots);
+    return &e;
 }
 
 namespace detail {

@@ -35,6 +35,15 @@ private Q_SLOTS:
     void testSampleMergedReadsBelow();
     void testJsonPaintModeAloneStaysLegacy();
     void testToskaZeroForcesLegacyEvenWithMappings();
+
+    // Toska: spectral speed (task 7a)
+    void testSpectralStrokesMatchBefore();
+    void testGetColorPigmentMatchesMixMany();
+    void testSpectralStrokeStartsLikeLegacy();
+    void testSpectralSmudgeFavoursBrushColour();
+    void testMarkerFringesAreTheSpectralModel();
+    void testMarkerRippleComesFromEightBitBlending();
+    void benchmarkSpectralPaintMode();
 };
 
 #endif // KIS_MYPAINTOP_TEST_H
