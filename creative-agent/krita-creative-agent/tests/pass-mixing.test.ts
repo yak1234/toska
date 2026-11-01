@@ -36,18 +36,29 @@ test('rgb sends nothing to the plugin', () => {
   assert.deepEqual(passMixing({ preset: 'x', mixing: 'rgb' }, { mixing: { models: {}, presets: {} } }), {});
 });
 
-test('with an empty mixing catalog, paint_pass and mix_colors offer no model', async () => {
-  assert.deepEqual(measuredModels(CATALOG), []);
-  const runtime = { faulted: false, study: { directory: '/nonexistent', references: [] }, emit() {}, async callNative() { return {}; } };
-  const tools = paintingTools(runtime);
-  const pass = tools.find(t => t.name === 'paint_pass')!;
-  assert.equal((pass.parameters as any).properties.mixing, undefined);
-  assert.equal(tools.find(t => t.name === 'mix_colors'), undefined, 'the tool itself waits for a measured model');
-  const mix = mixColorsTool({ catalog: () => CATALOG });
+test('with an empty mixing catalog, mix_colors and paint_pass offer no model', async () => {
+  const empty: MixingCatalog = { mixing: { models: {}, presets: {} } };
+  assert.deepEqual(measuredModels(empty), []);
+  assert.deepEqual(measuredModels({}), []);
+  const mix = mixColorsTool({ catalog: () => empty });
   await assert.rejects(mix.execute('id', { colours: [{ hex: '#ff0000', amount: 1 }, { hex: '#0000ff', amount: 1 }] }, undefined as any, undefined as any), /no mixing model/i);
-  const r = passMixing({ preset: 'b) Basic-1', mixing: 'spectral' }, { mixing: { models: {}, presets: {} } });
+  const r = passMixing({ preset: 'b) Basic-1', mixing: 'spectral' }, empty);
   assert.ok('error' in r);
   assert.match(r.error, /no mixing model/i);
+});
+
+test('a non-empty catalog offers its measured models', () => {
+  assert.deepEqual(measuredModels(catalog).sort(), ['linear', 'spectral']);
+  assert.deepEqual(measuredModels({ mixing: { models: { spectral: 'blends like paint' }, presets: {} } }), ['spectral']);
+});
+
+test('the painting tools offer mix_colors and the mixing field exactly when the shipped catalog has a measured model', () => {
+  const runtime = { faulted: false, study: { directory: '/nonexistent', references: [] }, emit() {}, async callNative() { return {}; } };
+  const tools = paintingTools(runtime);
+  const offered = measuredModels(CATALOG).length > 0;
+  const pass = tools.find(t => t.name === 'paint_pass')!;
+  assert.equal((pass.parameters as any).properties.mixing !== undefined, offered);
+  assert.equal(tools.find(t => t.name === 'mix_colors') !== undefined, offered);
 });
 
 test('paint_batch passes get the same mixing', async () => {
