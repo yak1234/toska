@@ -180,6 +180,7 @@ Keep this table current: every upstream file the `krita-agent` branch changes, a
 | `krita/CMakeLists.txt` | `krita_welcome_qrc` (in `krita_QRCS`) is `krita/data/welcome/welcome-toska.qrc` when `KRITA_APP_OWN_WELCOME` is 1, empty otherwise | Toska welcome page |
 | `libs/ui/KisWelcomePageWidget.h`, `KisWelcomePageWidget.cpp` | When `KisAppIdentity::hasOwnWelcome()`: loads `:/welcome/toska-welcome.jpg` and paints it under the page (`paintEvent()`, laid out by `KisWelcomeBackgroundLayout.h`); in every other build the pixmap is null and `paintEvent()` calls `QWidget::paintEvent()` only | Toska welcome page |
 | `libs/ui/tests/CMakeLists.txt`, `agent/ci-tests.txt` | Adds `KisWelcomeBackgroundLayoutTest` | Toska welcome page |
+| `plugins/paintops/CMakeLists.txt` | One line: `add_subdirectory( libpaintmix )` after `libpaintop` (the colour-mixing library). `agent/ci-tests.txt` gains `KisPaintMixTest` | colour mixing (task 1) |
 
 Our own files for the identity: `cmake/modules/KritaAppIdentity.cmake`, `libs/global/KisAppIdentity.{h,cpp}`,
 `libs/global/config-app-identity.h.cmake`; tests `libs/global/tests/KisAppIdentityTest.{h,cpp}`,
@@ -1109,6 +1110,18 @@ release task (1.3).
   - Removed the root `snapcraft.yaml`, an exact copy of `packaging/linux/snap/snapcraft.yaml`.
   - Kept at the top: `.kde-ci.yml` (`agent/fetch-deps.sh` reads it), `KoAlwaysInline.h` (root include path), `AUTHORS` and
     `COPYING` (the packager copies them).
+
+## Colour mixing (colour-mixing task 1)
+
+`plugins/paintops/libpaintmix/` is a pure C++ static library (`kritapaintmix`, no Krita link dependencies) with the
+mixing models as functions on straight, sRGB-encoded floats: `KisPaintMix::mix2`, `mixMany`, `toSpectrum`, `fromSpectrum`.
+Models so far: `rgb` (plain lerp) and `spectral`. Unmixed colours (`t` 0 or 1, equal colours, one non-zero weight)
+return the input bit for bit in every model.
+
+Sources: `spectral` is libmypaint 1.6.1: constants and `rgb_to_spectral`/`spectral_to_rgb` from `helpers.c` lines 39-60 and
+521-600, the weighted geometric mean from `brushmodes.c` lines 73-135, and `fastlog2`/`fastpow2`/`fastpow` from
+`fastapprox/` (Paul Mineiro's header kept in `KisPaintMixFastMath.h`). The test `testSpectralMatchesLibmypaint`
+compares against a test-local copy of libmypaint's `mix_colors` with `powf`. Run with `agent/run-tests.sh KisPaintMixTest`.
 
 ## Plugin craft: live checks (krita-fork 5.1 stamps, 5.3 tools)
 

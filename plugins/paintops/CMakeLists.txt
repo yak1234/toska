@@ -1,6 +1,7 @@
 include_directories(libpaintop)
 
 add_subdirectory( libpaintop )
+add_subdirectory( libpaintmix )
 add_subdirectory( defaultpaintops )
 add_subdirectory( hairy )
 add_subdirectory( deform )
