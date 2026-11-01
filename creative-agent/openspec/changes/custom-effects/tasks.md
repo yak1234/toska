@@ -200,6 +200,7 @@ Plugin side: the fill path of `create_layer` already exists (`layer_craft.py:110
 
 ### Constraints added for Part 2 (Part 1's Global Constraints still apply)
 
+- **Benchmark scenes (2026-11-01; overrides any scene named in this plan):** every A/B gate follows `creative-agent/openspec/benchmark-scenes.md` — fixed goal images, 3 runs per arm, blind Luna + the user, and the muddiness / stroke-count / repetition / observe-time measurements. "Still life" means scene 1; New Moscow and the artist's own paintings are never used.
 - **Where C++ goes:** only `plugins/generators/liveeffects/`, plus `add_subdirectory(liveeffects)` in `plugins/generators/CMakeLists.txt`. Single exception: the libkis `FillLayer.setGenerator` change, tested in `libs/libkis/tests/TestDocument.cpp`. Nothing under `libs/image` or `libs/ui`.
 - **Builds:** only `nice -n 19 env CMAKE_BUILD_PARALLEL_LEVEL=8 zsh agent/build-macos.sh` (installs into `_install`). Never Homebrew `ninja`, not even `-n`. If `_build/CMakeCache.txt` has `BUILD_TESTING:BOOL=OFF`, stop and ask: `--tests` only takes effect on a fresh configure.
 - **C++ tests:** only `agent/run-tests.sh <program> [functions]`; every new program in `agent/ci-tests.txt`; QTest; files under a `QTemporaryDir` (absolute paths); `QVERIFY` every pointer; widgets built, never shown; no dialogs; do not copy screentone's habit of writing `*_generated.png` into the working folder; generators fetched via `KisGeneratorRegistry::instance()->get(...)` as `KisScreentoneGeneratorTest` does.

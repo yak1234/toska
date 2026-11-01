@@ -14,6 +14,7 @@ Build order follows the proposal (MyPaint spectral → module → Mixbox → Col
 
 ## Global Constraints
 
+- **Benchmark scenes (2026-11-01; overrides any scene named in this plan):** every A/B gate follows `creative-agent/openspec/benchmark-scenes.md` — fixed goal images, 3 runs per arm, blind Luna + the user, and the muddiness / stroke-count / repetition / observe-time measurements. "Still life" means scene 1; New Moscow and the artist's own paintings are never used.
 - **Default is upstream behaviour.** A preset without the new properties paints byte-identically to today: RGB mixing, MyPaint's legacy `mypaint_brush_stroke_to`, Color Smudge's own composite ops. A model changes painting only when a preset or a pass names it.
 - **Model ids, verbatim everywhere** (C++, preset XML, plugin, companion): `rgb`, `linear`, `perceptual`, `spectral`, `pigment`.
 - **Preset properties:** Color Smudge: `ToskaMixingModel` (string, default `rgb`), `ToskaMixOnBrush` (bool, default true), `ToskaMixInWetPaint` (bool, default false; stored only, for `wet-paint`). MyPaint: `ToskaMyPaintPaintMode` (float 0–1; overrides the brush's `paint_mode` base value when present), `ToskaMyPaintSampleMerged` (bool, default false).

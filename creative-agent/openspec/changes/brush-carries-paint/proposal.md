@@ -6,7 +6,7 @@ from `paint-engine`.
 Decisions made since (Claude's calls, explained to the user, who directs Toska but is not a painter; may be overruled):
 - **Dirty brush** is never a preset default; the painter always chooses it.
 - **Start on RGB** in parallel with `colour-mixing`; bristles switch to the shared module when it lands.
-- **A/B scene:** a simple still life with clear colour joins first, New Moscow after.
+- **A/B scenes:** the benchmark set in `../../benchmark-scenes.md` (scenes 1, 4, 5), never New Moscow.
 
 ## Why
 

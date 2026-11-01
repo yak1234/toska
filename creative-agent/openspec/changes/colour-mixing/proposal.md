@@ -6,7 +6,7 @@ from `paint-engine`; supersedes the parked `pigment-mixing`.
 Decisions made since (Claude's calls, explained to the user, who directs Toska but is not a painter; may be overruled):
 - **Order:** MyPaint spectral → shared module → **Mixbox → Color Smudge**, so Color Smudge is changed once, with every
   model available (parts 3 and 4 below are built in that swapped order).
-- **A/B scene:** a simple still life with clear colour joins first (mixing differences show plainly), New Moscow after.
+- **A/B scenes:** the benchmark set in `../../benchmark-scenes.md` (scenes 1, 2, 4), never New Moscow.
 - **Blending presets** switch to a new model only per preset, after its catalog card and A/B; never globally by default.
 - `pigment-mixing` is kept as a pointer here, not deleted.
 
