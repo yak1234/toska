@@ -1,0 +1,5 @@
+Pilot P2. Goal: Vincent van Gogh, "The Starry Night" (1889), public domain; scan from Wikimedia Commons
+("File:Van Gogh - Starry Night - Google Art Project.jpg", 3840 px thumbnail). Prompt: "Recreate this painting as
+closely as you can with real brushwork: the swirling blue sky, the yellow stars and moon, the dark cypress, the
+village below, the thick directional strokes."
+Tests: blue against yellow (greens where they meet), directional strokes, thick paint.

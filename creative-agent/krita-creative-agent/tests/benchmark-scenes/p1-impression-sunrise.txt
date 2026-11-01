@@ -1,0 +1,5 @@
+Pilot P1. Goal: Claude Monet, "Impression, Sunrise" (1872), public domain; scan from Wikimedia Commons
+("File:Monet - Impression, Sunrise.jpg", 3840 px thumbnail). Prompt: "Recreate this painting as closely as you can
+with real brushwork: the misty blue-grey harbour, the orange sun and its broken reflection on the water, the dark
+rowing boats, the loose visible strokes."
+Tests: orange against blue (complementary mixing), soft atmosphere and glazes, loose strokes.

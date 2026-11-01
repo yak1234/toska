@@ -37,6 +37,19 @@ artist's own paintings are never benchmark scenes.
 Each change runs only the scenes listed for it. The first gate of each change runs its first listed scene; later
 gates run all of its scenes.
 
+## Pilot scenes (famous paintings, added 2026-11-01)
+
+The painting itself is the fixed goal image, so no goal needs generating. Both are public domain; scans from
+Wikimedia Commons, stored with their prompts in `creative-agent/krita-creative-agent/tests/benchmark-scenes/`.
+
+| # | Painting | What it should show | Used by |
+|---|---|---|---|
+| P1 | **Monet, *Impression, Sunrise* (1872)** — few shapes: misty harbour, orange sun and broken reflection, dark boats | Orange against blue (complementary mixing), soft atmosphere and glazes, loose strokes | colour-mixing (first pilot), wet-paint |
+| P2 | **Van Gogh, *The Starry Night* (1889)** — swirling blue sky, yellow stars, cypress, village | Blue against yellow (greens where they meet), directional and thick strokes | colour-mixing, brush-carries-paint |
+
+A pilot runs one painting per arm first, to prove the pipeline (goal image in, painting out, measurements, blind
+judging); the gate itself then uses 3 runs per arm. The "without" arm sets `TOSKA_MIXING=off` for the companion.
+
 ## Setting up (once, before the first gate)
 
 1. Generate the seven goal images with the image tool the agent already uses for references, at 6000×4500 or the
