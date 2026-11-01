@@ -3,6 +3,8 @@ import math
 import re
 
 MAX_PASS_STROKES = 1024
+# Mixing model ids, verbatim in the engines, presets and plugin (mixing_options re-exports them as MODELS).
+MODELS = ('rgb', 'linear', 'perceptual', 'spectral', 'pigment')
 # A stroke's optional pen input, one entry per point (the start, then each segment end), in the units Krita's tablet
 # input gives its brush engine (krita-native/agent-accel/stroke_points.h). The fork's Node.paintStrokes reads them as
 # given; on stock Krita only the native helper paints them.
@@ -52,9 +54,11 @@ def color(value):
 
 
 def validate_pass(params, width, height, presets):
-    fields(params, ('name', 'preset', 'strokes', 'layer_opacity', 'region', 'stage_id', 'expected_revision', 'continue_layer_id', 'panel', 'blend_mode', 'clip_to', 'smudge_overlay', 'smudge_rate', 'selection', 'inside_shape'), ('name', 'preset', 'strokes'))
+    fields(params, ('name', 'preset', 'strokes', 'layer_opacity', 'region', 'stage_id', 'expected_revision', 'continue_layer_id', 'panel', 'blend_mode', 'clip_to', 'smudge_overlay', 'smudge_rate', 'mixing_model', 'selection', 'inside_shape'), ('name', 'preset', 'strokes'))
     if 'smudge_overlay' in params and not isinstance(params['smudge_overlay'], bool):
         raise ValueError('smudge_overlay must be boolean')
+    if 'mixing_model' in params and params['mixing_model'] not in MODELS:
+        raise ValueError('mixing_model must be one of ' + ', '.join(MODELS))
     if 'smudge_rate' in params:
         if not params.get('smudge_overlay'):
             raise ValueError('smudge_rate needs smudge_overlay')

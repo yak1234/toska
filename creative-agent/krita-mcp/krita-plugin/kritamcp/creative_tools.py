@@ -676,6 +676,12 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                 self._region_check_named(doc, session, text(params['selection'], 'selection', EXPRESSION_LIMIT))
             if params.get('smudge_overlay'):
                 self._creative_validate_smudge_overlay(params['preset'], 'smudge_rate' in params)
+            if 'mixing_model' in params:
+                if not on_fork():
+                    raise ValueError('mixing_model needs our Krita (the fork).')
+                from .mixing_options import mixing_properties
+                mixing_properties(self._creative_preset_paintop(params['preset']), params['preset'], params['mixing_model'],
+                                  not params.get('continue_layer_id'), bool(params.get('smudge_overlay')))
             if params.get('continue_layer_id'):
                 if params.get('blend_mode') or params.get('clip_to'):
                     raise ValueError('blend_mode and clip_to make a new layer; leave out continue_layer_id.')
@@ -1253,6 +1259,11 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                 visit(child, depth + 1)
         visit(doc.rootNode())
         return found
+
+    def _creative_preset_paintop(self, preset_name):
+        from krita import Preset
+        import xml.etree.ElementTree as ET
+        return ET.fromstring(Preset(Krita.instance().resources('preset')[preset_name]).toXML()).get('paintopid')
 
     def _creative_validate_smudge_overlay(self, preset_name, rate=False):
         # Overlay mode (MergedPaint) exists only in the Color Smudge engine, and Krita ignores it in Lightness mode.
@@ -2020,10 +2031,24 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         strokes, out = params['strokes'], {}
         options = {'name': params['name']}
         options['preset'] = params['preset']
+        # Mixing model and sample-below for blending passes on a new layer (mixing_options), then explicit overlay on top.
+        from .mixing_options import mixing_properties, BLENDING_PRESET
+        model = params.get('mixing_model')
+        properties = {}
+        if model is not None or BLENDING_PRESET.search(params['preset']):   # other passes never read the preset XML
+            try:
+                paintop = self._creative_preset_paintop(params['preset'])
+            except (KeyError, AttributeError, ImportError):
+                if model is not None:
+                    raise
+                paintop = None                                               # an unreadable preset is painted as before
+            properties = mixing_properties(paintop, params['preset'], model, new_layer, bool(params.get('smudge_overlay')))
         if params.get('smudge_overlay'):
             # Overlay mode on the job's own copy of the saved preset; the view's preset is never touched.
-            options['presetProperties'] = dict({'MergedPaint': True},
+            properties.update({'MergedPaint': True},
                 **({'SmudgeRateValue': params['smudge_rate']} if 'smudge_rate' in params else {}))
+        if properties:
+            options['presetProperties'] = properties
         if selection is None and params.get('region'):
             # The stage mask clips the whole brush footprint and fades in at inner edges (stage_mask.py); the job clips
             # to it alone, whatever the document selects, so the artist's selection is never swapped.
