@@ -27,7 +27,7 @@ class KisMyPaintSurface
 public:
 
     // The extended interface (libmypaint's MyPaintSurface2, whose first member is the plain MyPaintSurface): the
-    // brush calls draw_dab_pigment and get_color_pigment from mypaint_brush_stroke_to_2, for presets with paint_mode.
+    // brush calls draw_dab_pigment and get_color_pigment from mypaint_brush_stroke_to_2, for presets with ToskaMyPaintPaintMode > 0.
     struct MyPaintSurfaceInternal: public MyPaintSurface2 {
           KisMyPaintSurface *m_owner;
           KoChannelInfo::enumChannelValueType bitDepth;

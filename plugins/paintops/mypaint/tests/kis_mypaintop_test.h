@@ -33,6 +33,8 @@ private Q_SLOTS:
     void testEraserIgnoresPaintMode();
     void testGetColorPigmentAveragesSpectrally();
     void testSampleMergedReadsBelow();
+    void testJsonPaintModeAloneStaysLegacy();
+    void testToskaZeroForcesLegacyEvenWithMappings();
 };
 
 #endif // KIS_MYPAINTOP_TEST_H

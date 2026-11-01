@@ -182,9 +182,9 @@ Keep this table current: every upstream file the `krita-agent` branch changes, a
 | `libs/ui/tests/CMakeLists.txt`, `agent/ci-tests.txt` | Adds `KisWelcomeBackgroundLayoutTest` | Toska welcome page |
 | `plugins/paintops/CMakeLists.txt` | One line: `add_subdirectory( libpaintmix )` after `libpaintop` (the colour-mixing library). `agent/ci-tests.txt` gains `KisPaintMixTest` | colour mixing (task 1) |
 | `plugins/paintops/mypaint/MyPaintSurface.h`, `MyPaintSurface.cpp` | The internal surface struct derives from libmypaint's `MyPaintSurface2` (`surface2()`); `draw_dab_pigment` and `get_color_pigment`; a `paint` argument through `drawDabImpl` (normal blend at `alpha * (1 - paint)`, then the spectral one at `alpha * paint`; skipped at `paint` 0, the legacy path) and `getColorImpl` (`paint < 0`: unchanged); a `sampleMerged` constructor argument that reads the projection | colour mixing (task 2) |
-| `plugins/paintops/mypaint/MyPaintPaintOp.h`, `MyPaintPaintOp.cpp` | `usesPaintMode()`, `applyToskaPaintMode()` (`ToskaMyPaintPaintMode`; a preset whose JSON has no `paint_mode` gets 0, since libmypaint's default is 1); `mypaint_brush_stroke_to_2` only when `usesPaintMode`, otherwise the legacy `mypaint_brush_stroke_to`; `ToskaMyPaintSampleMerged` to the surface | colour mixing (task 2) |
+| `plugins/paintops/mypaint/MyPaintPaintOp.h`, `MyPaintPaintOp.cpp` | `usesPaintMode()`, `applyToskaPaintMode()` (paint_mode set to `ToskaMyPaintPaintMode`, or 0 without it, its mappings cleared: the preset's own JSON `paint_mode` never opts in), `strokeBrushTo()`: `mypaint_brush_stroke_to_2` only when `usesPaintMode`, otherwise the legacy `mypaint_brush_stroke_to`; `ToskaMyPaintSampleMerged` to the surface | colour mixing (task 2) |
 | `plugins/paintops/mypaint/CMakeLists.txt`, `tests/CMakeLists.txt` | Link `kritapaintmix` | colour mixing (task 2) |
-| `plugins/paintops/mypaint/tests/kis_mypaintop_test.h`, `kis_mypaintop_test.cpp` | Seven paint-mode tests (`testDab`, `testGetColor`, `testLoading` unchanged). `agent/ci-tests.txt` gains `KisMyPaintOpTest` | colour mixing (task 2) |
+| `plugins/paintops/mypaint/tests/kis_mypaintop_test.h`, `kis_mypaintop_test.cpp` | Nine paint-mode tests (`testDab`, `testGetColor`, `testLoading` unchanged). `agent/ci-tests.txt` gains `KisMyPaintOpTest` | colour mixing (task 2) |
 
 Our own files for the identity: `cmake/modules/KritaAppIdentity.cmake`, `libs/global/KisAppIdentity.{h,cpp}`,
 `libs/global/config-app-identity.h.cmake`; tests `libs/global/tests/KisAppIdentityTest.{h,cpp}`,
@@ -1128,11 +1128,12 @@ Sources: `spectral` is libmypaint 1.6.1: constants and `rgb_to_spectral`/`spectr
 compares against a test-local copy of libmypaint's `mix_colors` with `powf`. Run with `agent/run-tests.sh KisPaintMixTest`.
 
 MyPaint (task 2): a preset paints through libmypaint's `mypaint_brush_stroke_to_2` and the spectral dab blend only when
-its brush uses `paint_mode` (`KisMyPaintPaintOp::usesPaintMode`, libmypaint's own `legacy_smudge` test negated). The
-preset property `ToskaMyPaintPaintMode` (float 0-1) sets the `paint_mode` base value; without it, a preset whose MyPaint
-JSON names no `paint_mode` gets 0, because libmypaint's default is 1 and Krita never read it (every bundled preset
-but `e) Marker Medium`, which sets 0). `ToskaMyPaintSampleMerged` makes `get_color` read the image's projection. Every
-other preset paints through the legacy `mypaint_brush_stroke_to` byte-identically. Run with
+it sets the Toska property `ToskaMyPaintPaintMode` (float 0-1) above 0. `KisMyPaintPaintOp::applyToskaPaintMode` makes
+the brush's `paint_mode` that constant value, or 0 without the property, clearing any input mappings; the preset's own
+JSON `paint_mode` (base value or mappings; libmypaint's default is 1) never opts in. The entry point is then
+`usesPaintMode` (libmypaint's own `legacy_smudge` test negated), true exactly when the property is above 0.
+`ToskaMyPaintSampleMerged` makes `get_color` read the image's projection. Every other preset paints through the legacy
+`mypaint_brush_stroke_to` byte-identically. Run with
 `agent/run-tests.sh KisMyPaintOpTest`.
 
 ## Plugin craft: live checks (krita-fork 5.1 stamps, 5.3 tools)

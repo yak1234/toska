@@ -22,6 +22,11 @@
 #include <kis_paint_layer.h>
 #include <kis_undo_stores.h>
 #include <QDir>
+#include <QFile>
+#include <cmath>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 #include "kis_mypaintop_test.h"
 #include "MyPaintPaintOp.h"
@@ -331,6 +336,116 @@ void KisMyPaintOpTest::testSampleMergedReadsBelow()
         KisMyPaintSurface::get_color_pigment(surface.surface2(), 50, 50, 10, &r, &g, &b, &a, -1.0f);
         QCOMPARE(a, 0.0f);
     }
+}
+
+namespace {
+
+// basic.myb's JSON, with paint_mode set (base value, optional pressure mapping) or removed
+QByteArray basicJson(bool withPaintMode, bool withMapping)
+{
+    QFile file(QString(FILES_DATA_DIR) + "basic.myb");
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QByteArray();
+    }
+    QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    QJsonObject settings = root.value("settings").toObject();
+    settings.remove("paint_mode");
+    if (withPaintMode) {
+        QJsonObject inputs;
+        if (withMapping) {
+            inputs.insert("pressure", QJsonArray{QJsonArray{0.0, 0.0}, QJsonArray{1.0, 1.0}});
+        }
+        settings.insert("paint_mode", QJsonObject{{"base_value", 1.0}, {"inputs", inputs}});
+    }
+    root.insert("settings", settings);
+    return QJsonDocument(root).toJson();
+}
+
+KisPaintOpSettingsSP mypaintSettings(const QByteArray &json, const QVariant &toskaPaintMode = QVariant())
+{
+    KisPaintOpSettingsSP settings = new KisMyPaintOpSettings(KisGlobalResourcesInterface::instance());
+    settings->setProperty("paintop", "mypaintbrush");
+    settings->setProperty(MYPAINT_JSON, json);
+    if (toskaPaintMode.isValid()) {
+        settings->setProperty("ToskaMyPaintPaintMode", toskaPaintMode);
+    }
+    return settings;
+}
+
+// A blue stroke over yellow through the paintop's own entry-point choice; the pixels it leaves
+QByteArray paintStroke(KisPaintOpSettingsSP settings, bool *paintMode)
+{
+    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
+    const QRect area(0, 0, 200, 100);
+    KisPaintDeviceSP dev = new KisPaintDevice(cs);
+    dev->fill(area, rawColor(cs, YELLOW[0], YELLOW[1], YELLOW[2], 1.0f));
+    KisPainter painter(dev);
+    KisMyPaintSurface surface(&painter, dev);
+
+    KisMyPaintPaintOpPreset brush;
+    brush.apply(settings);
+    KisMyPaintPaintOp::applyToskaPaintMode(brush.brush(), settings);
+    *paintMode = KisMyPaintPaintOp::usesPaintMode(brush.brush());
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, std::log(8.0f));
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_H, 0.64f);
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_S, 1.0f);
+    mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_V, 0.52f);
+
+    KisMyPaintPaintOp::strokeBrushTo(brush.brush(), &surface, 20, 50, 0.8f, 0, 0, 1.0);
+    for (int i = 1; i <= 40; i++) {
+        KisMyPaintPaintOp::strokeBrushTo(brush.brush(), &surface, 20 + i * 4, 50, 0.8f, 0, 0, 0.015);
+    }
+    return allBytes(dev, area);
+}
+
+}
+
+void KisMyPaintOpTest::testJsonPaintModeAloneStaysLegacy()
+{
+    const QByteArray withPaintMode = basicJson(true, false);
+    const QByteArray without = basicJson(false, false);
+    QVERIFY(withPaintMode.contains("\"paint_mode\""));
+    QVERIFY(!without.contains("\"paint_mode\""));
+
+    bool paintMode = true;
+    const QByteArray painted = paintStroke(mypaintSettings(withPaintMode), &paintMode);
+    QVERIFY(!paintMode);
+    bool referenceMode = true;
+    const QByteArray reference = paintStroke(mypaintSettings(without), &referenceMode);
+    QVERIFY(!referenceMode);
+    QCOMPARE(painted, reference);
+
+    // the property opts in, and the stroke then differs (the comparison above can see a change)
+    bool optedIn = false;
+    const QByteArray spectral = paintStroke(mypaintSettings(without, 1.0), &optedIn);
+    QVERIFY(optedIn);
+    QVERIFY(spectral != reference);
+}
+
+void KisMyPaintOpTest::testToskaZeroForcesLegacyEvenWithMappings()
+{
+    const QByteArray mapped = basicJson(true, true);
+    QVERIFY(mapped.contains("\"pressure\""));
+
+    // the mapping alone would make libmypaint leave the legacy path
+    KisPaintOpSettingsSP settings = mypaintSettings(mapped, 0.0);
+    KisMyPaintPaintOpPreset raw;
+    raw.apply(settings);
+    QVERIFY(!mypaint_brush_is_constant(raw.brush(), MYPAINT_BRUSH_SETTING_PAINT_MODE));
+    QVERIFY(KisMyPaintPaintOp::usesPaintMode(raw.brush()));
+
+    bool paintMode = true;
+    const QByteArray painted = paintStroke(settings, &paintMode);
+    QVERIFY(!paintMode);
+    bool referenceMode = true;
+    const QByteArray reference = paintStroke(mypaintSettings(basicJson(false, false)), &referenceMode);
+    QVERIFY(!referenceMode);
+    QCOMPARE(painted, reference);
+
+    // and without the property, the same
+    bool absentMode = true;
+    QCOMPARE(paintStroke(mypaintSettings(mapped), &absentMode), reference);
+    QVERIFY(!absentMode);
 }
 
 SIMPLE_TEST_MAIN(KisMyPaintOpTest)
