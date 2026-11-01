@@ -21,7 +21,9 @@ import { selectionTools } from './paint-only-here.ts';
 import { canvasShape, checkPassLimits, passShape, shapeReport, shapeSchema, shapeTimings } from './shapes/use.ts';
 import { recipeTool } from './recipe-tool.mjs';
 import { contourTool } from './contour-tool.mjs';
-import { brushCards } from './brush-catalog.mjs';
+import { brushCards, CATALOG, measuredModels, mixingModelCards } from './brush-catalog.mjs';
+import { withMixing } from './colour-mixing/pass-mixing.ts';
+import { mixColorsTool } from './colour-mixing/mix-tool.ts';
 import { COMIC_OPERATIONS, CRAFT_OPERATIONS, mutates } from './craft.mjs';
 import { assetTools } from './assets.mjs';
 import { skillReadTool, SKILLS_DIR } from './skills.mjs';
@@ -208,6 +210,14 @@ export function nativeExecute(runtime, operation) {
   };
 }
 
+/** The `mixing` field of paint_pass: blending and glazing in a measured model; absent while no model has a card. */
+function mixingSchema() {
+  const models = measuredModels(CATALOG);
+  if (!models.length) return {};
+  const offered = models.includes('rgb') ? models : ['rgb', ...models];
+  return { mixing: Type.Optional(Type.Union(offered.map(m => Type.Literal(m)), { description: `How paint mixes on this pass, for blending and glazing (smudging, wet-on-wet, soft glazes): ${offered.join(', ')}; rgb is the preset's usual blending. Each model's card, and which presets it was measured with, is in list_brushes.` })) };
+}
+
 export function paintingTools(runtime) {
   const tool = (name, label, description, parameters, operation) => ({
     name, label, description, parameters, executionMode: /** @type {const} */ ('sequential'), execute: nativeExecute(runtime, operation),
@@ -226,7 +236,8 @@ export function paintingTools(runtime) {
      execute: async (id, params, signal) => {
        signal?.throwIfAborted();
        const result = await runtime.callNative('list_brushes', params, id);
-       return resultContent(runtime, { ...result, brushes: brushCards(result.brushes ?? []) }, { limit: 24000 });
+       const mixing = mixingModelCards();
+       return resultContent(runtime, { ...result, brushes: brushCards(result.brushes ?? []), ...(mixing ? { mixing_models: mixing } : {}) }, { limit: 24000 });
      }},
     tool('paint_pass', 'Painting a pass',
       'Paint up to 256 continuous native cubic brush curves on a NEW named layer. Each segment is [c1x,c1y,c2x,c2y,endx,endy]. The full pass is validated before painting. Automatically updates the study’s single layered painting.kra file and returns its canvas IMAGE. Assess that image before the next pass. Brush width matters for coverage and overlap. A stroke’s optional pressure, tilt, rotation, speed and time_ms lists drive the preset’s pen dynamics; the result says "applied" for each, or "ignored" when this Krita cannot paint it.',
@@ -237,7 +248,9 @@ export function paintingTools(runtime) {
         layer_opacity: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })), panel,
         blend_mode: Type.Optional(Type.String({ maxLength: 40, description: 'Paint on a new layer in this blend mode: overlay or soft_light for texture, multiply for shadow, add or screen for light.' })),
         clip_to: Type.Optional(Type.String({ description: 'Clip the new stroke layer to this layer (usually the area\u2019s flat), so no mark leaves its shape.' })),
-        inside_shape: Type.Optional(shapeSchema('canvas', 'Paint only inside one element of the painting (\u201cinside the moon\u201d): one box around it or a few points on it, canvas pixels. Its shape is found on the canvas you last saw; not with region or selection.')) }), 'paint_pass'),
+        inside_shape: Type.Optional(shapeSchema('canvas', 'Paint only inside one element of the painting (\u201cinside the moon\u201d): one box around it or a few points on it, canvas pixels. Its shape is found on the canvas you last saw; not with region or selection.')) ,
+        // Offered only for the models with a measured card (brush-catalog.json mixing); nothing is offered while there are none.
+        ...mixingSchema() }), 'paint_pass'),
     tool('painting_toolbox', 'Working with painting tools',
       'Execute native painting commands as one reversible contribution. Omit source_layer_id to create a layer; supply an observed layer ID to edit a copy of existing paint; or supply projection_region [x,y,width,height] to retouch a masked copy of the visible composite on a new top layer. projection_feather softens its boundary. These source modes are exclusive. Commands run in order on that layer. Call painting_tool_help first. Returns the actual resulting image. Projection retouch supports selection-aware brush, eraser, gradient and Smart Patch work; filled shapes and whole-layer transforms are excluded there.',
       object({name:Type.String({minLength:1,maxLength:120}),source_layer_id:Type.Optional(Type.String()),
@@ -378,6 +391,9 @@ export function paintingTools(runtime) {
     },
   ];
   shapeLimits(runtime, tools);
+  // mixing -> mixing_model, refused without a catalog card; wrapped before the batch captures paint_pass's execute.
+  withMixing(tools.find(t => t.name === 'paint_pass'), () => CATALOG);
+  if (measuredModels(CATALOG).length) tools.push(mixColorsTool({ catalog: () => CATALOG }));   // not offered until a model has a card
   helpLookup(runtime, tools);
   tools.push(recipeTool(runtime, tools.find(t=>t.name==='paint_pass').execute));
   tools.push(contourTool(runtime, tools.find(t=>t.name==='painting_toolbox').execute));

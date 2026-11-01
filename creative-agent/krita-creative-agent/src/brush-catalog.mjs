@@ -3,11 +3,22 @@
 // (brush-catalog.json). Without it the painter chose presets by name: a traced run guessed "Wet
 // Paint" for a reference transfer and got a washed-out, grainy canvas.
 import { readFileSync } from 'node:fs';
+import { measuredModels as measured, presetMixing as presetOf } from './colour-mixing/pass-mixing.ts';
 
 export const CATALOG = JSON.parse(readFileSync(new URL('./brush-catalog.json', import.meta.url), 'utf8'));
 
 /** The measured card for each name, or null for a preset that was never probed. */
-export const brushCards = names => names.map(name => ({ name, card: CATALOG.cards[name] ?? null }));
+export const brushCards = (names, catalog = CATALOG) => names.map(name => {
+  const mixing = presetOf(name, catalog);
+  return { name, card: catalog.cards[name] ?? null, ...(mixing ? { mixing } : {}) };
+});
+
+/** Colour mixing models with a measured card (brush-catalog.json mixing); empty until one is measured. */
+export const measuredModels = (catalog = CATALOG) => measured(catalog);
+/** A preset's measured mixing cards and default, or null. */
+export const presetMixing = (name, catalog = CATALOG) => presetOf(name, catalog);
+/** The measured model cards for list_brushes, or null when none. */
+export const mixingModelCards = (catalog = CATALOG) => measured(catalog).length ? Object.fromEntries(measured(catalog).map(m => [m, catalog.mixing.models[m]])) : null;
 
 /** Prompt section: the presets to reach for, by job, and the ones to avoid. */
 export function brushGuide(catalog = CATALOG) {

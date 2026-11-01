@@ -180,5 +180,6 @@
   "z) Stamp Stylised Tree": "small tree-blob clusters",
   "z) Stamp Vegetal": "wavy leafy band",
   "z) Stamp Water": "faint horizontal ripple marks"
- }
+ },
+ "mixing": {"models": {}, "presets": {}}
 }
