@@ -16,6 +16,7 @@ import { SKILLS_DIR } from './skills.mjs';
 import { isFillNudge } from './reference-first.ts';
 import { GUARDS_CHANNEL, LOOP_GUARDS, PAINTING_WEIGHT, argumentRepairExtension } from './extensions.mjs';
 import { withArgumentRepair } from './argument-repair.ts';
+import { discoverEndpointModels, endpointProviderId, endpointUrl, isLocalEndpoint } from './model-endpoint.ts';
 
 const SIGN_IN_NAMES = { 'openai-codex': 'ChatGPT (Codex)', 'anthropic': 'Claude', 'google-gemini-cli': 'Gemini CLI', 'google-antigravity': 'Google Antigravity' };
 /** How to restore a lapsed or missing OAuth sign-in. The chat keeps its model. */
@@ -173,30 +174,47 @@ export class PaintingRuntime {
     else if (!silent) this.emit({type:'status',message:'Model catalog refreshed for '+provider+'.'});
     return result;
   }
+  /** Connect a model provider. A provider Pi knows (Anthropic, OpenAI, DeepSeek…) takes only its key, and its models
+   * keep the limits Pi's catalog gives them. A custom endpoint ({base_url}) gets a provider of its own, with the models
+   * and limits its server reports (model-endpoint.ts). Keys are saved by Pi's login in Pi's auth.json, never in
+   * model-connections.json. Returns the provider and its model ids. */
   async configureProvider(p) {
     if (this.busy && hooks(this).transition?.kind!=='configure_provider') throw new Error('Pause before changing model connections.');
-    if (/\bbatch\b/i.test(p.model ?? '')) throw new Error('Choose an interactive model instead of a batch route.');
-    if (!p.provider || !p.model || !p.base_url || !p.api_key) throw new Error('Provider, model ID, endpoint and API key are required.');
-    const endpoint = new URL(p.base_url);
-    if(endpoint.username || endpoint.password)throw new Error('Put credentials in the API key field, not the endpoint.');
-    if (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' && ['localhost','127.0.0.1','[::1]'].includes(endpoint.hostname)))
-      throw new Error('Use an HTTPS endpoint, or a local model server.');
-    this.secrets.push(p.api_key);
-    this.modelConnections ??= {};
-    const previous=this.modelConnections[p.provider] ?? this.models.getRegisteredProviderConfig?.(p.provider);
-    const connection={baseUrl: endpoint.toString(), api: 'openai-completions', models: [...(previous?.models ?? []).filter(model=>model.id!==p.model),{
-      id: p.model, name: p.model, reasoning: false, input: ['text', 'image'],
-      contextWindow: 64000, maxTokens: 8192, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    }]};
-    this.models.registerProvider(p.provider,connection);
-    await this.models.login(p.provider,'api_key',{signal:AbortSignal.timeout(15000),notify(){},prompt:async request=>{
-      if(request.type!=='secret')throw new Error('This provider requires additional connection steps. Connect it in Pi, then reconnect the assistant.');
-      return p.api_key;
-    }});
-    this.modelConnections[p.provider]=connection;
+    const key = String(p.api_key ?? '').trim();
+    if (key) this.secrets.push(key);
+    let provider = p.provider;
+    if (p.base_url) {
+      const endpoint = endpointUrl(p.base_url);
+      if (/\bbatch\b/i.test(p.model ?? '')) throw new Error('Choose an interactive model instead of a batch route.');
+      if (!key && !isLocalEndpoint(endpoint)) throw new Error('Enter the API key for this endpoint.');
+      provider = p.provider || endpointProviderId(p.name, endpoint);
+      const models = (await discoverEndpointModels(endpoint, key || undefined, p.model)).filter(model => !/\bbatch\b/i.test(model.id + ' ' + model.name));
+      const connection = { baseUrl: endpoint.toString(), api: 'openai-completions', ...(key ? {} : { apiKey: 'none' }), models };
+      this.models.registerProvider(provider, connection);
+      if (key) await this.loginWithKey(provider, key);
+      this.modelConnections ??= {};
+      this.modelConnections[provider] = connection;
+      await writeFile(join(this.config.output,'model-connections.json'),JSON.stringify(this.modelConnections,null,2)+'\n',{mode:0o600});
+      await this.models.refresh?.({ providers: [provider], allowNetwork: false, signal: AbortSignal.timeout(15000) });
+    } else {
+      if (!provider || !this.models.getProvider(provider)) throw new Error('Choose a provider to connect.');
+      if (!key) throw new Error('Enter the API key for ' + provider + '.');
+      await this.loginWithKey(provider, key);
+      if (process.env.PI_OFFLINE === undefined)
+        await this.models.refresh({ providers: [provider], allowNetwork: true, force: true, signal: AbortSignal.timeout(6000) }).catch(() => {});
+    }
     await this.refreshKeyProviders();
-    await writeFile(join(this.config.output,'model-connections.json'),JSON.stringify(this.modelConnections,null,2)+'\n',{mode:0o600});
-    this.emitModels(this.study ? {provider:this.study.provider,id:this.study.model}:{provider:p.provider,id:p.model});
+    const ids = this.models.getModels(provider).map(model => model.id);
+    const first = this.listModels().find(model => model.provider === provider && model.painting_eligible) ?? this.listModels().find(model => model.provider === provider);
+    const selected = this.study ? {provider:this.study.provider,id:this.study.model} : first ? {provider, id:first.id} : undefined;
+    this.emitModels(selected);
+    return { provider, models: ids, selected };
+  }
+  async loginWithKey(provider, key) {
+    await this.models.login(provider,'api_key',{signal:AbortSignal.timeout(15000),notify(){},prompt:async request=>{
+      if(request.type!=='secret')throw new Error('This provider needs more than a key. Connect it in Pi (run pi, then /login), then reconnect the assistant.');
+      return key;
+    }});
   }
   async start(p) {
     if (this.busy) throw new Error('A study is already running.');

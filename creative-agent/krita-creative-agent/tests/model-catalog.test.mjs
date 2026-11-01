@@ -3,8 +3,21 @@ import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,readFile,writeFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {createServer} from 'node:http';
 import {inheritPiCatalog} from '../src/model-catalog.mjs';
 import {PaintingRuntime} from '../src/runtime.mjs';
+
+/** A local OpenAI-compatible server that answers GET /v1/models with `listing` and remembers the key it was sent. */
+async function modelServer(listing){
+  let authorization='';
+  const server=createServer((request,response)=>{
+    authorization=request.headers.authorization ?? '';
+    if(request.url!=='/v1/models'){response.writeHead(404).end();return;}
+    response.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(listing));
+  });
+  await new Promise(done=>server.listen(0,'127.0.0.1',done));
+  return {url:`http://127.0.0.1:${server.address().port}/v1`,authorization:()=>authorization,close:()=>new Promise(done=>server.close(done))};
+}
 
 const model=(id,input=['text','image'])=>({id,name:id,provider:'deepseek',api:'openai-completions',baseUrl:'https://api.deepseek.com',input,reasoning:false,
   contextWindow:64000,maxTokens:4096,cost:{input:0,output:0,cacheRead:0,cacheWrite:0}});
@@ -32,6 +45,8 @@ test('real SDK initialization inherits official Pi routes, exposes text and batc
   const root=await mkdtemp(join(tmpdir(),'creative-model-runtime-')),pi=join(root,'pi'),output=join(root,'output');
   const events=[],bridge={async connect(){},async call(){return {status:'ok',protocol_version:2};}};
   const create=()=>new PaintingRuntime({root,config:{output,pi_agent_dir:pi},bridge,emit:e=>events.push(e)});
+  const server=await modelServer({data:[{id:'first',name:'First',context_length:32000,top_provider:{max_completion_tokens:4000},architecture:{input_modalities:['text','image']}},
+    {id:'second'},{id:'text-embedding',type:'embeddings'}]});
   let runtime;
   try{
     await mkdir(pi);await mkdir(output);
@@ -45,11 +60,40 @@ test('real SDK initialization inherits official Pi routes, exposes text and batc
     assert.ok(rows.some(m=>m.id==='test-batch'&&!m.interactive));
     assert.ok(rows.some(m=>m.provider==='pi-custom'&&m.id==='pi-custom-model'));
     assert.ok(runtime.listProviders().some(p=>p.id==='deepseek'&&p.configured));
-    await runtime.configureProvider({provider:'companion-custom',model:'first',base_url:'http://127.0.0.1:1/v1',api_key:'custom-test-only'});
-    await runtime.configureProvider({provider:'companion-custom',model:'second',base_url:'http://127.0.0.1:1/v1',api_key:'custom-test-only'});
-    assert.ok(!String(await readFile(join(output,'model-connections.json'))).includes('custom-test-only'));
+    // A custom endpoint: its own provider, the models its server lists, and only the limits the server reports.
+    const connected=await runtime.configureProvider({name:'Companion custom',base_url:server.url,api_key:'custom-test-only'});
+    assert.deepEqual(connected.models.sort(),['first','second']);
+    assert.equal(connected.provider,'custom-companion-custom');
+    assert.equal(server.authorization(),'Bearer custom-test-only');
+    const saved=String(await readFile(join(output,'model-connections.json')));
+    assert.ok(!saved.includes('custom-test-only'));
+    const first=JSON.parse(saved)['custom-companion-custom'].models.find(m=>m.id==='first');
+    assert.deepEqual(first,{id:'first',name:'First',contextWindow:32000,maxTokens:4000,input:['text','image']});
+    assert.deepEqual(JSON.parse(saved)['custom-companion-custom'].models.find(m=>m.id==='second'),{id:'second',name:'second',input:['text','image']});
     await runtime.releaseLock();runtime=create();await runtime.initialize();
-    assert.ok(runtime.models.getModel('companion-custom','first'));assert.ok(runtime.models.getModel('companion-custom','second'));
-    assert.ok(runtime.models.getModel('deepseek','deepseek-flash'));assert.ok(runtime.models.hasConfiguredAuth('companion-custom'));
-  }finally{await runtime?.releaseLock();await rm(root,{recursive:true,force:true});}
+    assert.ok(runtime.models.getModel('custom-companion-custom','first'));assert.ok(runtime.models.getModel('custom-companion-custom','second'));
+    assert.equal(runtime.models.getModel('custom-companion-custom','first').contextWindow,32000);
+    assert.ok(runtime.models.getModel('deepseek','deepseek-flash'));assert.ok(runtime.models.hasConfiguredAuth('custom-companion-custom'));
+  }finally{await runtime?.releaseLock();await server.close();await rm(root,{recursive:true,force:true});}
+});
+
+test('a provider Pi knows is connected with its key alone and keeps the limits of Pi\'s catalog',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'creative-known-provider-')),pi=join(root,'pi'),output=join(root,'output');
+  const bridge={async connect(){},async call(){return {status:'ok',protocol_version:2};}};
+  const offline=process.env.PI_OFFLINE;process.env.PI_OFFLINE='1';
+  let runtime;
+  try{
+    await mkdir(pi);await mkdir(output);
+    runtime=new PaintingRuntime({root,config:{output,pi_agent_dir:pi},bridge,emit(){}});await runtime.initialize();
+    assert.equal(runtime.models.hasConfiguredAuth('anthropic'),false);
+    const connected=await runtime.configureProvider({provider:'anthropic',api_key:'test-only-anthropic'});
+    assert.equal(connected.provider,'anthropic');assert.ok(runtime.models.hasConfiguredAuth('anthropic'));
+    const auth=JSON.parse(await readFile(join(pi,'auth.json'),'utf8'));
+    assert.deepEqual(auth.anthropic,{type:'api_key',key:'test-only-anthropic'});
+    const catalog=runtime.models.getModels('anthropic').find(m=>m.input.includes('image'));
+    assert.ok(catalog.contextWindow>64000||catalog.maxTokens!==8192,'the limits come from Pi, not from Toska');
+    assert.ok(runtime.listModels().some(m=>m.provider==='anthropic'&&m.configured&&m.painting_eligible));
+    await assert.rejects(runtime.configureProvider({provider:'anthropic',api_key:''}),/API key/);
+    await assert.rejects(runtime.configureProvider({provider:'no-such-provider',api_key:'k'}),/Choose a provider/);
+  }finally{if(offline===undefined)delete process.env.PI_OFFLINE;else process.env.PI_OFFLINE=offline;await runtime?.releaseLock();await rm(root,{recursive:true,force:true});}
 });

@@ -549,14 +549,15 @@ export class StudioRuntime extends PaintingRuntime {
   async setModel(provider,id) { return (await this.sessionTransition('changing the model',()=>this._setModel(provider,id))).value; }
   async configureProvider(command) {
     return (await this.sessionTransition('configure_provider',async()=>{
-      const previous=this.models.getModel(command.provider,command.model);
-      await super.configureProvider(command);
+      const previous=command.provider ? this.models.getModels(command.provider) : [];
+      const connected=await super.configureProvider(command);
       // Luna decisions authenticate with the painter's OpenRouter credential.
-      if (command.provider==='openrouter') { this.lunaClient=undefined; this.lunaRouter=undefined; this.decisionsService=undefined; await this.refreshDecisionsConnected(); }
+      if (connected.provider==='openrouter') { this.lunaClient=undefined; this.lunaRouter=undefined; this.decisionsService=undefined; await this.refreshDecisionsConnected(); }
+      // A new key or endpoint is a new route: every model of the provider is tested again before it paints.
       const service=await this.capabilityService();
-      if (previous) await service.invalidate(previous);
-      await service.invalidate(this.models.getModel(command.provider,command.model));
-      this.emitModels(this.study ? {provider:this.study.provider,id:this.study.model}:{provider:command.provider,id:command.model});
+      for (const model of [...previous, ...this.models.getModels(connected.provider)]) await service.invalidate(model);
+      this.emitModels(connected.selected);
+      return connected;
     })).value;
   }
   async relink(id,path) { return (await this.sessionTransition('locating a painting',()=>this._relink(id,path))).value; }

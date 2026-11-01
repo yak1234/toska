@@ -83,52 +83,70 @@ def painting_name_from(prompt, default='Creative painting'):
 
 
 class ProviderDialog(QDialog):
-    def __init__(self, parent):
+    """Connect a model: a provider Pi knows takes only its key, and its models keep the limits Pi's catalog gives them.
+    A custom endpoint (a local server, a gateway) gets its models and limits from the server. Nothing is preset here."""
+    CUSTOM = '__custom__'
+
+    def __init__(self, parent, providers=(), current=None):
         super().__init__(parent)
         self.setWindowTitle('Connect a model')
         layout = QFormLayout(self)
+        self.form = layout
         self.provider = QComboBox()
-        self.provider.addItems(['DeepSeek', 'OpenRouter', 'Custom'])
-        self.endpoint = QLineEdit('https://api.deepseek.com')
-        self.model = QLineEdit('deepseek-flash')
+        for item in sorted(providers, key=lambda p: provider_name(p['id']).casefold()):
+            self.provider.addItem(provider_name(item['id']) + (' · connected' if item.get('configured') else ''), item['id'])
+        self.provider.addItem('Custom endpoint…', self.CUSTOM)
+        self.provider.setCurrentIndex(max(0, self.provider.findData(current)))
+        self.name = QLineEdit(); self.name.setPlaceholderText('Optional, such as My LM Studio')
+        self.endpoint = QLineEdit(); self.endpoint.setPlaceholderText('https://… or http://localhost:…/v1')
+        self.model = QLineEdit(); self.model.setPlaceholderText('Only if the server does not list its models')
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.capability = QCheckBox('This model accepts images and tool calls')
         layout.addRow('Provider', self.provider)
-        layout.addRow('API endpoint', self.endpoint)
+        layout.addRow('Name', self.name)
+        layout.addRow('Endpoint', self.endpoint)
         layout.addRow('Model ID', self.model)
         layout.addRow('API key', self.key)
-        layout.addRow(self.capability)
-        note = QLabel('Uses an OpenAI-compatible API. The key stays in memory for this session.\n'
-                      'Models already connected in Pi are available in the main panel.')
-        note.setWordWrap(True)
-        layout.addRow(note)
+        self.note = QLabel()
+        self.note.setWordWrap(True)
+        layout.addRow(self.note)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Connect')
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addRow(self.buttons)
-        self.provider.currentTextChanged.connect(self.select_provider)
+        self.provider.currentIndexChanged.connect(self.select_provider)
+        self.select_provider()
 
-    def select_provider(self, name):
-        defaults = {'DeepSeek': ('https://api.deepseek.com', 'deepseek-flash'),
-                    'OpenRouter': ('https://openrouter.ai/api/v1', 'deepseek/deepseek-v4.1-flash'),
-                    'Custom': ('', '')}
-        endpoint, model = defaults[name]
-        self.endpoint.setText(endpoint)
-        self.model.setText(model)
-        self.capability.setChecked(False)
+    def custom(self):
+        return self.provider.currentData() == self.CUSTOM
+
+    def select_provider(self, *_args):
+        custom = self.custom()
+        for field in (self.name, self.endpoint, self.model):
+            field.setVisible(custom)
+            label = self.form.labelForField(field)
+            if label is not None: label.setVisible(custom)
+        self.key.setPlaceholderText('Optional for a local server' if custom else '')
+        self.note.setText(('Toska lists the models the server offers and uses the limits it reports. ' if custom else
+                           'Its models and their limits come from Pi\'s catalog. ')
+                          + 'The key is saved in Pi (~/.pi/agent/auth.json), so Toska and Pi both use it. '
+                          'Before a model paints, Toska tests it with a sample image and a tool call.')
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Connect')
 
     def accept(self):
-        if not all((self.endpoint.text().strip(), self.model.text().strip(), self.key.text().strip(), self.capability.isChecked())):
-            self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Complete all fields first')
+        missing = not self.endpoint.text().strip() if self.custom() else not self.key.text().strip()
+        if missing:
+            self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText('Enter the endpoint first' if self.custom() else 'Enter the API key first')
             return
         super().accept()
 
     def command(self):
-        return {'type': 'configure_provider', 'provider': 'creative-' + self.provider.currentText().lower(),
-                'base_url': self.endpoint.text().strip(), 'model': self.model.text().strip(),
-                'api_key': self.key.text().strip()}
+        key = self.key.text().strip()
+        if self.custom():
+            return {'type': 'configure_provider', 'base_url': self.endpoint.text().strip(), 'name': self.name.text().strip(),
+                    'model': self.model.text().strip(), 'api_key': key}
+        return {'type': 'configure_provider', 'provider': self.provider.currentData(), 'api_key': key}
 
 
 
@@ -1486,7 +1504,7 @@ class CreativeAgentDocker(DockWidget):
         self.refresh_models_button.setAccessibleName('Refresh model catalog')
         self.refresh_models_button.clicked.connect(lambda: self.send({'type': 'refresh_models', 'provider': self.provider_filter.currentData()}))
         connection.addRow(self.refresh_models_button)
-        self.connect_button = QPushButton('Connect another API…'); self.connect_button.clicked.connect(self.connect_provider); connection.addRow(self.connect_button)
+        self.connect_button = QPushButton('Connect a model…'); self.connect_button.clicked.connect(self.connect_provider); connection.addRow(self.connect_button)
         self.restore_button = QPushButton('Locate a painting or plan…'); self.restore_button.clicked.connect(self.restore_conversation); connection.addRow(self.restore_button)
         self.connection_status = QLabel('Connecting…'); self.connection_status.setWordWrap(True)
         self.connection_status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred); connection.addRow(self.connection_status)
@@ -3556,7 +3574,7 @@ class CreativeAgentDocker(DockWidget):
             suffix = (' · sign in' if oauth else ' · connect') if not item.get('configured') else ' · batch' if not item.get('interactive', True) else ''
             self.model.addItem(item['name'] + suffix, {'provider': item['provider'], 'id': item['id']})
             row = self.model.model().item(self.model.count() - 1); row.setEnabled(bool(available))
-            reason = ('Sign in to this provider in Pi (run pi, then /login).' if oauth else 'Connect this provider in Pi, or add an API connection below.') if not item.get('configured') else 'Batch models do not support interactive chat.' if not item.get('interactive', True) else item.get('capability_message') or 'Ready for interactive chat.'
+            reason = ('Sign in to this provider in Pi (run pi, then /login).' if oauth else 'Connect this provider with Connect a model below.') if not item.get('configured') else 'Batch models do not support interactive chat.' if not item.get('interactive', True) else item.get('capability_message') or 'Ready for interactive chat.'
             if oauth and item.get('configured'):
                 reason += '\nSigned in through Pi. If the sign-in lapses, the run pauses until you sign in again.'
             row.setToolTip(provider_name(item['provider']) + '\n' + item['id'] + '\n' + reason)
@@ -3571,15 +3589,15 @@ class CreativeAgentDocker(DockWidget):
         self.model.blockSignals(False)
         provider_models = [m for m in self.models if not provider or m['provider'] == provider]
         if provider and not provider_models:
-            self.provider_note.setText('No models are registered for ' + provider_name(provider) + ' in Pi yet. Add a model in Pi or connect an API below.')
+            self.provider_note.setText('No models are registered for ' + provider_name(provider) + ' yet. Use Connect a model below.')
         elif provider and not any(m.get('configured') for m in provider_models):
-            self.provider_note.setText('Connect ' + provider_name(provider) + ' in Pi, or add an API below. Choose a connected provider to send messages.')
+            self.provider_note.setText('Connect ' + provider_name(provider) + ' with Connect a model below. Choose a connected provider to send messages.')
         else:
             self.provider_note.setText('Choose a provider beside the composer. The next dropdown shows only that provider’s models.')
         self.update_controls()
 
     def connect_provider(self):
-        dialog = ProviderDialog(self)
+        dialog = ProviderDialog(self, self.providers, self.provider_filter.currentData())
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.send(dialog.command())
             dialog.key.clear()
