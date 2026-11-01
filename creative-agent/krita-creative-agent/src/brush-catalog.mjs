@@ -5,7 +5,13 @@
 import { readFileSync } from 'node:fs';
 import { measuredModels as measured, presetMixing as presetOf } from './colour-mixing/pass-mixing.ts';
 
-export const CATALOG = JSON.parse(readFileSync(new URL('./brush-catalog.json', import.meta.url), 'utf8'));
+/** The catalog every consumer sees. TOSKA_MIXING=off (case-insensitive) empties `mixing`: no measured models, no mixing field, no mix_colors,
+ * no mixing_model. It exists for benchmark A/B arms; any other value or unset leaves the catalog as shipped. Pure in (raw, env). */
+export function effectiveCatalog(raw, env = process.env) {
+  return String(env?.TOSKA_MIXING ?? '').trim().toLowerCase() === 'off' ? { ...raw, mixing: {} } : raw;
+}
+
+export const CATALOG = effectiveCatalog(JSON.parse(readFileSync(new URL('./brush-catalog.json', import.meta.url), 'utf8')));
 
 /** The measured card for each name, or null for a preset that was never probed. */
 export const brushCards = (names, catalog = CATALOG) => names.map(name => {
