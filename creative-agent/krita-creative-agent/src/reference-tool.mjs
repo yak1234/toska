@@ -13,10 +13,10 @@ import {containedFile,imageContent} from './files.mjs';
 import {scopePlan,loadAreaMask,scopedShare,chipLine} from './paint-only-here.ts';
 import {referencePassKind,SHIPPED_POLICY} from './colour-mixing/mixing-policy.ts';
 import {passMixing,presetCoverage,measuredModels} from './colour-mixing/pass-mixing.ts';
-import {transferSolver} from './colour-mixing/transfer-colours.ts';
+import {transferSolver,overlapShare} from './colour-mixing/transfer-colours.ts';
 import {MIX_MODELS} from './colour-mixing/mix.ts';
 import {CATALOG} from './brush-catalog.mjs';
-import {referenceSchema,edgeSchema,surfaceSchema,generateReferencePlan,generateEdgePlan,generateSurfacePlan,analysisCopy,estimateReferenceStrokes,DEFAULT_STEPS,REFERENCE_GENERATOR_VERSION,cropToAspect,EDGE_LIMIT} from './reference-generator.mjs';
+import {referenceSchema,edgeSchema,surfaceSchema,generateReferencePlan,generateEdgePlan,generateSurfacePlan,analysisCopy,estimateReferenceStrokes,DEFAULT_STEPS,REFERENCE_GENERATOR_VERSION,cropToAspect,EDGE_LIMIT,DAB_WIDTH,DAB_HALF_LENGTH,DAB_JITTER} from './reference-generator.mjs';
 import {EDGE_SPACING_MAX} from './reference-limits.ts';
 // Strokes per native call. Each call re-reads the canvas and journals its receipt; at 128 that
 // overhead was ~80% of a 157k-stroke job. The plugin accepts up to 1024 per pass.
@@ -37,7 +37,7 @@ const summary=j=>({job_id:j.id,name:j.recipe.name,status:j.status,completed_stro
  ...(j.fitted?{fitted:j.fitted.underpainting?underpaintingNote(j):`Steps widened from [${j.fitted.from}] to [${j.recipe.steps}] so the transfer fits ${j.fitted.move?`one Agent move (about ${j.fitted.move} strokes)`:`about ${j.fitted.minutes} of the ${j.fitted.left} minutes left`}; the dabs are larger, so refine focal areas by hand, and make the picture crisp with paint_accents.`}:{}),
  ...(j.inside_label?{inside:j.inside_label+'. Only the dabs inside it were planned; Krita keeps every write there.'}:{}),
  ...(j.repaired?{repaired:`The host adjusted this call: ${j.repaired}.`}:{}),
- ...(j.mixing&&j.mixing!=='rgb'?{mixing:`${j.mixing}: each dab mixes with the paint beneath, its colour chosen so the mix lands on the reference colour.`}:{}),
+ ...(j.mixing&&j.mixing!=='rgb'?{mixing:j.solve===false?`${j.mixing}: each dab mixes with the paint beneath, in the reference colour (unsolved).`:`${j.mixing}: each dab mixes with the paint beneath, its colour chosen so the mix lands on the reference colour.`}:{}),
  ...(j.ground?{ground:'A toned ground layer in the reference\u2019s colours, top to bottom, lies under the transfer, so gaps between dabs show its tone, not white canvas.'}:{}),
  next_action:j.status==='complete'?'Review the finished canvas.':j.status==='awaiting_review'?'Inspect this pass image, then continue_reference_painting for the next refinement pass.':'Resume with continue_reference_painting after inspecting any interruption.'});
 // A transfer is underpainting: on a large canvas its dabs are 25-60 px whatever the steps, so running
@@ -237,8 +237,9 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   signal?.throwIfAborted();allowed(runtime);await mkdir(folder(),{recursive:true});const identifier=hash(id).slice(0,32);let old;try{old=JSON.parse(await readFile(path(identifier),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
   if(old){if(JSON.stringify(old.requested??old.recipe)!==JSON.stringify(recipe))throw new Error('Operation ID reused with different reference instructions.');return response(old,await runtime.callNative('observe'));}
   // The mixing model is the job's, not the recipe's: the recipe (and its stroke plan) stay as they were; `requested` keeps it.
-  const given=recipe,chosen=recipe.mixing;
-  if('mixing' in recipe){const {mixing:_chosen,...rest}=recipe;recipe=rest;}
+  // So is `solve` (default true): false lays the reference colours unsolved, for an A/B of the solve itself.
+  const given=recipe,chosen=recipe.mixing,solved=recipe.solve!==false;
+  if('mixing' in recipe||'solve' in recipe){const {mixing:_chosen,solve:_solve,...rest}=recipe;recipe=rest;}
   let jobMixing=null;
   if(!recipe.mode){
    const sent=passMixing({preset:recipe.preset,...(chosen!==undefined?{mixing:chosen}:{}),kind:referencePassKind(recipe.mode)},mixing.catalog(),mixing.policy());
@@ -309,7 +310,7 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
    repaired.push(`over the ${runtime.config?.edge_limit??EDGE_LIMIT}-stroke limit: min_contrast ${asked.min_contrast??.1} raised to ${recipe.min_contrast??.1}`+(recipe.spacing!==asked.spacing?`, spacing ${asked.spacing??1.5} to ${recipe.spacing}`:''));
   if(repaired.length)runtime.diagnostics?.record?.({type:'argument_repair',tool:recipe.mode==='edges'?'paint_reference_edges':recipe.mode==='surface'?'paint_reference_surface':'paint_from_reference',repairs:repaired});
   if(inside&&!plan.total)throw new Error(`No dab of this transfer lies inside the area the artist chose (${chipLine(area).toLowerCase()}): transfer the reference area that lies under it.`);
-  const job={id:identifier,version:REFERENCE_GENERATOR_VERSION,recipe,...(jobMixing?{mixing:jobMixing}:{}),...(inside?{inside,inside_label:chipLine(area)}:{}),...(requested!==recipe?{requested}:{}),...(routed?{closeup:routed.note}:{}),...(fitted?{fitted}:{}),...(ground?{ground}:{}),...(repaired.length?{repaired:repaired.join('; ')}:{}),reference_hash:source.sha256,plan_hash:hash(JSON.stringify(plan)+'\n'),canvas:{width:observation.width,height:observation.height},scope:scope(runtime),status:'ready',pass:0,pass_count:plan.passes.length,offset:0,completed:0,total:plan.total,last_revision:observation.revision,layer_id:null,pending:null};await atomic(path(identifier),job);return run(job,signal,plan);
+  const job={id:identifier,version:REFERENCE_GENERATOR_VERSION,recipe,...(jobMixing?{mixing:jobMixing}:{}),...(jobMixing&&!solved?{solve:false}:{}),...(inside?{inside,inside_label:chipLine(area)}:{}),...(requested!==recipe?{requested}:{}),...(routed?{closeup:routed.note}:{}),...(fitted?{fitted}:{}),...(ground?{ground}:{}),...(repaired.length?{repaired:repaired.join('; ')}:{}),reference_hash:source.sha256,plan_hash:hash(JSON.stringify(plan)+'\n'),canvas:{width:observation.width,height:observation.height},scope:scope(runtime),status:'ready',pass:0,pass_count:plan.passes.length,offset:0,completed:0,total:plan.total,last_revision:observation.revision,layer_id:null,pending:null};await atomic(path(identifier),job);return run(job,signal,plan);
  }
  // The canvas under the transfer's dabs: the view a pass starts from (the last observation or chunk result), decoded here.
  // null when there is none, it is a region, or it cannot be read: the dabs then lay the reference colours, mixing as usual.
@@ -356,9 +357,11 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
     const pass=plan.passes[job.pass];job.status='running';await save();
     // A mixing dab transfer: each dab's colour solved against the canvas this pass starts from (never re-read per dab).
     let solve=null;
-    if(!job.recipe.mode&&job.mixing&&job.mixing!=='rgb'&&MIX_MODELS.includes(job.mixing)){
+    // Solved against C' = lerp(C, T, s): s is the share of a dab's visible area on earlier dabs of its own pass, from the
+    // generator's layout (transfer-colours.ts overlapShare).
+    if(!job.recipe.mode&&job.mixing&&job.mixing!=='rgb'&&job.solve!==false&&MIX_MODELS.includes(job.mixing)){
      const coverage=presetCoverage(pass.preset??job.recipe.preset,mixing.catalog()),view=coverage?await canvasView(current,plan.canvas):null;
-     if(view)solve=transferSolver(job.mixing,coverage,view);
+     if(view)solve=transferSolver(job.mixing,coverage,view,overlapShare({width:DAB_WIDTH,halfLength:DAB_HALF_LENGTH,jitter:DAB_JITTER}));
     }
     while(job.offset<pass.strokes.length){
      if(signal?.aborted||runtime.cancelRequested||!isPaintingMode(runtime.mode)||runtime.executionPhase!=='agent')break;
@@ -390,7 +393,8 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   const models=measuredModels(mixing.catalog());
   if(!models.length)return {};
   const offered=models.includes('rgb')?models:['rgb',...models];
-  return {mixing:Type.Optional(Type.Union(offered.map(m=>Type.Literal(m)),{description:`How the transfer's dabs mix with the wet paint beneath: ${offered.join(', ')}. Only with a preset measured for that model (list_brushes); each dab's colour is chosen so the mix stays on the reference. Leave it out for the mixing policy's choice.`}))};
+  return {mixing:Type.Optional(Type.Union(offered.map(m=>Type.Literal(m)),{description:`How the transfer's dabs mix with the wet paint beneath: ${offered.join(', ')}. Only with a preset measured for that model (list_brushes); each dab's colour is chosen so the mix stays on the reference. Leave it out for the mixing policy's choice.`})),
+   solve:Type.Optional(Type.Boolean({description:'With a mixing model: true (default) chooses each dab\u2019s colour so its mix with the paint beneath lands on the reference colour; false lays the reference colours as they are.'}))};
  }
  const offered=mixingField(),transferSchema=offered.mixing?Type.Object({...referenceSchema.properties,...offered},{additionalProperties:false}):referenceSchema;
  return [
@@ -399,8 +403,9 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
    execute:(id,recipe,signal)=>start(id,recipe,signal)}),
   defineTool({name:'continue_reference_painting',label:'Continuing reference painting',executionMode:'sequential',parameters:Type.Object({job_id:Type.String({pattern:'^[a-f0-9]{32}$'}),...offered},{additionalProperties:false}),
    description:'Resume a saved reference job in its original stage. Reconciles a pending chunk against Krita receipts before painting, checks reference/plan identity and canvas revision, and preserves one layer per refinement pass. Paints all remaining passes (coarse, fine, focal) in one call; it returns early only if painting was stopped. Unknown/partial native outcomes require recovery and are never blindly repainted.',
-   execute:async(_id,{job_id,mixing:asked},signal)=>{signal?.throwIfAborted();allowed(runtime);const job=JSON.parse(await readFile(path(job_id),'utf8'));
+   execute:async(_id,{job_id,mixing:asked,solve},signal)=>{signal?.throwIfAborted();allowed(runtime);const job=JSON.parse(await readFile(path(job_id),'utf8'));
     if(asked!==undefined&&!job.recipe.mode&&asked!==(job.mixing??'rgb'))throw new Error(`This transfer paints with ${job.mixing??'rgb'} mixing; every chunk of one transfer uses the same mixing. Continue without mixing, or start a new transfer.`);
+    if(solve!==undefined&&!job.recipe.mode&&solve!==(job.solve!==false))throw new Error(`This transfer ${job.solve===false?'lays the reference colours unsolved':'solves its dab colours'}; every chunk of one transfer does the same. Continue without solve, or start a new transfer.`);
     return run(job,signal);}}),
   defineTool({name:'list_reference_paintings',label:'Finding saved reference painting jobs',executionMode:'sequential',parameters:Type.Object({},{additionalProperties:false}),description:'List saved reference jobs and their completion counts for this study. Read-only; use their IDs to resume after a restart.',
    execute:async()=>{const list=(await jobs()).map(summary);return {content:[{type:'text',text:JSON.stringify(list)}],details:{jobs:list}};}}),

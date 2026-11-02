@@ -57,6 +57,10 @@ export function estimateReferenceStrokes(recipe){
 }
 const rectInside=(r,w,h)=>r[2]>0&&r[3]>0&&r[0]+r[2]<=w&&r[1]+r[3]<=h;
 const inside=(x,y,r)=>x>=r[0]&&y>=r[1]&&x<r[0]+r[2]&&y<r[1]+r[3];
+// The dab transfer's layout, in units of its step (a dab every step, its centre jittered up to DAB_JITTER/2 either way, a
+// stroke DAB_WIDTH wide and 2*DAB_HALF_LENGTH long, painted in shuffled order). transfer-colours.ts overlapShare reads them
+// to know how much of a dab lands on earlier dabs of its own pass.
+export const DAB_WIDTH=1.5,DAB_HALF_LENGTH=.21,DAB_JITTER=.44;
 function random(seed){let a=seed>>>0;return()=>{a+=0x6D2B79F5;let t=a;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296;};}
 export function generateReferencePlan(recipe,image,canvas){
  if(!Value.Check(referenceSchema,recipe))throw new Error('Invalid reference recipe. Use source/target rectangles and three decreasing sampling steps.');
@@ -82,18 +86,18 @@ export function generateReferencePlan(recipe,image,canvas){
   for(const region of regions)for(let y=region[1]+step/2;y<region[1]+region[3];y+=step)for(let x=region[0]+step/2;x<region[0]+region[2];x+=step){
    // Deduplicate overlapping focal rectangles, without painting outside them.
    const key=Math.floor((x-sx)/step)+','+Math.floor((y-sy)/step);if(seen.has(key))continue;seen.add(key);
-   const px=Math.max(region[0],Math.min(region[0]+region[2]-.001,x+(rand()-.5)*.44*step));
-   const py=Math.max(region[1],Math.min(region[1]+region[3]-.001,y+(rand()-.5)*.44*step));
+   const px=Math.max(region[0],Math.min(region[0]+region[2]-.001,x+(rand()-.5)*DAB_JITTER*step));
+   const py=Math.max(region[1],Math.min(region[1]+region[3]-.001,y+(rand()-.5)*DAB_JITTER*step));
    const {rgb,alpha}=sample(px,py,stage===2?0:Math.max(1,Math.floor(step*.38)));if(alpha<.01)continue;
    const radius=Math.max(1,Math.floor(step*.38)),gx=luminance(px+radius,py)-luminance(px-radius,py),gy=luminance(px,py+radius)-luminance(px,py-radius);
    const angle=Math.abs(gx)+Math.abs(gy)>3?Math.atan2(gy,gx)+Math.PI/2:rand()*Math.PI;
-   const dx=Math.cos(angle)*step*.21,dy=Math.sin(angle)*step*.21;
+   const dx=Math.cos(angle)*step*DAB_HALF_LENGTH,dy=Math.sin(angle)*step*DAB_HALF_LENGTH;
    const point=(x,y)=>[Math.max(tx,Math.min(tx+tw,tx+(x-sx)*scale)),Math.max(ty,Math.min(ty+th,ty+(y-sy)*scale))];
    const a=point(px-dx,py-dy),b=point(px+dx,py+dy);
    const d=edgeDistance((a[0]+b[0])/2,(a[1]+b[1])/2);
    let opacity=alpha;
    if(d<band){const t=Math.min(1,d/band*(.75+.5*rand()));opacity*=t*t*(3-2*t);if(opacity<.02)continue;}
-   strokes.push({start:a,segments:[[...a,...b,...b]],size:Math.max(1,step*scale*1.5),opacity,flow:1,color:'#'+rgb.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('')});
+   strokes.push({start:a,segments:[[...a,...b,...b]],size:Math.max(1,step*scale*DAB_WIDTH),opacity,flow:1,color:'#'+rgb.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('')});
   }
   for(let i=strokes.length-1;i>0;i--){const j=Math.floor(rand()*(i+1));[strokes[i],strokes[j]]=[strokes[j],strokes[i]];}
   if(strokes.length)passes.push({name:['Coarse coverage','Fine detail','Focal refinement'][stage],step,strokes});

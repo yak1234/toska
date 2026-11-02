@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mix2, hexToRgb, rgbToHex } from '../src/colour-mixing/mix.ts';
 import type { MixModel, Rgb } from '../src/colour-mixing/mix.ts';
-import { solvePaint, SOLVE_STEPS, SOLVE_TOLERANCE } from '../src/colour-mixing/transfer-colours.ts';
+import { solvePaint, overlapShare, SOLVE_STEPS, SOLVE_TOLERANCE } from '../src/colour-mixing/transfer-colours.ts';
 import { presetCoverage } from '../src/colour-mixing/pass-mixing.ts';
 import { SHIPPED_POLICY } from '../src/colour-mixing/mixing-policy.ts';
 import { encodeRgba } from '../src/shapes/png.ts';
@@ -21,7 +21,7 @@ import { effectiveCatalog, CATALOG } from '../src/brush-catalog.mjs';
 // @ts-ignore: .mjs modules
 import { referenceTools } from '../src/reference-tool.mjs';
 // @ts-ignore: .mjs modules
-import { generateReferencePlan } from '../src/reference-generator.mjs';
+import { generateReferencePlan, DAB_WIDTH, DAB_HALF_LENGTH, DAB_JITTER } from '../src/reference-generator.mjs';
 // @ts-ignore: .mjs modules
 import { paintingTools } from '../src/tools.mjs';
 
@@ -131,15 +131,17 @@ test('a transfer with mixing spectral and Wet Paint Plus: every chunk carries sp
     }
     const plan = planned(WET), sent = sentStrokes(h.calls), wanted = plan.passes.flatMap((p: any) => p.strokes);
     assert.equal(sent.length, wanted.length);
-    const C = CANVAS_RGB.map(v => v / 255) as Rgb;
+    const C = CANVAS_RGB.map(v => v / 255) as Rgb, share = overlapShare(LAYOUT);
     let changed = 0;
     sent.forEach((s: any, i: number) => {
-      const T = hexToRgb(wanted[i].color)!, P = hexToRgb(s.color)!;
+      const T = hexToRgb(wanted[i].color)!;
       assert.deepEqual({ ...s, color: '' }, { ...wanted[i], color: '' }, 'only the colour changes');
-      assert.ok(err(mix2('spectral', C, P, 0.91), T) <= 2 / 255, `dab ${i}: ${s.color} over ${rgbToHex(C)} for ${wanted[i].color}`);
+      // Solved against C' = lerp(C, T, s): what is seen of a dab mostly lies on earlier dabs of its own pass.
+      const below = [0, 1, 2].map(k => C[k]! + (T[k]! - C[k]!) * share) as Rgb;
+      assert.equal(s.color, rgbToHex(solvePaint('spectral', below, T, 0.91)), `dab ${i}`);
       if (s.color !== wanted[i].color) changed++;
     });
-    assert.ok(changed > sent.length / 2, 'the dabs were solved, not painted as the reference');
+    assert.ok(changed > 0, 'the dabs were solved, not painted as the reference (C\u2032 is near T, so the change is small)');
     assert.match(result.content[0].text, /spectral/);
   } finally { await h.close(); }
 });
@@ -205,5 +207,73 @@ test('every continuation of one transfer job uses the job’s mixing; another mo
     assert.equal(rest.details.status, 'complete');
     assert.ok(h.calls.length > 3);
     for (const c of h.calls) assert.equal(c.params.mixing, 'spectral');
+  } finally { await h.close(); }
+});
+
+// --- fix round 1: overlap within a pass, and the solve switch -------------------------------------------------------------
+const LAYOUT = { width: DAB_WIDTH, halfLength: DAB_HALF_LENGTH, jitter: DAB_JITTER };
+/** A real plan's fine pass over a flat 120 px reference onto a 480 px canvas (12 px between dabs, 18 px wide). */
+function finePass() {
+  const flat = { width: 120, height: 120, data: Buffer.alloc(120 * 120 * 4) };
+  for (let i = 0; i < 120 * 120; i++) flat.data.set([200, 120, 40, 255], i * 4);
+  const plan = generateReferencePlan({ name: 'Flat', reference_id: 'ref', preset: WET, source: [0, 0, 120, 120], target: [0, 0, 480, 480], steps: [6, 3, 1.5], seed: 9 }, flat, { width: 480, height: 480 });
+  return plan.passes[1].strokes as { start: number[]; segments: number[][]; size: number }[];
+}
+/** Paints the strokes in order on a 480 px grid (pixel centres inside each stroke's capsule), calling paint(pixel, dab). */
+function rasterise(strokes: { start: number[]; segments: number[][]; size: number }[], paint: (pixel: number) => void) {
+  for (const stroke of strokes) {
+    const [ax, ay] = stroke.start as [number, number], seg = stroke.segments.at(-1)!, bx = seg[4]! - ax, by = seg[5]! - ay, r = stroke.size / 2, len = bx * bx + by * by;
+    for (let y = Math.max(0, Math.floor(Math.min(ay, ay + by) - r)); y <= Math.min(479, Math.ceil(Math.max(ay, ay + by) + r)); y++)
+      for (let x = Math.max(0, Math.floor(Math.min(ax, ax + bx) - r)); x <= Math.min(479, Math.ceil(Math.max(ax, ax + bx) + r)); x++) {
+        const px = x + 0.5, py = y + 0.5, t = len ? Math.max(0, Math.min(1, ((px - ax) * bx + (py - ay) * by) / len)) : 0;
+        if (Math.hypot(px - ax - t * bx, py - ay - t * by) <= r) paint(y * 480 + x);
+      }
+  }
+}
+const interior = (pixel: number) => { const x = pixel % 480, y = Math.floor(pixel / 480); return x >= 36 && x < 444 && y >= 36 && y < 444; };
+
+test('overlap share: s for the generator\u2019s layout lies in (0, 1) and matches painting a real pass pixel by pixel within 0.02', () => {
+  const s = overlapShare(LAYOUT);
+  assert.ok(s > 0 && s < 1, String(s));
+  assert.equal(overlapShare(LAYOUT), s, 'cached and deterministic');
+  // Brute force: paint the pass in its shuffled order; of what is seen at the end, the share painted over an earlier dab.
+  const painted = new Uint8Array(480 * 480), onEarlier = new Uint8Array(480 * 480);
+  rasterise(finePass(), pixel => { onEarlier[pixel] = painted[pixel]; painted[pixel] = 1; });
+  let seen = 0, over = 0;
+  for (let p = 0; p < painted.length; p++) if (interior(p) && painted[p]) { seen++; over += onEarlier[p]!; }
+  assert.ok(Math.abs(over / seen - s) <= 0.02, `simulated ${over / seen} vs overlapShare ${s}`);
+});
+
+test('a simulated pass: solving against C\u2032 lands closer to T than no solve and than solving against C', () => {
+  const strokes = finePass(), cov = 0.91, s = overlapShare(LAYOUT);
+  for (const [C, T] of [[[0.2, 0.3, 0.7], [0.85, 0.7, 0.2]], [[0.9, 0.85, 0.8], [0.35, 0.2, 0.15]], [[0.1, 0.5, 0.2], [0.6, 0.3, 0.55]]] as [Rgb, Rgb][]) {
+    const meanError = (P: Rgb) => {
+      const memo = new Map<string, Rgb>(), colour: Rgb[] = new Array(480 * 480).fill(C);
+      rasterise(strokes, pixel => { const below = colour[pixel]!, key = below.join(); let next = memo.get(key); if (!next) { next = mix2('spectral', below, P, cov); memo.set(key, next); } colour[pixel] = next; });
+      // The pass's colour as seen: the mean over the interior (a dab is about 12 canvas px; on a 6000 px canvas the eye and
+      // the judge see the dabs averaged), against T. This is the bias the overshoot makes and C' corrects; per pixel, the
+      // spots a dab painted on bare canvas keep (1 - cov)(C - T) whatever the solve.
+      const sum: Rgb = [0, 0, 0]; let n = 0;
+      for (let p = 0; p < colour.length; p++) if (interior(p)) { for (let k = 0; k < 3; k++) sum[k] += colour[p]![k]!; n++; }
+      return err(sum.map(v => v / n) as Rgb, T);
+    };
+    const below = [0, 1, 2].map(k => C[k]! + (T[k]! - C[k]!) * s) as Rgb;
+    const plain = meanError(T), againstC = meanError(solvePaint('spectral', C, T, cov)), againstBelow = meanError(solvePaint('spectral', below, T, cov));
+    assert.ok(againstBelow < plain && againstBelow < againstC, `C ${rgbToHex(C)} T ${rgbToHex(T)}: no solve ${plain}, against C ${againstC}, against C' ${againstBelow}`);
+  }
+});
+
+test('solve: false lays the reference colours unsolved while the dabs still mix; continuations keep it', async () => {
+  const h = await studio({ through: 'reference', stopAfter: 2 });
+  try {
+    const first = await h.find('paint_from_reference').execute('raw', recipe(WET, { mixing: 'spectral', solve: false }));
+    h.runtime.cancelRequested = false;
+    const job = JSON.parse(await readFile(join(h.directory, 'reference-paintings', first.details.job_id + '.json'), 'utf8'));
+    assert.equal(job.solve, false);
+    assert.equal(job.recipe.solve, undefined);
+    await assert.rejects(h.find('continue_reference_painting').execute('c', { job_id: first.details.job_id, solve: true }), /same/);
+    await h.find('continue_reference_painting').execute('c', { job_id: first.details.job_id });
+    for (const c of h.calls) assert.equal(c.params.mixing, 'spectral');
+    assert.deepEqual(sentStrokes(h.calls).map((s: any) => s.color), planned(WET).passes.flatMap((p: any) => p.strokes.map((s: any) => s.color)));
   } finally { await h.close(); }
 });

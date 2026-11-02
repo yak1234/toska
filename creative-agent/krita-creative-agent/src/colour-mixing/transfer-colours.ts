@@ -37,6 +37,62 @@ export function solvePaint(model: MixModel, canvas: Rgb, target: Rgb, coverage: 
   return best;
 }
 
+// Overlap within a pass (fix round 1). A transfer's dabs are 1.5 steps wide a step apart and painted in shuffled order, so
+// most of what is finally seen of a dab lies on an earlier dab of the same pass (whose colour is about T), not on the canvas
+// the pass started from (C). Solving against C then overshoots by about (1 - cov)(T - C). The solve uses
+// C' = lerp(C, T, s) instead, with s the share of a dab's visible area (where it ends up on top) that lies on earlier dabs
+// of its pass.
+//
+// Derivation: take a point of a dab d that K other dabs of the pass also cover. In a shuffled order each of the K + 1 is
+// last with the same chance, so d is seen there with probability 1 / (K + 1), and when it is seen it lies on an earlier
+// dab exactly when K >= 1. Over the points of d:
+//   s = E[ [K >= 1] / (K + 1) ] / E[ 1 / (K + 1) ].
+// K comes from the generator's layout (reference-generator.mjs DAB_*): centres on a unit lattice, each jittered uniformly
+// within +-jitter/2 on both axes, each a capsule of the given width around a segment of the given length at a uniform
+// random angle (the generator's angle follows the reference's gradient, which is random where the reference is flat).
+// overlapShare estimates the two expectations by a deterministic Monte Carlo over the 7 x 7 neighbourhood of a dab (dabs
+// further away cannot reach it at these sizes), cached per layout. The standard layout gives s of about 0.90
+// (tests/transfer-mixing.test.ts checks it against painting a real plan's pass pixel by pixel).
+export type DabLayout = { width: number; halfLength: number; jitter: number };
+const OVERLAP_SAMPLES = 40000;
+const overlapCache = new Map<string, number>();
+
+/** The share of a dab's visible area that lies on earlier dabs of its own pass, for a layout in step units (above). */
+export function overlapShare(layout: DabLayout): number {
+  const key = `${layout.width}:${layout.halfLength}:${layout.jitter}`;
+  const known = overlapCache.get(key);
+  if (known !== undefined) return known;
+  let seed = 0x5eed;
+  const rand = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const radius = layout.width / 2, reach = 3;
+  const dab = (cx: number, cy: number) => { const angle = rand() * Math.PI, dx = Math.cos(angle) * layout.halfLength, dy = Math.sin(angle) * layout.halfLength;
+    return { cx: cx + (rand() - 0.5) * layout.jitter, cy: cy + (rand() - 0.5) * layout.jitter, dx, dy }; };
+  // Distance from (x, y) to the dab's segment.
+  const distance = (d: { cx: number; cy: number; dx: number; dy: number }, x: number, y: number) => {
+    const ax = d.cx - d.dx, ay = d.cy - d.dy, bx = 2 * d.dx, by = 2 * d.dy, length = bx * bx + by * by;
+    const t = length ? Math.max(0, Math.min(1, ((x - ax) * bx + (y - ay) * by) / length)) : 0;
+    return Math.hypot(x - ax - t * bx, y - ay - t * by);
+  };
+  let seen = 0, onEarlier = 0;
+  for (let n = 0; n < OVERLAP_SAMPLES; n++) {
+    const own = dab(0, 0);
+    // A uniform point of the dab: rejection from its bounding box.
+    let x = 0, y = 0;
+    const box = radius + layout.halfLength;
+    do { x = own.cx + (rand() * 2 - 1) * box; y = own.cy + (rand() * 2 - 1) * box; } while (distance(own, x, y) > radius);
+    let others = 0;
+    for (let j = -reach; j <= reach; j++) for (let i = -reach; i <= reach; i++) {
+      if (!i && !j) continue;
+      if (distance(dab(i, j), x, y) <= radius) others++;
+    }
+    seen += 1 / (others + 1);
+    if (others) onEarlier += 1 / (others + 1);
+  }
+  const share = onEarlier / seen;
+  overlapCache.set(key, share);
+  return share;
+}
+
 /** A canvas view: RGBA (not premultiplied) of the whole canvas, `scale` view px per canvas px. */
 export type CanvasView = { width: number; height: number; data: Uint8Array; scale: number };
 
@@ -62,8 +118,9 @@ const centre = (stroke: Stroke): [number, number] => {
   return [(stroke.start[0]! + end[0]!) / 2, (stroke.start[1]! + end[1]!) / 2];
 };
 
-/** A solver for one pass: each stroke's colour solved against the view under it, memoised by (canvas, wanted) colour pair. */
-export function transferSolver(model: MixModel, coverage: number, view: CanvasView) {
+/** A solver for one pass: each stroke's colour solved against the view under it moved `overlap` of the way to the wanted
+ * colour (C' = lerp(C, T, overlap), overlapShare above), memoised by (canvas, wanted) colour pair. */
+export function transferSolver(model: MixModel, coverage: number, view: CanvasView, overlap = 0) {
   const known = new Map<string, string>();
   return function solve<T extends Stroke>(strokes: readonly T[]): T[] {
     return strokes.map(stroke => {
@@ -73,7 +130,10 @@ export function transferSolver(model: MixModel, coverage: number, view: CanvasVi
       if (!under) return stroke;
       const key = rgbToHex(under) + stroke.color;
       let color = known.get(key);
-      if (color === undefined) { color = rgbToHex(solvePaint(model, under, wanted, coverage)); known.set(key, color); }
+      if (color === undefined) {
+        const below: Rgb = [0, 1, 2].map(k => under[k]! + (wanted[k]! - under[k]!) * overlap) as Rgb;
+        color = rgbToHex(solvePaint(model, below, wanted, coverage)); known.set(key, color);
+      }
       return color === stroke.color ? stroke : { ...stroke, color };
     });
   };
