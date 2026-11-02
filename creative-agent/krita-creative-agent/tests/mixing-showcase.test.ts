@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildLayout, VARIANTS, CANVAS, COLOURS, composeSheet, encodePng, hsvl, intersect, lineStroke, rng, strokesBounds, zoneStats, panelMetrics, MODELS, PRESETS, reading } from '../scripts/mixing-showcase.ts';
+import { outputFolder, buildLayout, VARIANTS, CANVAS, COLOURS, composeSheet, encodePng, hsvl, intersect, lineStroke, rng, strokesBounds, zoneStats, panelMetrics, MODELS, PRESETS, reading } from '../scripts/mixing-showcase.ts';
 import type { Image, Rect, Results } from '../scripts/mixing-showcase.ts';
 import { decodeRgba } from '../src/png-rgba.ts';
 
@@ -137,4 +137,12 @@ test('variants: glaze lowers every stroke, layered repeats only the second colou
     assert.ok(panel.passes[1]!.strokes.every(s => s.opacity === 0.3 && s.flow === 1));
   });
   assert.deepEqual(buildLayout(CANVAS, {}), base);
+});
+
+test('the output folder defaults to a fresh folder under the OS temp dir, never the private notes; --out is the caller\'s', () => {
+  const folder = outputFolder({}, '202611020300');
+  assert.ok(folder.startsWith(tmpdir()), folder);
+  assert.ok(!folder.includes('local-notes'), folder);
+  assert.match(folder, /202611020300/);
+  assert.equal(outputFolder({ out: '/private/tmp/mine' }, 'x'), '/private/tmp/mine');
 });

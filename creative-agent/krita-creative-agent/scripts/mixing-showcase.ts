@@ -8,12 +8,13 @@
 //   1 blue into yellow, 2 sunset sky (blue top, orange bottom, alternating blending strokes across the middle), 3 red over green.
 //   node scripts/mixing-showcase.ts [--out <folder>] [--variant default|glaze|layered]
 // Krita must be idle with no document open (checked first). Writes per (preset, model) the full result PNG, per preset a labelled
-// sheet showcase-<preset>.jpg (rgb row above spectral row), numbers.json and report.md in the folder (default
-// ../local-notes/benchmarks/colour-mixing/showcase). The strokes are fixed (seeded jitter), so a rerun differs only by Krita.
+// sheet showcase-<preset>.jpg (rgb row above spectral row), numbers.json and report.md in the folder (--out; by default a new
+// toska-mixing-showcase-<stamp> folder in the OS temp dir). The strokes are fixed (seeded jitter), so a rerun differs only by Krita.
 import { crc32, deflateSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { decodeRgba } from '../src/png-rgba.ts';
 
@@ -310,15 +311,20 @@ export function reportMarkdown(results: Results, meta: Json): string {
 
 // ---- live run ----
 
+/** Where a run writes: the caller's --out, else a new folder for this run's stamp under the OS temp dir. */
+export function outputFolder(args: Record<string, string>, stamp: string): string {
+  return resolve(args.out ?? join(tmpdir(), 'toska-mixing-showcase-' + stamp));
+}
+
 async function live(argv: string[]) {
   const args: Record<string, string> = Object.fromEntries(argv.flatMap((a, i) => a.startsWith('--') ? [[a.slice(2), argv[i + 1] ?? 'yes']] : []));
   const url = process.env.KRITA_URL ?? 'http://127.0.0.1:5679';
-  const out = resolve(args.out ?? new URL('../../local-notes/benchmarks/colour-mixing/showcase', import.meta.url).pathname);
   const log = (...m: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...m);
   const variantName = args.variant ?? 'default';
   if (!VARIANTS[variantName]) throw new Error('--variant is one of ' + Object.keys(VARIANTS).join(', '));
   const panels = buildLayout(CANVAS, VARIANTS[variantName]);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  const out = outputFolder(args, stamp);
 
   async function health(ms = 10000): Promise<Json> { return await (await fetch(url + '/health', { signal: AbortSignal.timeout(ms) })).json() as Json; }
   async function hang(why: string): Promise<never> {
