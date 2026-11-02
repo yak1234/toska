@@ -44,6 +44,9 @@ private Q_SLOTS:
     void testMarkerFringesAreTheSpectralModel();
     void testMarkerRippleComesFromEightBitBlending();
     void benchmarkSpectralPaintMode();
+
+    // Toska: spectral changes mixing, not coverage (pilot-p5 replay)
+    void testSpectralKeepsCoverage();
 };
 
 #endif // KIS_MYPAINTOP_TEST_H

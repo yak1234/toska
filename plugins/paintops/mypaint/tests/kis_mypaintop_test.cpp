@@ -956,4 +956,126 @@ void KisMyPaintOpTest::benchmarkSpectralPaintMode()
     }
 }
 
+namespace {
+
+struct Coverage {
+    float meanAlpha {0.0f};
+    float maxAlpha {0.0f};
+    KisPaintMix::Rgb meanColour {0, 0, 0}; ///< alpha-weighted, over painted pixels
+    int painted {0};
+};
+
+/**
+ * Three overlapping strokes of pale mist with a preset onto a layer: transparent over an opaque dark layer (the
+ * hills over the pines of the pilot-p5 replay), or the same layer already opaque (opaqueLayer). The surface is made
+ * as KisMyPaintPaintOp makes it: an image, ToskaMyPaintSampleMerged from the settings.
+ */
+Coverage paintMist(KisPaintOpSettingsSP settings, bool opaqueLayer)
+{
+    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
+    const QRect bounds(0, 0, 400, 200);
+    KisImageSP image = new KisImage(new KisSurrogateUndoStore(), bounds.width(), bounds.height(), cs, "mist");
+    KisPaintLayerSP below = new KisPaintLayer(image, "pines", OPACITY_OPAQUE_U8);
+    const float pine[3] = {30.0f / 255, 50.0f / 255, 40.0f / 255};
+    below->paintDevice()->fill(bounds, rawColor(cs, pine[0], pine[1], pine[2], 1.0f));
+    KisPaintLayerSP layer = new KisPaintLayer(image, "hill", OPACITY_OPAQUE_U8);
+    if (opaqueLayer) {
+        layer->paintDevice()->fill(bounds, rawColor(cs, pine[0], pine[1], pine[2], 1.0f));
+    }
+    image->addNode(below);
+    image->addNode(layer);
+    image->initialRefreshGraph();
+    image->waitForDone();
+
+    KisPaintDeviceSP dev = layer->paintDevice();
+    KisPainter painter(dev);
+    KisMyPaintSurface surface(&painter, nullptr, image, settings->getBool("ToskaMyPaintSampleMerged", false));
+    const QColor mist(205, 212, 220);
+    for (int s = 0; s < 3; s++) {
+        // one paintop, so one brush, per stroke, as live
+        KisMyPaintPaintOpPreset brush;
+        brush.apply(settings);
+        KisMyPaintPaintOp::applyToskaPaintMode(brush.brush(), settings);
+        mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_SLOW_TRACKING, 0.0);
+        mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_RADIUS_LOGARITHMIC, std::log(18.0f));
+        mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_H, mist.hsvHueF());
+        mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_S, mist.hsvSaturationF());
+        mypaint_brush_set_base_value(brush.brush(), MYPAINT_BRUSH_SETTING_COLOR_V, mist.valueF());
+        const QPointF start(60, 70 + s * 24);
+        KisMyPaintPaintOp::strokeBrushTo(brush.brush(), &surface, start.x(), start.y(), 0.7f, 0, 0, 1.0);
+        for (int i = 1; i <= 70; i++) {
+            KisMyPaintPaintOp::strokeBrushTo(brush.brush(), &surface, start.x() + i * 4, start.y(), 0.7f, 0, 0, 0.015);
+        }
+    }
+
+    Coverage c;
+    const QRect area(60, 50, 280, 100);
+    double sumA = 0, r = 0, g = 0, b = 0;
+    for (int y = area.top(); y <= area.bottom(); y++) {
+        for (int x = area.left(); x <= area.right(); x++) {
+            const QVector<float> p = rawPixel(dev, x, y);
+            sumA += p[3];
+            c.maxAlpha = qMax(c.maxAlpha, p[3]);
+            if (p[3] > 0.0f) {
+                c.painted++;
+                r += p[0] * p[3];
+                g += p[1] * p[3];
+                b += p[2] * p[3];
+            }
+        }
+    }
+    c.meanAlpha = sumA / (area.width() * area.height());
+    if (sumA > 0) {
+        c.meanColour = {float(r / sumA), float(g / sumA), float(b / sumA)};
+    }
+    return c;
+}
+
+QString describe(const Coverage &c)
+{
+    return QString("alpha mean %1 max %2, colour %3 %4 %5, painted %6")
+        .arg(c.meanAlpha, 0, 'f', 4).arg(c.maxAlpha, 0, 'f', 4)
+        .arg(c.meanColour.r * 255, 0, 'f', 1).arg(c.meanColour.g * 255, 0, 'f', 1).arg(c.meanColour.b * 255, 0, 'f', 1)
+        .arg(c.painted);
+}
+
+}
+
+void KisMyPaintOpTest::testSpectralKeepsCoverage()
+{
+    // pilot-p5 replay: the same Wet Paint Plus / Wet Knife Plus strokes on their own new layers came out opaque with
+    // mixing_model=spectral and translucent with rgb. Spectral should change how colours mix, not the coverage.
+    const char *presets[] = {"i)_Wet_Paint_Plus_(mypaint).myb", "i)_Wet_Knife_Plus_(mypaint).myb"};
+    for (const char *preset : presets) {
+        for (bool opaqueLayer : {false, true}) {
+            QMap<QString, Coverage> results;
+            for (int mode = 0; mode <= 1; mode++) {
+                for (bool merged : {false, true}) {
+                    KisPaintOpSettingsSP settings = presetSettings(preset, QVariant(double(mode)));
+                    QVERIFY(settings);
+                    if (merged) {
+                        settings->setProperty("ToskaMyPaintSampleMerged", true);
+                    }
+                    const Coverage c = paintMist(settings, opaqueLayer);
+                    const QString key = QString("mode %1 merged %2").arg(mode).arg(merged);
+                    results[key] = c;
+                    qInfo().noquote() << preset << (opaqueLayer ? "opaque layer" : "transparent layer") << key
+                                      << describe(c);
+                }
+            }
+            // paint mode alone keeps the coverage: the opacity jump comes from sampling merged (the smudge picks up
+            // the projection's alpha), which mixing_options.py turns on only for spectral passes on a new layer
+            for (bool merged : {false, true}) {
+                const Coverage rgb = results[QString("mode 0 merged %1").arg(merged)];
+                const Coverage spectral = results[QString("mode 1 merged %1").arg(merged)];
+                QVERIFY2(qAbs(spectral.meanAlpha - rgb.meanAlpha) < 0.01f, preset);
+                QVERIFY2(qAbs(spectral.maxAlpha - rgb.maxAlpha) < 0.01f, preset);
+            }
+            if (!opaqueLayer) {
+                QVERIFY2(results["mode 1 merged 1"].meanAlpha > results["mode 1 merged 0"].meanAlpha + 0.1f, preset);
+            }
+        }
+    }
+}
+
 SIMPLE_TEST_MAIN(KisMyPaintOpTest)
