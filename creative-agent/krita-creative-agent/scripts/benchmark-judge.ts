@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { DecisionClient } from '../src/decisions/client.ts';
 import { BUILT_IN_ENDPOINTS } from '../src/decisions/endpoints.ts';
+// @ts-ignore: an .mjs module
+import { parseDotEnv } from '../src/langfuse-tracing.mjs';
 import { boundedImage } from '../src/bounded-image.ts';
 import type { ChoiceQuestion, DecisionMaker, DecisionPart, Questions } from '../src/decisions/types.ts';
 
@@ -22,12 +24,15 @@ export type Arm = 'A' | 'B';
 export type Side = 'left' | 'right';
 export type Order = 'A-left' | 'B-left';
 /** One order's raw answer to one question: the side picked (null when unanswered) and the arm that was on it. */
-export type RawAnswer = { order: Order; side: Side | null; arm: Arm | null; confidence?: number };
+export type RawAnswer = { order: Order; side: Side | null; arm: Arm | null; confidence?: number;
+  /** The model's probability for the left painting (probabilities.left, else from the confidence of the side it picked, else the hard vote). */
+  p_left?: number };
+/** Preferences are probability means; verdict and left-pick share are the hard-vote view. */
 export type QuestionResult = { question: string; raw: RawAnswer[];
-  /** Mean over the answered orders of 1 (A picked) or 0 (B picked); null when no order answered. */
+  /** Mean over the answered orders of the probability that A is better (1 - it for B); null when no order answered. */
   preference_a: number | null; preference_b: number | null; answered: number;
-  /** left when both orders picked the same side (position, not content), else the arm both orders picked, else null. */
-  verdict: 'A' | 'B' | 'tie' | 'position-bias' | 'unanswered' };
+  /** position-bias: both orders picked the same side; single-order: only one answered; tie: |preference_a - 0.5| < TIE_BAND; else the arm ahead. */
+  verdict: 'A' | 'B' | 'tie' | 'position-bias' | 'single-order' | 'unanswered' };
 export type Judged = { label: 'runtime A/B'; model: string | null; questions: QuestionResult[]; left_picks: number; answers: number; failures: string[] };
 /** The pictures as the decision client takes them: parts in order. `a` and `b` are the two arms' images. */
 export type Pictures = { goal: DecisionPart; a: DecisionPart; b: DecisionPart };
@@ -44,15 +49,27 @@ export function orderParts(pictures: Pictures, order: Order): DecisionPart[] {
 /** The arm on a side in an order. */
 export const armOn = (order: Order, side: Side): Arm => (order === 'A-left') === (side === 'left') ? 'A' : 'B';
 
-/** Mean preference for A from the answered orders, and the verdict. Pure: the averaging the tests pin. */
+export const TIE_BAND = 0.05;
+
+/** The probability of the left painting from one choice answer: probabilities.left, else confidence for the picked side and 1 - confidence for the other, else the hard vote. */
+export function pLeft(side: Side, probabilities: Record<string, number> | undefined, confidence: number | undefined): number {
+  const p = probabilities?.left;
+  if (typeof p === 'number' && Number.isFinite(p)) return Math.min(1, Math.max(0, p));
+  if (typeof confidence === 'number' && Number.isFinite(confidence)) { const c = Math.min(1, Math.max(0, confidence)); return side === 'left' ? c : 1 - c; }
+  return side === 'left' ? 1 : 0;
+}
+
+/** Mean preference for A over the answered orders: per order pA = p(left) when A is on the left, else 1 - p(left). Pure: the averaging the tests pin. */
 export function summarise(question: string, raw: RawAnswer[]): QuestionResult {
-  const answered = raw.filter(r => r.arm);
-  const votes = answered.map(r => (r.arm === 'A' ? 1 : 0));
+  const answered = raw.filter(r => r.arm && r.side);
+  const votes = answered.map(r => { const p = r.p_left ?? (r.side === 'left' ? 1 : 0); return armOn(r.order, 'left') === 'A' ? p : 1 - p; });
   const preference_a = votes.length ? votes.reduce((sum: number, v) => sum + v, 0) / votes.length : null;
   const sides = new Set(answered.map(r => r.side));
   const verdict = preference_a === null ? 'unanswered'
-    : answered.length === 2 && sides.size === 1 ? 'position-bias'
-    : preference_a > 0.5 ? 'A' : preference_a < 0.5 ? 'B' : 'tie';
+    : answered.length === 1 ? 'single-order'
+    : sides.size === 1 ? 'position-bias'
+    : Math.abs(preference_a - 0.5) < TIE_BAND ? 'tie'
+    : preference_a > 0.5 ? 'A' : 'B';
   return { question, raw, preference_a, preference_b: preference_a === null ? null : 1 - preference_a, answered: answered.length, verdict };
 }
 
@@ -68,8 +85,10 @@ export async function judge(client: DecisionMaker, pictures: Pictures, questions
     questions.forEach((_text, i) => {
       const answer = result.fallback ? undefined : result.answers[`q${i}`];
       const side = answer?.type === 'choice' && (answer.choice === 'left' || answer.choice === 'right') ? answer.choice : null;
+      const confidence = answer?.type === 'choice' && typeof answer.confidence === 'number' ? answer.confidence : undefined;
       raw[i].push({ order, side, arm: side ? armOn(order, side) : null,
-        ...(answer?.type === 'choice' && typeof answer.confidence === 'number' ? { confidence: answer.confidence } : {}) });
+        ...(confidence !== undefined ? { confidence } : {}),
+        ...(side && answer?.type === 'choice' ? { p_left: pLeft(side, answer.probabilities, confidence) } : {}) });
     });
   }
   const results = questions.map((text, i) => summarise(text, raw[i]));
@@ -83,18 +102,16 @@ export function report(judged: Judged): string {
   for (const q of judged.questions) {
     const mean = q.preference_a === null ? 'no answer' : `A ${q.preference_a.toFixed(2)} / B ${q.preference_b!.toFixed(2)}`;
     lines.push(`- ${q.question}  ->  ${mean} (${q.verdict})`);
-    for (const r of q.raw) lines.push(`    ${r.order}: ${r.side ?? 'no answer'}${r.arm ? ` = ${r.arm}` : ''}`);
+    for (const r of q.raw) lines.push(`    ${r.order}: ${r.side ?? 'no answer'}${r.arm ? ` = ${r.arm}` : ''}${r.p_left !== undefined ? ` (p(left) ${r.p_left.toFixed(2)})` : ''}`);
   }
   lines.push(`left picked ${judged.left_picks} of ${judged.answers} answers (0.50 = no position bias)`);
   for (const failure of judged.failures) lines.push(`failed ${failure}`);
   return lines.join('\n');
 }
 
-/** OPENAI_API_KEY from a .env file's text, else from the environment. */
+/** OPENAI_API_KEY from a .env file's text (parseDotEnv: quotes and inline # comments handled), else from the environment. */
 export function apiKey(dotEnv: string | null, env: NodeJS.ProcessEnv = process.env): string | null {
-  const line = (dotEnv ?? '').split(/\r?\n/).map(l => l.match(/^\s*(?:export\s+)?OPENAI_API_KEY\s*=\s*(.*)$/)).find(Boolean);
-  const value = line ? line[1].trim().replace(/^(["'])(.*)\1$/, '$2') : '';
-  return value || env.OPENAI_API_KEY || null;
+  return (dotEnv === null ? '' : parseDotEnv(dotEnv).OPENAI_API_KEY) || env.OPENAI_API_KEY || null;
 }
 
 async function picture(directory: string, path: string): Promise<DecisionPart> {
