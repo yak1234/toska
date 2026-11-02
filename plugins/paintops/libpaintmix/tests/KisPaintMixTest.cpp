@@ -41,7 +41,7 @@ Rgb randomRgb(std::mt19937 &gen)
     return {d(gen), d(gen), d(gen)};
 }
 
-const Model allModels[] = {Model::Rgb, Model::LinearLight, Model::Perceptual, Model::Spectral};
+const Model allModels[] = {Model::Rgb, Model::LinearLight, Model::Perceptual, Model::Spectral, Model::Pigment};
 
 // Test-local copy of libmypaint 1.6.1 mix_colors (helpers.c 521-600) with powf, as the reference for fastpow.
 const float T_MATRIX_SMALL[3][10] = {{0.026595621243689f,0.049779426257903f,0.022449850859496f,-0.218453689278271f
@@ -107,6 +107,9 @@ void KisPaintMixTest::testModelIds()
     QVERIFY(*modelFromId("spectral") == Model::Spectral);
     QVERIFY(!modelFromId("Spectral").has_value());
     QVERIFY(!modelFromId("").has_value());
+    QVERIFY(modelFromId("pigment").has_value());
+    QVERIFY(*modelFromId("pigment") == Model::Pigment);
+    QCOMPARE(QString(modelId(Model::Pigment)), QString("pigment"));
     for (Model m : allModels) {
         const auto back = modelFromId(modelId(m));
         QVERIFY(back.has_value());
@@ -384,8 +387,9 @@ void KisPaintMixTest::testGoldenVectors()
             };
             const Rgb got = mix2(m, rd("a"), rd("b"), float(row.value("t").toDouble()));
             const Rgb want = rd("out");
-            // spectral and perceptual use fast-math / libm pow and cbrt, which differ across platforms on CI.
-            const float tol = (m == Model::Spectral || m == Model::Perceptual) ? 1e-5f : 1e-6f;
+            // spectral and perceptual use fast-math / libm pow and cbrt, which differ across platforms on CI; pigment's
+            // polynomial is long enough for a compiler's fused multiply-adds to move the last bits.
+            const float tol = (m == Model::Spectral || m == Model::Perceptual || m == Model::Pigment) ? 1e-5f : 1e-6f;
             QVERIFY2(std::fabs(got.r - want.r) < tol && std::fabs(got.g - want.g) < tol && std::fabs(got.b - want.b) < tol,
                      modelId(m));
         }
@@ -403,12 +407,16 @@ void KisPaintMixTest::testSpeed()
     std::vector<uint8_t> dst(size_t(n) * 4), src(size_t(n) * 4);
     for (auto &v : dst) v = uint8_t(bd(gen));
     for (auto &v : src) v = uint8_t(bd(gen));
-    QElapsedTimer timer;
-    timer.start();
-    blendPixels(Model::Spectral, Blend::Over, PixelFormat::Bgra8, dst.data(), src.data(), false, n, 1.0f);
-    const qint64 ms = timer.elapsed();
-    qInfo() << "spectral blendPixels, 2,000,000 pixels:" << ms << "ms";
-    QVERIFY2(ms <= 500, qPrintable(QString::number(ms)));
+    const std::vector<uint8_t> dst0 = dst;
+    for (Model m : {Model::Spectral, Model::Pigment}) {
+        dst = dst0;
+        QElapsedTimer timer;
+        timer.start();
+        blendPixels(m, Blend::Over, PixelFormat::Bgra8, dst.data(), src.data(), false, n, 1.0f);
+        const qint64 ms = timer.elapsed();
+        qInfo() << modelId(m) << "blendPixels, 2,000,000 pixels:" << ms << "ms";
+        QVERIFY2(ms <= 500, qPrintable(QString("%1 %2").arg(modelId(m)).arg(ms)));
+    }
 }
 
 namespace {
@@ -535,6 +543,78 @@ void KisPaintMixTest::testSpectralAverageMatchesMixMany()
         one.add(c, 1.0f + k);
     }
     QVERIFY(bitwiseEqual(one.result(), c));
+}
+
+namespace {
+
+// HSV hue in degrees (0..360) and value of a colour
+float hueDegrees(Rgb c)
+{
+    const float mx = std::max({c.r, c.g, c.b}), mn = std::min({c.r, c.g, c.b});
+    const float d = mx - mn;
+    if (d <= 0.0f) return 0.0f;
+    float h;
+    if (mx == c.r) h = std::fmod((c.g - c.b) / d, 6.0f);
+    else if (mx == c.g) h = (c.b - c.r) / d + 2.0f;
+    else h = (c.r - c.g) / d + 4.0f;
+    h *= 60.0f;
+    return h < 0.0f ? h + 360.0f : h;
+}
+
+QString describe(Rgb c)
+{
+    return QString("(%1, %2, %3)").arg(c.r * 255).arg(c.g * 255).arg(c.b * 255);
+}
+
+}
+
+void KisPaintMixTest::testPigmentBlueYellowIsGreen()
+{
+    // Mixbox's own pigment colours (mixbox.h): Cobalt Blue and Hansa Yellow
+    const Rgb blue{0.0f / 255, 33.0f / 255, 133.0f / 255};
+    const Rgb yellow{252.0f / 255, 211.0f / 255, 0.0f / 255};
+    const Rgb m = mix2(Model::Pigment, blue, yellow, 0.5f);
+    qDebug() << "pigment blue + yellow:" << describe(m);
+    QVERIFY2(m.g > m.r && m.g > m.b, qPrintable(describe(m)));
+    // the same colours in rgb give a grey, not a green: the model is what makes the green
+    const Rgb plain = mix2(Model::Rgb, blue, yellow, 0.5f);
+    QVERIFY(!(plain.g > plain.r && plain.g > plain.b));
+}
+
+void KisPaintMixTest::testPigmentComplementariesMakeBrown()
+{
+    // Mixbox's Cadmium Orange and Ultramarine Blue (mixbox.h), half and half
+    const Rgb orange{255.0f / 255, 105.0f / 255, 0.0f / 255};
+    const Rgb ultramarine{25.0f / 255, 0.0f / 255, 89.0f / 255};
+    const Rgb m = mix2(Model::Pigment, orange, ultramarine, 0.5f);
+    const float hue = hueDegrees(m);
+    const float value = std::max({m.r, m.g, m.b});
+    qDebug() << "pigment orange + ultramarine:" << describe(m) << "hue" << hue << "value" << value;
+    QVERIFY2(hue >= 0.0f && hue <= 60.0f, qPrintable(describe(m)));
+    QVERIFY2(m.r > m.g && m.g > m.b, qPrintable(describe(m)));
+    QVERIFY2(value <= 0.7f, qPrintable(describe(m)));
+}
+
+void KisPaintMixTest::testPigmentLatentRoundTrip()
+{
+    std::mt19937 gen(9);
+    float worst = 0.0f;
+    for (int i = 0; i < 4096; i++) {
+        const Rgb c = randomRgb(gen);
+        const Latent l = rgbToLatent(c);
+        QVERIFY(std::fabs(l.c[0] + l.c[1] + l.c[2] + l.c[3] - 1.0f) < 1e-5f);
+        worst = std::max(worst, maxChannelDifference(latentToRgb(l), c));
+    }
+    qDebug() << "latentToRgb(rgbToLatent(c)) - c, largest:" << worst;
+    QVERIFY(worst <= 1e-5f);
+}
+
+void KisPaintMixTest::testSettingsDefaults()
+{
+    const Settings s;
+    QVERIFY(s.model == Model::Rgb);
+    QVERIFY(s.mixOnBrush);
+    QVERIFY(!s.mixInWetPaint);
 }
 
 SIMPLE_TEST_MAIN(KisPaintMixTest)

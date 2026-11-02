@@ -25,7 +25,7 @@
 
 namespace KisPaintMix {
 
-enum class Model { Rgb, LinearLight, Perceptual, Spectral };
+enum class Model { Rgb, LinearLight, Perceptual, Spectral, Pigment };
 
 struct Rgb {
     float r, g, b;
@@ -33,6 +33,17 @@ struct Rgb {
 
 inline bool operator==(const Rgb &a, const Rgb &b) { return a.r == b.r && a.g == b.g && a.b == b.b; }
 inline bool operator!=(const Rgb &a, const Rgb &b) { return !(a == b); }
+
+/**
+ * What a brush mixes with (the preset properties ToskaMixingModel, ToskaMixOnBrush, ToskaMixInWetPaint). mixOnBrush: the
+ * brush's own load picks up and mixes paint (Color Smudge's smudge); mixInWetPaint: the model also mixes the brush's
+ * paint into wet paint already on the canvas (for the wet-paint feature; stored only, read by nothing yet).
+ */
+struct Settings {
+    Model model = Model::Rgb;
+    bool mixOnBrush = true;
+    bool mixInWetPaint = false;
+};
 
 const char *modelId(Model m);
 std::optional<Model> modelFromId(std::string_view id);
@@ -42,6 +53,23 @@ Rgb mix2(Model m, Rgb a, Rgb b, float t);
 
 /// Weighted mix of n colours; weights are normalised, negative weights count as zero, n <= 0 or all-zero gives black.
 Rgb mixMany(Model m, const Rgb *colours, const float *weights, int n);
+
+/**
+ * The pigment model's latent space (Mixbox 2.0, Sochorova and Jamriska 2021; KisPaintMixMixbox.cpp): c holds the
+ * concentrations of Mixbox's four primary pigments (c3 = 1 - c0 - c1 - c2), residual what the pigment polynomial misses
+ * of the colour. Mixing is a weighted sum of latents. Colours are sRGB-encoded, as Mixbox takes them.
+ */
+struct Latent {
+    float c[4];
+    float residual[3];
+};
+
+/// The colour's latent: c from a trilinear lookup of Mixbox's 64^3 table (components clamped to 0..1), residual the colour
+/// minus the polynomial of c.
+Latent rgbToLatent(Rgb c);
+
+/// The polynomial of L.c plus L.residual, clamped to 0..1.
+Rgb latentToRgb(const Latent &l);
 
 /// libmypaint's ten-band spectral upsampling (rgb_to_spectral, assigning) and its inverse (spectral_to_rgb).
 void toSpectrum(Rgb c, float out[10]);

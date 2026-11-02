@@ -18,6 +18,7 @@ const ModelName modelNames[] = {
     {Model::LinearLight, "linear"},
     {Model::Perceptual, "perceptual"},
     {Model::Spectral, "spectral"},
+    {Model::Pigment, "pigment"},
 };
 }
 
@@ -119,6 +120,8 @@ Rgb perceptualMix2(Rgb a, Rgb b, float t)
 namespace detail {
 Rgb spectralMix2(Rgb a, Rgb b, float t);
 Rgb spectralMixMany(const Rgb *colours, const float *weights, int n);
+Rgb pigmentMix2(Rgb a, Rgb b, float t);
+Rgb pigmentMixMany(const Rgb *colours, const float *weights, int n);
 }
 
 Rgb mix2(Model m, Rgb a, Rgb b, float t)
@@ -130,6 +133,8 @@ Rgb mix2(Model m, Rgb a, Rgb b, float t)
     switch (m) {
     case Model::Spectral:
         return detail::spectralMix2(a, b, t);
+    case Model::Pigment:
+        return detail::pigmentMix2(a, b, t);
     case Model::LinearLight:
         return linearMix2(a, b, t);
     case Model::Perceptual:
@@ -174,6 +179,8 @@ Rgb mixMany(Model m, const Rgb *colours, const float *weights, int n)
     switch (m) {
     case Model::Spectral:
         return detail::spectralMixMany(colours, weights, n);
+    case Model::Pigment:
+        return detail::pigmentMixMany(colours, weights, n);
     case Model::LinearLight: {
         float r = 0.0f, g = 0.0f, b = 0.0f;
         for (int i = 0; i < n; ++i) {

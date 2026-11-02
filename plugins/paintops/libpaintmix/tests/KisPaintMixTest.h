@@ -34,6 +34,12 @@ private Q_SLOTS:
     void testDabMixerMatchesMix2();
     void testDabMixerKeepsExactCases();
     void testSpectralAverageMatchesMixMany();
+
+    // the pigment model, Mixbox (task 9)
+    void testPigmentBlueYellowIsGreen();
+    void testPigmentComplementariesMakeBrown();
+    void testPigmentLatentRoundTrip();
+    void testSettingsDefaults();
 };
 
 #endif // KISPAINTMIXTEST_H

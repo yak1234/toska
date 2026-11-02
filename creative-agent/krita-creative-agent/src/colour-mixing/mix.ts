@@ -53,11 +53,14 @@
 //                                                                     *
 // Contact: Paul Mineiro <paul@mineiro.com>                            *
 //=====================================================================*/
+//
+// The pigment model (Mixbox 2.0) is in mixbox.ts, its published table and decoder in mixbox-data.ts (CC BY-NC 4.0).
+import { pigmentMix2, pigmentMixMany } from './mixbox.ts';
 
-export type MixModel = 'rgb' | 'linear' | 'perceptual' | 'spectral';
+export type MixModel = 'rgb' | 'linear' | 'perceptual' | 'spectral' | 'pigment';
 export type Rgb = [number, number, number];
 
-export const MIX_MODELS: readonly MixModel[] = ['rgb', 'linear', 'perceptual', 'spectral'];
+export const MIX_MODELS: readonly MixModel[] = ['rgb', 'linear', 'perceptual', 'spectral', 'pigment'];
 
 const f = Math.fround;
 
@@ -237,6 +240,7 @@ export function mix2(model: MixModel, a: Rgb, b: Rgb, t: number): Rgb {
   if (t === 1) return [b[0], b[1], b[2]];
   switch (model) {
     case 'spectral': return spectralMix2(a, b, t);
+    case 'pigment': return pigmentMix2(a, b, t);
     case 'linear': return linearMix2(a, b, t);
     case 'perceptual': return perceptualMix2(a, b, t);
     case 'rgb': break;
@@ -263,6 +267,7 @@ export function mixMany(model: MixModel, colours: Rgb[], weights: number[]): Rgb
 
   const cs = colours.slice(0, n), ws = weights.slice(0, n).map(f);
   if (model === 'spectral') return spectralMixMany(cs, ws);
+  if (model === 'pigment') return pigmentMixMany(cs, ws);
   const acc = [0, 0, 0];
   for (let i = 0; i < n; i++) {
     if (!(ws[i]! > 0)) continue;
