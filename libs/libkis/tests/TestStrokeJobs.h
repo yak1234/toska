@@ -40,6 +40,7 @@ private Q_SLOTS:
     void testArtistUndoStopsTheJobThenUndoes();
     void testEraseOpacityAndFlow();
     void testMyPaintOpacityAndFlow();
+    void testMyPaintOpacityCostsTheStrokesArea();
     void testCancelReasons();
     void testBrushIsFixedAtTheCall();
     void testUndoBetweenTopUpsUndoesTheJob();

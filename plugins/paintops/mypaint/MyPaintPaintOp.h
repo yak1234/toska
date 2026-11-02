@@ -7,6 +7,8 @@
 #ifndef KIS_MY_PAINTOP_H_
 #define KIS_MY_PAINTOP_H_
 
+#include <QSet>
+#include <QPoint>
 #include <kis_types.h>
 #include <brushengine/kis_paintop.h>
 
@@ -65,6 +67,7 @@ private:
     KisSpacingInformation computeSpacing(const KisPaintInformation &info, qreal lodScale) const;
     void strokeTo(const KisPaintInformation &info, double dtime);
     void compositeStrokeOpacity();
+    void copyLayerForStroke(const QRect &rect);
 
 private:
     QScopedPointer<KisMyPaintPaintOpPreset> m_brush;
@@ -77,13 +80,16 @@ private:
     /**
      * Toska: a stroke's opacity below 1 (ToskaStrokeOpacity, which a script's stroke job, libkis Node.paintStrokes,
      * sets on its copy of the preset; the engine paints its dabs itself and never reads the painter's opacity). The
-     * brush paints, smudges and samples at full strength on m_fullStrength, a copy of the layer, and every dab's
-     * area of the layer becomes the layer as the stroke began (m_strokeStart) blended towards it by the opacity, as
-     * Krita's other engines composite a stroke (wash mode). The stroke's flow (ToskaStrokeFlow) scales each dab.
+     * brush paints, smudges and samples at full strength on m_fullStrength, and every dab's area of the layer becomes
+     * the layer as the stroke began (m_strokeStart) blended towards it by the opacity, as Krita's other engines
+     * composite a stroke (wash mode). Both devices start empty and take the layer's tiles the stroke reads, as it
+     * reads them (m_copiedTiles), so the cost follows the stroke's area, not the layer's. The stroke's flow
+     * (ToskaStrokeFlow) scales each dab.
      */
     qreal m_strokeOpacity {1.0};
     KisPaintDeviceSP m_strokeStart;
     KisPaintDeviceSP m_fullStrength;
+    QSet<QPoint> m_copiedTiles;
     QScopedPointer<KisPainter> m_fullPainter;
 };
 

@@ -282,6 +282,11 @@ void KisMyPaintSurface::setStrokeFlow(float flow)
     m_strokeFlow = qBound(0.0f, flow, 1.0f);
 }
 
+void KisMyPaintSurface::setBeforeRead(std::function<void(const QRect &)> beforeRead)
+{
+    m_beforeRead = std::move(beforeRead);
+}
+
 /*GIMP's draw_dab and get_color code*/
 template <typename channelType>
 int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float radius, float color_r, float color_g,
@@ -322,7 +327,11 @@ int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float
     const QPointF center = QPointF(x, y);
 
     KisAlgebra2D::OuterCircle outer(center, radius);
-    m_precisePainterWrapper.readRects(m_tempPainter->calculateAllMirroredRects(dabRectAligned));
+    const QVector<QRect> dabRects = m_tempPainter->calculateAllMirroredRects(dabRectAligned);
+    if (m_beforeRead) {
+        for (const QRect &rect : dabRects) m_beforeRead(rect);
+    }
+    m_precisePainterWrapper.readRects(dabRects);
     m_tempPainter->copyAreaOptimized(dabRectAligned.topLeft(), m_tempPainter->device(), m_dab, dabRectAligned);
     KisSequentialIterator it(m_dab, dabRectAligned);
 
@@ -506,6 +515,9 @@ void KisMyPaintSurface::getColorImpl(MyPaintSurface *self, float x, float y, flo
     const float one_over_radius2 = 1.0f / (radius * radius);
     quint32 sum_weight = 0.0f;
 
+    if (m_beforeRead) {
+        m_beforeRead(dabRectAligned);
+    }
     m_precisePainterWrapper.readRect(dabRectAligned);
     KisPaintDeviceSP activeDev = m_precisePainterWrapper.overlay();
     if (m_sampleMerged) {

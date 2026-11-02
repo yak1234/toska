@@ -40,9 +40,14 @@ KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPai
     m_strokeOpacity = settings->hasProperty("ToskaStrokeOpacity")
         ? qBound(0.0, settings->getDouble("ToskaStrokeOpacity"), 1.0) : 1.0;
     if (m_strokeOpacity < 1.0) {
-        // copies of the layer's tiles (copy on write): the stroke paints the second at full strength
-        m_strokeStart = new KisPaintDevice(*painter->device());
-        m_fullStrength = new KisPaintDevice(*painter->device());
+        // empty until the stroke reads an area (copyLayerForStroke): the stroke paints the second at full strength
+        KisPaintDeviceSP layer = painter->device();
+        m_strokeStart = new KisPaintDevice(layer->colorSpace());
+        m_fullStrength = new KisPaintDevice(layer->colorSpace());
+        for (KisPaintDeviceSP copy : {m_strokeStart, m_fullStrength}) {
+            copy->setDefaultBounds(layer->defaultBounds());
+            copy->setDefaultPixel(layer->defaultPixel());
+        }
         m_fullPainter.reset(new KisPainter(m_fullStrength, painter->selection()));
         m_fullPainter->setChannelFlags(painter->channelFlags());
         m_fullPainter->copyMirrorInformationFrom(painter);
@@ -52,6 +57,9 @@ KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPai
     }
     m_surface.reset(new KisMyPaintSurface(surfacePainter, nullptr, m_image,
                                           settings->getBool("ToskaMyPaintSampleMerged", false)));
+    if (m_fullPainter) {
+        m_surface->setBeforeRead([this](const QRect &rect) { copyLayerForStroke(rect); });
+    }
     m_surface->setStrokeFlow(settings->hasProperty("ToskaStrokeFlow") ? float(settings->getDouble("ToskaStrokeFlow")) : 1.0f);
 
     m_brush->apply(settings);
@@ -148,6 +156,24 @@ void KisMyPaintPaintOp::strokeTo(const KisPaintInformation &info, double dtime)
     strokeBrushTo(m_brush->brush(), m_surface.data(), info.pos().x(), info.pos().y(), info.pressure(),
                   info.xTilt(), info.yTilt(), dtime);
     compositeStrokeOpacity();
+}
+
+void KisMyPaintPaintOp::copyLayerForStroke(const QRect &rect)
+{
+    // in the layer's 64 px tiles: an area outside the copied ones has not been painted by this stroke, so the layer
+    // still holds it as the stroke began
+    const int tile = 64;
+    auto index = [tile](int v) { return v >= 0 ? v / tile : -((-v + tile - 1) / tile); };
+    KisPaintDeviceSP layer = painter()->device();
+    for (int ty = index(rect.top()); ty <= index(rect.bottom()); ty++) {
+        for (int tx = index(rect.left()); tx <= index(rect.right()); tx++) {
+            if (m_copiedTiles.contains(QPoint(tx, ty))) continue;
+            m_copiedTiles.insert(QPoint(tx, ty));
+            const QRect area(tx * tile, ty * tile, tile, tile);
+            KisPainter::copyAreaOptimized(area.topLeft(), layer, m_strokeStart, area);
+            KisPainter::copyAreaOptimized(area.topLeft(), layer, m_fullStrength, area);
+        }
+    }
 }
 
 void KisMyPaintPaintOp::compositeStrokeOpacity()

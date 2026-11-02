@@ -36,6 +36,7 @@
 #include <KisPaintOpPresetSessionStorage.h>
 #include <KisPart.h>
 #include <KisResourceTypes.h>
+#include <KoColor.h>
 #include <KoColorSpaceRegistry.h>
 #include <KoCompositeOpRegistry.h>
 #include <brushengine/kis_paintop_preset.h>
@@ -1092,6 +1093,36 @@ void TestStrokeJobs::testMyPaintOpacityAndFlow()
     // at pressure 0.6 the dabs are light enough that flow shows on its own
     const double light = paintRow(1.0, 1.0, 0.6), lightFlowed = paintRow(1.0, 0.35, 0.6);
     QVERIFY2(lightFlowed < 0.6 * light, qPrintable(QString("flow 0.35 at pressure 0.6: %1 of %2").arg(lightFlowed).arg(light)));
+}
+
+void TestStrokeJobs::testMyPaintOpacityCostsTheStrokesArea()
+{
+    // The reference transfer sends about 210,000 small MyPaint dabs per job, nearly all below opacity 1, on canvases of
+    // 6000x4500: a stroke's opacity must cost what the stroke touches, not the layer's size.
+    const QString preset = myPaintPreset("i)_Wet_Paint_Plus_(mypaint)");
+    QVERIFY(!preset.isEmpty());
+    auto paintDabs = [&](double opacity, int count) {
+        JobDocument d(6000, 4500);
+        d.layer->paintDevice()->fill(d.image->bounds(), KoColor(Qt::white, d.image->colorSpace())); // every tile stored
+        QVariantList strokes;
+        for (int i = 0; i < count; i++) {
+            const double x = 100 + (i % 50) * 115, y = 100 + (i / 50) * 105;
+            QVariantMap dab = line({{x, y}, {x + 6, y + 2}}, 20, i % 2 ? "#1e3ce6" : "#e6c81e");
+            dab.insert("opacity", opacity);
+            strokes << dab;
+        }
+        QElapsedTimer clock;
+        clock.start();
+        QScopedPointer<StrokeJob> job(d.paint->paintStrokes(strokes, {{"preset", preset}}));
+        const bool settled = settle(job.data(), 120000) && job->state() != "failed";
+        return settled ? clock.elapsed() : qint64(-1);
+    };
+    paintDabs(1.0, 50); // warm-up: the preset, the brush and the tiles' first allocation
+    const qint64 full = paintDabs(1.0, 2000), translucent = paintDabs(0.6, 2000);
+    qInfo() << "2000 MyPaint dabs on 6000x4500: opacity 1" << full << "ms, opacity 0.6" << translucent << "ms";
+    QVERIFY(full > 0 && translucent > 0);
+    QVERIFY2(translucent <= 1.5 * full + 50,
+             qPrintable(QString("opacity 0.6 took %1 ms against %2 ms at opacity 1").arg(translucent).arg(full)));
 }
 
 void TestStrokeJobs::testOffGuiThreadRefusedAndALoneStartDabs()

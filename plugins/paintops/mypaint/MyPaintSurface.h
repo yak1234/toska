@@ -29,6 +29,8 @@ class LogSpectrumCache;
 class SpectralDabMixer;
 }
 
+#include <functional>
+
 class KisMyPaintSurface
 {
 public:
@@ -109,6 +111,12 @@ public:
      */
     void setStrokeFlow(float flow);
 
+    /**
+     * Toska: called with every area of the painted device before the surface reads it (a dab's area and its mirrors,
+     * a colour sample's area), so a device filled on demand (KisMyPaintPaintOp's full-strength copy) can fill it first.
+     */
+    void setBeforeRead(std::function<void(const QRect &)> beforeRead);
+
 private:
     KisPainter *m_painter;
     KisPaintDeviceSP m_imageDevice;
@@ -122,6 +130,7 @@ private:
     KisFixedPaintDeviceSP m_maskDevice;
     bool m_sampleMerged {false};
     float m_strokeFlow {1.0f};
+    std::function<void(const QRect &)> m_beforeRead;
     // Toska: log spectra of the canvas colours the spectral blend and sample have met, and the dab blend's memo
     // (made on first use)
     std::unique_ptr<KisPaintMix::LogSpectrumCache> m_logSpectra;
