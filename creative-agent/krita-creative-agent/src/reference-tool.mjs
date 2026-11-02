@@ -312,16 +312,22 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   if(inside&&!plan.total)throw new Error(`No dab of this transfer lies inside the area the artist chose (${chipLine(area).toLowerCase()}): transfer the reference area that lies under it.`);
   const job={id:identifier,version:REFERENCE_GENERATOR_VERSION,recipe,...(jobMixing?{mixing:jobMixing}:{}),...(jobMixing&&!solved?{solve:false}:{}),...(inside?{inside,inside_label:chipLine(area)}:{}),...(requested!==recipe?{requested}:{}),...(routed?{closeup:routed.note}:{}),...(fitted?{fitted}:{}),...(ground?{ground}:{}),...(repaired.length?{repaired:repaired.join('; ')}:{}),reference_hash:source.sha256,plan_hash:hash(JSON.stringify(plan)+'\n'),canvas:{width:observation.width,height:observation.height},scope:scope(runtime),status:'ready',pass:0,pass_count:plan.passes.length,offset:0,completed:0,total:plan.total,last_revision:observation.revision,layer_id:null,pending:null};await atomic(path(identifier),job);return run(job,signal,plan);
  }
- // The canvas under the transfer's dabs: the view a pass starts from (the last observation or chunk result), decoded here.
- // null when there is none, it is a region, or it cannot be read: the dabs then lay the reference colours, mixing as usual.
- async function canvasView(observation,canvas){
-  const shown=observation?.unguided_path??observation?.image_path;
-  if(!shown||observation.region)return null;
+ // The canvas under the transfer's dabs: a fresh look at the start of each pass (as canvas edit reads its picture), decoded
+ // once for the pass, never per dab. A chunk result or an earlier look is not trusted to carry a readable image.
+ // null, with a transfer_mixing_view diagnostic naming the reason, when no view can be read: the dabs then lay the
+ // reference colours, mixing as usual. A transparent document's unpainted canvas reads as alpha 0, and canvasColour
+ // (transfer-colours.ts) leaves those dabs unsolved; an opaque background reads as its own colour and is solved against.
+ async function canvasView(canvas,pass){
+  const missing=reason=>{runtime.diagnostics?.record?.({type:'transfer_mixing_view',pass,reason});return null;};
   try{
+   const seen=await runtime.callNative('observe',{}),shown=seen?.unguided_path??seen?.image_path;
+   if(!shown)return missing('the canvas observation has no image');
+   if(seen.region)return missing('the canvas observation is a region, not the whole canvas');
    const data=await readFile(await containedFile(runtime.study.directory,shown));
    const pixels=(runtime.decodeImage?await runtime.decodeImage(data):null)??decodeRgba(data,undefined,{ignoreColour:true});
-   return pixels?.width?{width:pixels.width,height:pixels.height,data:pixels.data,scale:pixels.width/canvas.width}:null;
-  }catch(error){runtime.diagnostics?.record?.({type:'transfer_mixing_view',error:String(error?.message??error)});return null;}
+   if(!pixels?.width)return missing('the canvas view could not be decoded');
+   return {width:pixels.width,height:pixels.height,data:pixels.data,scale:pixels.width/canvas.width};
+  }catch(error){return missing(String(error?.message??error));}
  }
  async function run(job,signal,built){
   allowed(runtime);
@@ -356,12 +362,18 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
     if(job.pass>=plan.passes.length){job.status='complete';break;}
     const pass=plan.passes[job.pass];job.status='running';await save();
     // A mixing dab transfer: each dab's colour solved against the canvas this pass starts from (never re-read per dab).
-    let solve=null;
+    let solve=null,solved=null;
     // Solved against C' = lerp(C, T, s): s is the share of a dab's visible area on earlier dabs of its own pass, from the
-    // generator's layout (transfer-colours.ts overlapShare).
+    // generator's layout (transfer-colours.ts overlapShare). solved counts the dabs whose colour the solve changed, for
+    // the transfer_mixing_solve diagnostic at the end of the pass.
     if(!job.recipe.mode&&job.mixing&&job.mixing!=='rgb'&&job.solve!==false&&MIX_MODELS.includes(job.mixing)){
-     const coverage=presetCoverage(pass.preset??job.recipe.preset,mixing.catalog()),view=coverage?await canvasView(current,plan.canvas):null;
-     if(view)solve=transferSolver(job.mixing,coverage,view,overlapShare({width:DAB_WIDTH,halfLength:DAB_HALF_LENGTH,jitter:DAB_JITTER}));
+     const preset=pass.preset??job.recipe.preset,coverage=presetCoverage(preset,mixing.catalog());
+     const view=coverage?await canvasView(plan.canvas,job.pass):(runtime.diagnostics?.record?.({type:'transfer_mixing_view',pass:job.pass,reason:`no measured coverage for ${preset}`}),null);
+     if(view){
+      const overlap=overlapShare({width:DAB_WIDTH,halfLength:DAB_HALF_LENGTH,jitter:DAB_JITTER}),solver=transferSolver(job.mixing,coverage,view,overlap);
+      solved={type:'transfer_mixing_solve',pass:job.pass,coverage,overlap,dabs:0,changed:0};
+      solve=strokes=>{const out=solver(strokes);solved.dabs+=out.length;out.forEach((s,i)=>{if(s.color!==strokes[i].color)solved.changed++;});return out;};
+     }
     }
     while(job.offset<pass.strokes.length){
      if(signal?.aborted||runtime.cancelRequested||!isPaintingMode(runtime.mode)||runtime.executionPhase!=='agent')break;
@@ -381,6 +393,7 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
      // The rate this machine paints at, for sizing the next transfer to the time left.
      if(count>=256&&Date.now()>began)runtime.referenceStrokeRate=count/((Date.now()-began)/1000);
     }
+    if(solved)runtime.diagnostics?.record?.(solved);
     if(job.offset<pass.strokes.length){job.status='paused';break;}
     job.status=job.pass===plan.passes.length-1?'complete':'awaiting_review';
     if(job.status==='complete')break;

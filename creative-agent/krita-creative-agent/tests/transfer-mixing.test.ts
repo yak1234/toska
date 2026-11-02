@@ -78,19 +78,21 @@ const recipe = (preset: string, extra: Record<string, unknown> = {}) => ({ name:
 const CANVAS_RGB = [110, 150, 90];   // the wet paint already on the canvas, under every dab
 
 type Call = { operation: string; params: any };
-async function studio(options: { batch?: number; through?: 'tools' | 'reference'; catalog?: unknown; stopAfter?: number } = {}) {
+async function studio(options: { batch?: number; through?: 'tools' | 'reference'; catalog?: unknown; stopAfter?: number;
+  chunkView?: boolean; observeView?: (n: number) => boolean; viewBytes?: Uint8Array } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'transfer-mixing-'));
   const ref = join(directory, 'ref.png'); await writeFile(ref, 'fixture');
   const view = join(directory, 'view.png'), pixels = new Uint8Array(64 * 64 * 4);
   for (let i = 0; i < 64 * 64; i++) pixels.set([...CANVAS_RGB, 255], i * 4);
-  await writeFile(view, encodeRgba({ width: 64, height: 64, data: pixels }));
-  let revision = 'r0', layer = 0;
-  const calls: Call[] = [], receipts = new Map<string, any>();
+  await writeFile(view, options.viewBytes ?? encodeRgba({ width: 64, height: 64, data: pixels }));
+  let revision = 'r0', layer = 0, observes = 0;
+  const calls: Call[] = [], receipts = new Map<string, any>(), events: any[] = [];
   const runtime: any = { config: { reference_batch: options.batch ?? 20 }, mode: 'agent', executionPhase: 'agent', faulted: false,
     study: { directory, references: [{ id: 'ref', path: ref }] }, emit() {}, paintStepKind: () => null,
+    diagnostics: { record: (event: any) => events.push(event) },
     async callNative(operation: string, params: any) {
       if (operation === 'decode_reference') return { width: 24, height: 24, rgba_base64: image.data.toString('base64'), sha256: params.sha256 };
-      if (operation === 'observe') return { status: 'ok', ...canvas, revision, image_path: view, image_width: 64, image_height: 64, scale: 1 };
+      if (operation === 'observe') return { status: 'ok', ...canvas, revision, ...((options.observeView ?? (() => true))(++observes) ? { image_path: view, image_width: 64, image_height: 64, scale: 1 } : {}) };
       if (operation === 'operation_status') return { found: receipts.has(params.id), result: receipts.get(params.id) };
       if (operation === 'paint_pass') {
         calls.push({ operation, params });
@@ -106,13 +108,13 @@ async function studio(options: { batch?: number; through?: 'tools' | 'reference'
       const params = args;
       calls.push({ operation: 'paint_pass', params });
       if (options.stopAfter && calls.length === options.stopAfter) runtime.cancelRequested = true;
-      const result = { status: 'ok', revision: 'r' + calls.length, layer_id: args.continue_layer_id ?? 'layer-' + (++layer), image_path: view };
+      const result = { status: 'ok', revision: 'r' + calls.length, layer_id: args.continue_layer_id ?? 'layer-' + (++layer), ...(options.chunkView === false ? {} : { image_path: view }) };
       revision = result.revision; receipts.set(id, result); return { details: result };
     };
     tools = referenceTools(runtime, execute, async () => ({ details: {} }), { catalog: () => options.catalog ?? RAW, policy: () => SHIPPED_POLICY });
   } else tools = paintingTools(runtime);
   const find = (name: string) => tools.find(t => t.name === name);
-  return { runtime, calls, find, directory, close: () => rm(directory, { recursive: true, force: true }) };
+  return { runtime, calls, events, find, directory, observes: () => observes, close: () => rm(directory, { recursive: true, force: true }) };
 }
 const planned = (preset: string) => generateReferencePlan(recipe(preset), image, canvas);
 const sentStrokes = (calls: Call[]) => calls.flatMap(c => c.params.strokes);
@@ -275,5 +277,86 @@ test('solve: false lays the reference colours unsolved while the dabs still mix;
     await h.find('continue_reference_painting').execute('c', { job_id: first.details.job_id });
     for (const c of h.calls) assert.equal(c.params.mixing, 'spectral');
     assert.deepEqual(sentStrokes(h.calls).map((s: any) => s.color), planned(WET).passes.flatMap((p: any) => p.strokes.map((s: any) => s.color)));
+  } finally { await h.close(); }
+});
+
+// --- the canvas view each pass is solved against (pilot 3: solve on and solve:false gave bit-identical canvases) ----------
+/** How many dabs of each pass were sent with a colour other than the reference's. */
+function changedPerPass(calls: Call[]) {
+  const plan = planned(WET), sent = sentStrokes(calls);
+  let at = 0;
+  return plan.passes.map((p: any) => p.strokes.filter((s: any) => sent[at++].color !== s.color).length);
+}
+
+test('chunk results without an image: every pass still solves against a fresh observation of the canvas', async t => {
+  if (!SHIPPED_HAS_SPECTRAL) return t.skip('TOSKA_MIXING=off in this shell');
+  const h = await studio({ through: 'reference', chunkView: false });
+  try {
+    await h.find('paint_from_reference').execute('fresh', recipe(WET, { mixing: 'spectral' }));
+    const changed = changedPerPass(h.calls);
+    assert.ok(changed.length >= 2, 'several passes');
+    changed.forEach((n: number, i: number) => assert.ok(n > 0, `pass ${i} solved (${changed})`));
+    assert.ok(!h.events.some(e => e.type === 'transfer_mixing_view'), 'no missing-view diagnostic');
+  } finally { await h.close(); }
+});
+
+test('a first observation without an image: the pass observes again and solves', async t => {
+  if (!SHIPPED_HAS_SPECTRAL) return t.skip('TOSKA_MIXING=off in this shell');
+  // The first look plans the job (start); the second is the one run() starts its passes from, here without an image.
+  const h = await studio({ through: 'reference', observeView: n => n !== 2 });
+  try {
+    await h.find('paint_from_reference').execute('again', recipe(WET, { mixing: 'spectral' }));
+    assert.ok(h.observes() >= 3, 'observed again');
+    assert.ok(changedPerPass(h.calls)[0]! > 0, 'pass 1 solved');
+  } finally { await h.close(); }
+});
+
+test('no canvas view at all: the dabs lay the reference colours and a transfer_mixing_view diagnostic names the reason', async t => {
+  if (!SHIPPED_HAS_SPECTRAL) return t.skip('TOSKA_MIXING=off in this shell');
+  const h = await studio({ through: 'reference', chunkView: false, observeView: () => false });
+  try {
+    await h.find('paint_from_reference').execute('blind', recipe(WET, { mixing: 'spectral' }));
+    assert.ok(changedPerPass(h.calls).every((n: number) => n === 0));
+    const missing = h.events.filter(e => e.type === 'transfer_mixing_view');
+    assert.equal(missing.length, planned(WET).passes.length, 'one per pass');
+    assert.match(missing[0].reason, /no image/);
+    assert.equal(missing[0].pass, 0);
+  } finally { await h.close(); }
+});
+
+test('an undecodable canvas view: a transfer_mixing_view diagnostic instead of a silent skip', async t => {
+  if (!SHIPPED_HAS_SPECTRAL) return t.skip('TOSKA_MIXING=off in this shell');
+  // A PNG the companion's decoder does not read (16 bits per channel), as a JPEG view is to it when no converter answers.
+  const deep = Buffer.from(encodeRgba({ width: 64, height: 64, data: new Uint8Array(64 * 64 * 4) })); deep[24] = 16;
+  const h = await studio({ through: 'reference', viewBytes: deep });
+  try {
+    await h.find('paint_from_reference').execute('garbled', recipe(WET, { mixing: 'spectral' }));
+    const missing = h.events.filter(e => e.type === 'transfer_mixing_view');
+    assert.ok(missing.length >= 1);
+    assert.match(missing[0].reason, /could not be decoded/);
+  } finally { await h.close(); }
+});
+
+test('each solved pass records how many of its dabs the solve changed (transfer_mixing_solve)', async t => {
+  if (!SHIPPED_HAS_SPECTRAL) return t.skip('TOSKA_MIXING=off in this shell');
+  const h = await studio({ through: 'reference' });
+  try {
+    await h.find('paint_from_reference').execute('counted', recipe(WET, { mixing: 'spectral' }));
+    const solved = h.events.filter(e => e.type === 'transfer_mixing_solve'), changed = changedPerPass(h.calls), plan = planned(WET);
+    assert.deepEqual(solved.map(e => e.pass), plan.passes.map((_: any, i: number) => i));
+    solved.forEach(e => { assert.equal(e.changed, changed[e.pass]); assert.equal(e.dabs, plan.passes[e.pass].strokes.length); assert.equal(e.coverage, 0.91); });
+  } finally { await h.close(); }
+});
+
+test('a preset without a measured coverage: a transfer_mixing_view diagnostic names it', async t => {
+  if (!SHIPPED_HAS_SPECTRAL) return t.skip('TOSKA_MIXING=off in this shell');
+  const catalog = structuredClone(RAW);
+  delete catalog.mixing.presets[WET].coverage;
+  const h = await studio({ through: 'reference', catalog });
+  try {
+    await h.find('paint_from_reference').execute('uncovered', recipe(WET, { mixing: 'spectral' }));
+    const missing = h.events.filter(e => e.type === 'transfer_mixing_view');
+    assert.ok(missing.length >= 1);
+    assert.match(missing[0].reason, /coverage/);
   } finally { await h.close(); }
 });
