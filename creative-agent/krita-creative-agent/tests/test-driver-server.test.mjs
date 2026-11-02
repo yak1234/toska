@@ -112,3 +112,20 @@ test('a folder or references for a test chat, test assets resolved to their fixt
     assert.deepEqual((await call(driver.socket, 'POST', '/assets', { action: 'remove', name: 'moscow-painting-assets' })).body, { status: 'ok', removed: 'moscow-painting-assets' });
   } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test('a start with env passes the checked map on; an unknown key or value is refused before anything starts', async () => {
+  const root = await mkdtemp(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'test-driver-'));
+  const log = [];
+  const driver = await serveDriver({ directory: root, make: () => fakeCompanion(log), canvas: () => ({ width: 10, height: 10 }) });
+  try {
+    for (const env of [{ PATH: '/x' }, { TOSKA_MIXING: 'on' }, { TOSKA_MIXING: 1 }, ['TOSKA_MIXING'], 'off']) {
+      const refused = await call(driver.socket, 'POST', '/start', { prompt: 'Paint.', env });
+      assert.equal(refused.status, 400, JSON.stringify(env));
+      assert.match(refused.body.error, /env/);
+    }
+    assert.deepEqual(log, [], 'nothing started');
+    assert.equal((await call(driver.socket, 'POST', '/start', { prompt: 'Paint.', env: { TOSKA_MIXING: ' Off ' } })).status, 200);
+    assert.deepEqual(log[0][1].env, { TOSKA_MIXING: 'off' });
+    await call(driver.socket, 'POST', '/end');
+  } finally { await driver.close(); await rm(root, { recursive: true, force: true }); }
+});

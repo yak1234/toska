@@ -66,6 +66,15 @@ class TestDriverClientTest(unittest.TestCase):
                 self.assertEqual(folder['options']['folder'], '/art/moscow')
                 self.assertEqual(folder['options']['references'], ['/art/ref.png'])
                 registry.tools['creative_test_end']()
+                mixing = registry.tools['creative_test_start']('Paint.', env={'TOSKA_MIXING': 'off'})
+                self.assertEqual(mixing['options']['env'], {'TOSKA_MIXING': 'off'})
+                registry.tools['creative_test_end']()
+                plain = registry.tools['creative_test_start']('Paint.')
+                self.assertNotIn('env', plain['options'], 'env is optional: left out, nothing is sent')
+                registry.tools['creative_test_end']()
+                refused = registry.tools['creative_test_start']('Paint.', env={'PATH': '/x'})
+                self.assertIn('PATH is not allowed', refused['error'])
+                self.assertIn('TOSKA_MIXING', refused['error'])
             finally:
                 if previous is None:
                     os.environ.pop('TEST_DRIVER_ENDPOINT', None)

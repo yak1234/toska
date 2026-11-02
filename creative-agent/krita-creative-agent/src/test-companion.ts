@@ -12,6 +12,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { toolCallsFromEntries, type Call } from './tool-choice.ts';
 import { copyProjectFolder, copyReferences } from './test-fixtures.ts';
 import { panelCommand, type AreaCommand, type FoundEvent, type Question, type ReferenceCard, type SharpenCard } from './test-commands.ts';
+import { checkTestEnv, companionEnv } from './test-env.ts';
 import type { StepView } from './plan-steps.ts';
 
 /** The installed companion's settings (the panel's creative-agent-config.json). */
@@ -20,7 +21,8 @@ export type Bridge = (action: string, params?: Record<string, unknown>, timeoutS
 export type Spawn = (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
 /** folder: an absolute project folder and references: absolute image paths, each copied into the test chat's folder first. */
 export type StartOptions = { prompt: string; painting?: string; width?: number; height?: number; name?: string;
-  provider?: string; model?: string; loopGuards?: boolean; luna?: 'off' | 'evaluate' | 'guide'; folder?: string; references?: string[] };
+  provider?: string; model?: string; loopGuards?: boolean; luna?: 'off' | 'evaluate' | 'guide'; folder?: string; references?: string[];
+  /** Environment for the test companion only (test-env.ts allow-list: TOSKA_MIXING=off). */ env?: Record<string, string> };
 export type Started = { copy: string | null; krita: string; project_folder?: string; references?: string[] };
 export type Move = { number: number; status: string; title?: string; actions?: number; strokes?: number; request_done?: boolean; [key: string]: unknown };
 /** One element-shapes timing (src/shapes/chat.ts's shape_timing event): a study or a shape, its time, peak memory and provider. */
@@ -80,6 +82,7 @@ export class TestCompanion {
   /** Start a test chat in Agent mode. With `painting` (relative to the project root) a copy is opened in Krita;
    * without it the companion makes a new painting. Returns once the request is sent; waitIdle() waits for the move. */
   async start(options: StartOptions): Promise<Started> {
+    if (options.env !== undefined) options = { ...options, env: checkTestEnv(options.env) };   // refused before anything is opened
     const health = await this.bridge('creative', { operation: 'health', params: {} });
     if (health.session_active) throw new Error('Krita holds a painting session (the artist’s chat); end it before a test chat.');
     if (health.build?.build_id !== this.base.build_id) throw new Error(`Krita runs build ${health.build?.build_id}, the installed companion is ${this.base.build_id}.`);
@@ -137,7 +140,7 @@ export class TestCompanion {
     const config = { ...this.base, paintings_dir: this.folder, data_dir: data, output: data, legacy_output: undefined, loopGuards: options.loopGuards !== false };
     await writeFile(join(this.folder, 'companion-config.json'), JSON.stringify(config, null, 2));
     this.child = this.spawn(this.base.node, [this.base.companion], { cwd: dirname(this.base.companion),
-      env: { ...process.env, KRITA_CREATIVE_CONFIG: join(this.folder, 'companion-config.json') } });
+      env: companionEnv(process.env, join(this.folder, 'companion-config.json'), options.env) });
     this.child.stdout.on('data', chunk => this.read(String(chunk)));
     this.child.stderr.on('data', chunk => { const text = String(chunk).trim(); if (text) this.status.errors.push(text.slice(0, 500)); });
     this.child.on('exit', () => { this.status.exited = true; this.notify(); });

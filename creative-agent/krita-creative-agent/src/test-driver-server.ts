@@ -6,6 +6,7 @@ import { isAbsolute, join } from 'node:path';
 import { methodsOf, type Call, type Canvas } from './tool-choice.ts';
 import type { StartOptions, Started, TestState } from './test-companion.ts';
 import { ASSETS_PREFIX, type TestAssets } from './test-fixtures.ts';
+import { checkTestEnv } from './test-env.ts';
 import { CommandRefusal } from './test-commands.ts';
 
 /** What the driver needs from a test companion (src/test-companion.ts). */
@@ -58,6 +59,9 @@ export async function serveDriver(options: DriverOptions): Promise<{ socket: str
       if (input.references !== undefined && (!Array.isArray(input.references) || input.references.length > 4
         || !input.references.every((path: unknown) => typeof path === 'string' && isAbsolute(path))))
         throw new Refusal('references is a list of up to four absolute image paths.', 400);
+      if (input.env !== undefined) {
+        try { input.env = checkTestEnv(input.env); } catch (error) { throw new Refusal((error as Error).message, 400); }
+      }
       const next = await options.make();
       const started = await next.start(input as StartOptions);
       chat = next;

@@ -421,3 +421,27 @@ test('the Sharpen goal card is in the state and is answered as the panel answers
     await s.companion.end();
   } finally { await s.cleanup(); }
 });
+
+test('a test chat’s env reaches the spawned test companion: TOSKA_MIXING=off, nothing else, and the driver’s own value is replaced or removed', async () => {
+  const s = await setup();
+  const previous = process.env.TOSKA_MIXING;
+  try {
+    const spawned = [];
+    const make = () => new TestCompanion(s.companion.base, s.companion.folder, { quietMs: 20, bridge: async (action, params = {}) => action === 'creative' && params.operation === 'health' ? { build: { build_id: 'build-1' }, session_active: false } : { status: 'ok' },
+      spawn: (_command, _args, options) => { spawned.push(options.env); return fakeCompanion([]); } });
+    process.env.TOSKA_MIXING = 'on-in-the-driver';
+    const off = make(); await off.start({ prompt: 'Paint.', env: { TOSKA_MIXING: 'OFF' } }); await off.end();
+    assert.equal(spawned[0].TOSKA_MIXING, 'off', 'the spawn options carry the switch');
+    assert.equal(spawned[0].KRITA_CREATIVE_CONFIG, join(s.companion.folder, 'companion-config.json'));
+    const unset = make(); await unset.start({ prompt: 'Paint.', env: { TOSKA_MIXING: '' } }); await unset.end();
+    assert.equal('TOSKA_MIXING' in spawned[1], false, 'an empty value is unset, never the driver’s own');
+    const plain = make(); await plain.start({ prompt: 'Paint.' }); await plain.end();
+    assert.equal(spawned[2].TOSKA_MIXING, 'on-in-the-driver', 'no env: the driver’s environment as before');
+    const refused = make();
+    await assert.rejects(refused.start({ prompt: 'Paint.', env: { PATH: '/x' } }), /PATH is not allowed/);
+    assert.equal(spawned.length, 3, 'a refused key spawns nothing');
+  } finally {
+    if (previous === undefined) delete process.env.TOSKA_MIXING; else process.env.TOSKA_MIXING = previous;
+    await s.cleanup();
+  }
+});

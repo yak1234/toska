@@ -81,7 +81,8 @@ def register_test_tools(mcp):
     @mcp.tool()
     def creative_test_start(prompt: str, painting: str = "", width: int = 0, height: int = 0,
                             provider: str = "", model: str = "", loop_guards: bool = True, luna: str = "",
-                            folder: str = "", references: list[str] | None = None) -> dict:
+                            folder: str = "", references: list[str] | None = None,
+                            env: dict[str, str] | None = None) -> dict:
         """Start a test chat in Agent mode in a separate test companion (never in the artist's chat list).
 
         painting: a .kra path relative to the project folder; a COPY is opened in Krita (the result says so) and is
@@ -92,11 +93,15 @@ def register_test_tools(mcp):
         is COPIED into the test chat's own folder and opened there as the panel's Open project folder does, so the
         test chat (and its PLAN.md) only ever sees the copy; the copy is deleted by creative_test_end.
         references: up to four absolute image paths, copied the same way and attached as the panel attaches them.
+        env: optional environment for this test chat's companion only, so an A/B run can switch a feature per chat.
+        The only key allowed is TOSKA_MIXING, with the value 'off' (colour mixing off: the painter sees no mixing
+        models); '' or leaving it out keeps the default. Any other key or value is refused with a message.
         """
         body = {'prompt': prompt, 'loopGuards': loop_guards}
         if painting: body['painting'] = painting
         if folder: body['folder'] = folder
         if references: body['references'] = list(references)
+        if env is not None: body['env'] = dict(env)
         if width: body['width'] = width
         if height: body['height'] = height
         if provider: body['provider'] = provider
