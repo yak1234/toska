@@ -15,6 +15,8 @@ import {referencePassKind,SHIPPED_POLICY} from './colour-mixing/mixing-policy.ts
 import {passMixing,presetCoverage,measuredModels} from './colour-mixing/pass-mixing.ts';
 import {transferSolver,overlapShare} from './colour-mixing/transfer-colours.ts';
 import {MIX_MODELS} from './colour-mixing/mix.ts';
+import {paintPlan,planColours,choosePaintSet,checkPaints,STRICTNESSES,DEFAULT_STRICTNESS} from './colour-mixing/paint-set.ts';
+import {PAINT_NAMES} from './colour-mixing/paints.ts';
 import {CATALOG} from './brush-catalog.mjs';
 import {referenceSchema,edgeSchema,surfaceSchema,generateReferencePlan,generateEdgePlan,generateSurfacePlan,analysisCopy,estimateReferenceStrokes,DEFAULT_STEPS,REFERENCE_GENERATOR_VERSION,cropToAspect,EDGE_LIMIT,DAB_WIDTH,DAB_HALF_LENGTH,DAB_JITTER} from './reference-generator.mjs';
 import {EDGE_SPACING_MAX} from './reference-limits.ts';
@@ -28,6 +30,9 @@ const underpaintingNote=j=>{const f=j.fitted,timing=`${j.total} strokes, about $
  return (f.widened?`Steps for the whole-picture underpainting set on the canvas and widened to fit the underpainting budget (about ${f.underpainting} strokes, ${UNDERPAINTING_MINUTES} min at the measured rate): [${j.recipe.steps}] source px`
   :`Steps for the whole-picture underpainting set on the canvas: [${j.recipe.steps}] source px`)
   +`, ${f.canvas_px} canvas px between fine dabs (${timing}; you asked for [${f.from}]). Finish it with paint_finish, then make it crisp with paint_accents.`;};
+// A transfer from its own paint set (colour-mixing task 7d): what the painter is told of it.
+const paintSetNote=({paints,strictness,report:r})=>`Painted from ${paints.length} paints (${paints.join(', ')}), ${strictness}: every dab mixed from at most three of them within \u0394E00 ${r.limit} of the reference`
+ +(r.unmixed?`; ${r.unmixed} dab${r.unmixed===1?'':'s'} no mix reached ${r.unmixed===1?'was':'were'} laid in the reference colour`:'')+`. ${Math.round(r.changed_share*1000)/10}% of dabs changed colour, the largest difference \u0394E00 ${r.largest_delta_e}.`;
 // Jobs belong to a plan revision. Older jobs also recorded a stage; steps no longer gate work.
 const scope=r=>r.goal?JSON.stringify([r.goal.revision]):null;
 const sameScope=(job,r)=>{if(job.scope===scope(r))return true;try{return !!r.goal&&JSON.parse(job.scope)[0]===r.goal.revision;}catch{return false;}};
@@ -38,6 +43,7 @@ const summary=j=>({job_id:j.id,name:j.recipe.name,status:j.status,completed_stro
  ...(j.inside_label?{inside:j.inside_label+'. Only the dabs inside it were planned; Krita keeps every write there.'}:{}),
  ...(j.repaired?{repaired:`The host adjusted this call: ${j.repaired}.`}:{}),
  ...(j.mixing&&j.mixing!=='rgb'?{mixing:j.solve===false?`${j.mixing}: each dab mixes with the paint beneath, in the reference colour (unsolved).`:`${j.mixing}: each dab mixes with the paint beneath, its colour chosen so the mix lands on the reference colour.`}:{}),
+ ...(j.paint_set?{paint_set:{...j.paint_set.report,chosen:j.paint_set.chosen,note:paintSetNote(j.paint_set)}}:{}),
  ...(j.ground?{ground:'A toned ground layer in the reference\u2019s colours, top to bottom, lies under the transfer, so gaps between dabs show its tone, not white canvas.'}:{}),
  next_action:j.status==='complete'?'Review the finished canvas.':j.status==='awaiting_review'?'Inspect this pass image, then continue_reference_painting for the next refinement pass.':'Resume with continue_reference_painting after inspecting any interruption.'});
 // A transfer is underpainting: on a large canvas its dabs are 25-60 px whatever the steps, so running
@@ -239,7 +245,16 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   // The mixing model is the job's, not the recipe's: the recipe (and its stroke plan) stay as they were; `requested` keeps it.
   // So is `solve` (default true): false lays the reference colours unsolved, for an A/B of the solve itself.
   const given=recipe,chosen=recipe.mixing,solved=recipe.solve!==false;
-  if('mixing' in recipe||'solve' in recipe){const {mixing:_chosen,solve:_solve,...rest}=recipe;recipe=rest;}
+  // So is the paint set (task 7d): `paints` ('auto' or library names) and `strictness`; the dabs' colours are laid from it
+  // after the plan is built, so the plan hash covers them and every chunk and continuation paints the same colours.
+  const askedPaints=recipe.paints,strictness=recipe.strictness??DEFAULT_STRICTNESS;
+  if('mixing' in recipe||'solve' in recipe||'paints' in recipe||'strictness' in recipe){const {mixing:_chosen,solve:_solve,paints:_paints,strictness:_strictness,...rest}=recipe;recipe=rest;}
+  if(askedPaints===undefined&&given.strictness!==undefined)throw new Error('strictness applies to a paint set: give paints too (\'auto\' or names), or leave strictness out.');
+  if(askedPaints!==undefined){
+   if(recipe.mode)throw new Error('A paint set is for paint_from_reference\u2019s dab transfer only.');
+   if(!STRICTNESSES.includes(strictness))throw new Error(`strictness is one of ${STRICTNESSES.join(', ')}.`);
+   if(askedPaints!=='auto'){if(!Array.isArray(askedPaints))throw new Error(`paints is 'auto' or a list of paint names: ${PAINT_NAMES.join(', ')}.`);checkPaints(askedPaints);}
+  }
   let jobMixing=null;
   if(!recipe.mode){
    const sent=passMixing({preset:recipe.preset,...(chosen!==undefined?{mixing:chosen}:{}),kind:referencePassKind(recipe.mode)},mixing.catalog(),mixing.policy());
@@ -309,8 +324,15 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   if(recipe.mode==='edges'&&(recipe.min_contrast!==asked.min_contrast||recipe.spacing!==asked.spacing))
    repaired.push(`over the ${runtime.config?.edge_limit??EDGE_LIMIT}-stroke limit: min_contrast ${asked.min_contrast??.1} raised to ${recipe.min_contrast??.1}`+(recipe.spacing!==asked.spacing?`, spacing ${asked.spacing??1.5} to ${recipe.spacing}`:''));
   if(repaired.length)runtime.diagnostics?.record?.({type:'argument_repair',tool:recipe.mode==='edges'?'paint_reference_edges':recipe.mode==='surface'?'paint_reference_surface':'paint_from_reference',repairs:repaired});
+  // The paint set: 'auto' is chosen from the plan's own dab colours (what the transfer reads), then every dab is laid from it.
+  let paintSet=null;
+  if(askedPaints!==undefined&&plan.total){
+   const names=askedPaints==='auto'?choosePaintSet(planColours(plan),strictness).paints:[...askedPaints],laid=paintPlan(plan,names,strictness);
+   plan=laid.plan;paintSet={paints:names,strictness,chosen:askedPaints==='auto'?'auto':'named',report:laid.report};
+   runtime.diagnostics?.record?.({type:'transfer_paint_set',chosen:paintSet.chosen,...laid.report});
+  }
   if(inside&&!plan.total)throw new Error(`No dab of this transfer lies inside the area the artist chose (${chipLine(area).toLowerCase()}): transfer the reference area that lies under it.`);
-  const job={id:identifier,version:REFERENCE_GENERATOR_VERSION,recipe,...(jobMixing?{mixing:jobMixing}:{}),...(jobMixing&&!solved?{solve:false}:{}),...(inside?{inside,inside_label:chipLine(area)}:{}),...(requested!==recipe?{requested}:{}),...(routed?{closeup:routed.note}:{}),...(fitted?{fitted}:{}),...(ground?{ground}:{}),...(repaired.length?{repaired:repaired.join('; ')}:{}),reference_hash:source.sha256,plan_hash:hash(JSON.stringify(plan)+'\n'),canvas:{width:observation.width,height:observation.height},scope:scope(runtime),status:'ready',pass:0,pass_count:plan.passes.length,offset:0,completed:0,total:plan.total,last_revision:observation.revision,layer_id:null,pending:null};await atomic(path(identifier),job);return run(job,signal,plan);
+  const job={id:identifier,version:REFERENCE_GENERATOR_VERSION,recipe,...(jobMixing?{mixing:jobMixing}:{}),...(jobMixing&&!solved?{solve:false}:{}),...(paintSet?{paint_set:paintSet}:{}),...(inside?{inside,inside_label:chipLine(area)}:{}),...(requested!==recipe?{requested}:{}),...(routed?{closeup:routed.note}:{}),...(fitted?{fitted}:{}),...(ground?{ground}:{}),...(repaired.length?{repaired:repaired.join('; ')}:{}),reference_hash:source.sha256,plan_hash:hash(JSON.stringify(plan)+'\n'),canvas:{width:observation.width,height:observation.height},scope:scope(runtime),status:'ready',pass:0,pass_count:plan.passes.length,offset:0,completed:0,total:plan.total,last_revision:observation.revision,layer_id:null,pending:null};await atomic(path(identifier),job);return run(job,signal,plan);
  }
  // The canvas under the transfer's dabs: a fresh look at the start of each pass (as canvas edit reads its picture), decoded
  // once for the pass, never per dab. A chunk result or an earlier look is not trusted to carry a readable image.
@@ -347,7 +369,8 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
    job.ground={status:'done',layer_id:done.layer_id??null};job.last_revision=done.revision;await save();
   }
   let current=await runtime.callNative('observe');
-  const plan=built??await buildPlan(job.recipe,await decode(source),job.canvas??current,job.inside);
+  let plan=built;
+  if(!plan){plan=await buildPlan(job.recipe,await decode(source),job.canvas??current,job.inside);if(job.paint_set)plan=paintPlan(plan,job.paint_set.paints,job.paint_set.strictness).plan;}
   if(hash(JSON.stringify(plan)+'\n')!==job.plan_hash)throw new Error('The stroke plan could not be rebuilt identically. Do not replay it.');
   if(plan.version!==job.version||JSON.stringify(plan.recipe)!==JSON.stringify(job.recipe))throw new Error('The saved reference job no longer matches its stroke plan.');
   if(current.width!==plan.canvas.width||current.height!==plan.canvas.height||current.revision!==job.last_revision)throw new Error('The canvas changed since this job checkpoint. Preserve the changes and inspect before starting a new job.');
@@ -366,7 +389,8 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
     // Solved against C' = lerp(C, T, s): s is the share of a dab's visible area on earlier dabs of its own pass, from the
     // generator's layout (transfer-colours.ts overlapShare). solved counts the dabs whose colour the solve changed, for
     // the transfer_mixing_solve diagnostic at the end of the pass.
-    if(!job.recipe.mode&&job.mixing&&job.mixing!=='rgb'&&job.solve!==false&&MIX_MODELS.includes(job.mixing)){
+    // A paint set's dabs are not solved: the solve's colours would leave the set.
+    if(!job.recipe.mode&&!job.paint_set&&job.mixing&&job.mixing!=='rgb'&&job.solve!==false&&MIX_MODELS.includes(job.mixing)){
      const preset=pass.preset??job.recipe.preset,coverage=presetCoverage(preset,mixing.catalog());
      const view=coverage?await canvasView(plan.canvas,job.pass):(runtime.diagnostics?.record?.({type:'transfer_mixing_view',pass:job.pass,reason:`no measured coverage for ${preset}`}),null);
      if(view){
@@ -409,10 +433,15 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   return {mixing:Type.Optional(Type.Union(offered.map(m=>Type.Literal(m)),{description:`How the transfer's dabs mix with the wet paint beneath: ${offered.join(', ')}. Only with a preset measured for that model (list_brushes); each dab's colour is chosen so the mix stays on the reference. Leave it out for the mixing policy's choice.`})),
    solve:Type.Optional(Type.Boolean({description:'With a mixing model: true (default) chooses each dab\u2019s colour so its mix with the paint beneath lands on the reference colour; false lays the reference colours as they are.'}))};
  }
- const offered=mixingField(),transferSchema=offered.mixing?Type.Object({...referenceSchema.properties,...offered},{additionalProperties:false}):referenceSchema;
+ // The transfer's own paint set (task 7d): offered always; without it the transfer is as before.
+ const paintSetFields={
+  paints:Type.Optional(Type.Union([Type.Literal('auto'),Type.Array(Type.Union(PAINT_NAMES.map(n=>Type.Literal(n))),{minItems:1,maxItems:15,uniqueItems:true})],{description:`Use only when the user asks for a limited palette or real paints: every dab is mixed (Mixbox pigment mixing) from at most three of these tube paints. 'auto' chooses 8-12 paints for this reference (Titanium White always); or name them: ${PAINT_NAMES.join(', ')}. Leave it out to paint the reference colours.`})),
+  strictness:Type.Optional(Type.Union(STRICTNESSES.map(s=>Type.Literal(s)),{description:'With paints: the largest colour difference allowed between a reference colour and its mix, measured by the tool in CIEDE2000 (exact \u2264 2, close \u2264 5, loose \u2264 10; default exact). In exact and close a colour no mix reaches is laid unmixed; in loose it shifts to the nearest mix. Take it from the user\u2019s words ("as close as possible" \u2192 exact); never choose a looser level yourself.'})),
+ };
+ const offered=mixingField(),transferSchema=Type.Object({...referenceSchema.properties,...offered,...paintSetFields},{additionalProperties:false});
  return [
   defineTool({name:'paint_from_reference',label:'Painting from a reference',executionMode:'sequential',parameters:transferSchema,
-   description:'Underpainting only: start faithful reference-assisted reconstruction with locally sampled native brush strokes (small dabs, no edges or materials). One full transfer per plan, and on a fresh canvas it goes first: a reference with the canvas\u2019s proportions is transferred whole, onto the whole canvas, over a toned ground the host lays from its colours; the host sets that whole-picture underpainting\u2019s steps on the canvas (fine dabs a few canvas px apart, widened to its own budget of a few minutes), whatever steps you give. Under a time allowance the host widens the steps so the job fits; then only patches of a missing region, stretched at most 2x; a patch fades out over its outer edge, so extend the target about 15% past the damage on each side that meets existing paint; off in the second half of the plan, except a focal patch of one face or hand (at most 3% of the canvas), also stretched at most 2x, so from an attached close-up reference. Source/target/focal rectangles are [x,y,width,height]; aspect ratios must match. Plans coarse, fine and optional focal passes, with one editable layer per pass. Defaults: steps [6,2.5,1.2], seed 714. Paints the whole job (all passes) in one call and returns the finished canvas; use continue_reference_painting only to resume a job that was stopped or interrupted. Returns a job ID and actual canvas at a saved boundary; if it is paused, inspect and use continue_reference_painting until complete. Keep all refinement within the current planned stage. This transfers reference colors and positions; it is not independent drawing. Does not change the reference.',
+   description:'Underpainting only: start faithful reference-assisted reconstruction with locally sampled native brush strokes (small dabs, no edges or materials). One full transfer per plan, and on a fresh canvas it goes first: a reference with the canvas\u2019s proportions is transferred whole, onto the whole canvas, over a toned ground the host lays from its colours; the host sets that whole-picture underpainting\u2019s steps on the canvas (fine dabs a few canvas px apart, widened to its own budget of a few minutes), whatever steps you give. Under a time allowance the host widens the steps so the job fits; then only patches of a missing region, stretched at most 2x; a patch fades out over its outer edge, so extend the target about 15% past the damage on each side that meets existing paint; off in the second half of the plan, except a focal patch of one face or hand (at most 3% of the canvas), also stretched at most 2x, so from an attached close-up reference. Source/target/focal rectangles are [x,y,width,height]; aspect ratios must match. Plans coarse, fine and optional focal passes, with one editable layer per pass. Defaults: steps [6,2.5,1.2], seed 714. Paints the whole job (all passes) in one call and returns the finished canvas; use continue_reference_painting only to resume a job that was stopped or interrupted. Returns a job ID and actual canvas at a saved boundary; if it is paused, inspect and use continue_reference_painting until complete. Keep all refinement within the current planned stage. This transfers reference colors and positions; it is not independent drawing. Does not change the reference. paints: use when the user asks for a limited palette / real paints; strictness from the user\u2019s words (\u2018as close as possible\u2019 \u2192 exact); never choose a looser level yourself.',
    execute:(id,recipe,signal)=>start(id,recipe,signal)}),
   defineTool({name:'continue_reference_painting',label:'Continuing reference painting',executionMode:'sequential',parameters:Type.Object({job_id:Type.String({pattern:'^[a-f0-9]{32}$'}),...offered},{additionalProperties:false}),
    description:'Resume a saved reference job in its original stage. Reconciles a pending chunk against Krita receipts before painting, checks reference/plan identity and canvas revision, and preserves one layer per refinement pass. Paints all remaining passes (coarse, fine, focal) in one call; it returns early only if painting was stopped. Unknown/partial native outcomes require recovery and are never blindly repainted.',
