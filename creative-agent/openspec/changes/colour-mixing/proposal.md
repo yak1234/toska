@@ -92,6 +92,27 @@ added that earlier when I asked". Pilot P1 confirmed it: with mixing offered, th
 - **Pilot design:** the A/B must reach blending stages — the painter works from a description with the goal shown only
   to the judges, or the run continues into refine and finish after the underpainting.
 
+## Amendment 2026-11-01 (2): pigment-aware reference transfer, Mixbox first
+
+The user: "I would love mixing to be able to work in the reference so that way it's able to do its own richer color
+pigment scheme"; "Yeah move Mixbox earlier". Pilots P1 and P2 showed why: Toska paints mostly through the reference
+transfer (`paint_from_reference`, ~210,000 dabs, often from an image it generated with `make_asset`), which today lays
+plain RGB dabs, so mixing elsewhere barely matters.
+
+- **Mixbox moves earlier:** Task 9 (the pigment model) runs next, before the A/B gates, because the palette below needs it.
+- **Level 1 — the transfer mixes:** `paint_from_reference` (and its continuations) accept a mixing model; dabs blend with
+  the wet paint beneath (spectral now with the measured MyPaint presets, pigment once Mixbox lands). The policy allows
+  mixing in the transfer when the preset has a measured card.
+- **Pigment-aware colour choice:** each dab's colour is solved so that, mixed with what is already on the canvas at the
+  brush's coverage, it gives the colour wanted (the inverse of `mix_colors`), so a mixing transfer stays faithful.
+- **Level 2 — its own pigment palette:** the transfer can work from a limited palette of pigments (8–12 tube colours,
+  chosen per painting); every dab is mixed from those pigments with Mixbox, so colours share pigments and the painting
+  holds together like a real one. A **palette strictness** setting runs from faithful (close to the reference's
+  colours) to painterly (palette-led interpretation).
+- **Level 3 (later) — layered transfer:** coarse passes, then fine dabs as semi-transparent glazes that mix with the
+  layer below.
+- **A/B:** the same reference transferred plain vs with mixing and a palette, everything else fixed.
+
 ## Sibling changes (not in this scope)
 - `brush-carries-paint`: paint memory, a dirty brush and per-bristle colour in Hairy. Depends on this change.
 - `wet-paint`: the wet stroke buffer and whole-stroke passes. Depends on this change and uses the "mix in wet paint" switch.

@@ -12,6 +12,10 @@ Build order follows the proposal (MyPaint spectral → module → Mixbox → Col
 
 **Spec:** `creative-agent/openspec/changes/colour-mixing/proposal.md`
 
+
+> **Order change 2026-11-01 (the user: "move Mixbox earlier"):** Task 9 (Mixbox) runs next, before the Task 8 gate,
+> followed by a new task for the pigment-aware reference transfer (proposal "Amendment (2)"), planned when Task 9 lands.
+
 ## Global Constraints
 
 - **Benchmark scenes (2026-11-01; overrides any scene named in this plan):** every A/B gate follows `creative-agent/openspec/benchmark-scenes.md` — fixed goal images, 3 runs per arm, blind Luna + the user, and the muddiness / stroke-count / repetition / observe-time measurements. "Still life" means scene 1; New Moscow and the artist's own paintings are never used.
