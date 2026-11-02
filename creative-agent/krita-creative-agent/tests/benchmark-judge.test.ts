@@ -125,3 +125,99 @@ test('a large painting is shrunk in memory before it is sent: one request with t
   assert.deepEqual(judgePicture(small, 'goal.png'), { data: small.toString('base64'), mimeType: 'image/png', shrunk: false });
   assert.throws(() => judgePicture(Buffer.alloc(5 * 1024 * 1024, 7), 'arm-b.tif'), /arm-b\.tif is 5\.0 MB/);
 });
+
+// ---- score mode: each painting alone beside the goal ----
+import { expectedLevel, scoreArms, bootstrapDiff, scoreReport, SCORE_QUESTIONS, customQuestion } from '../scripts/benchmark-judge.ts';
+
+/** Answers a score request by the painting's name: level(painting, questionText) -> probabilities by level (or a bare pick). */
+function scorer(level: (painting: string, question: string) => Record<string, number> | number): DecisionMaker & { requests: DecisionRequest[] } {
+  const requests: DecisionRequest[] = [];
+  return { requests, async decide(request): Promise<DecisionResult> {
+    requests.push(request);
+    const parts = request.parts as string[];
+    const painting = parts[parts.indexOf('PAINTING to judge:') + 1];
+    const answers: Record<string, any> = {};
+    for (const [name, q] of Object.entries(request.questions)) {
+      const v = level(painting, q.instructions);
+      answers[name] = typeof v === 'number' ? { type: 'choice', choice: String(v), confidence: 0.8 } : { type: 'choice', choice: '3', probabilities: v };
+    }
+    return { answers, model: 'fake', elapsed_ms: 1, usage };
+  } };
+}
+const sharp = (n: number) => ({ '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, [String(n)]: 1 });
+
+test('expected level is the probability-weighted mean; fallbacks use confidence then the pick', () => {
+  assert.ok(Math.abs(expectedLevel('3', { '1': 0.1, '2': 0.1, '3': 0.2, '4': 0.3, '5': 0.3 }, undefined)! - 3.6) < 1e-9);
+  assert.ok(Math.abs(expectedLevel('4', { '1': 2, '5': 2 }, undefined)! - 3) < 1e-9, 'probabilities are normalised');
+  // confidence 0.6 for level 4, the remaining 0.4 spread over 1,2,3,5 (0.1 each): 2.4 -> 0.1*(1+2+3+5)+0.6*4 = 1.1+2.4 = 3.5
+  assert.ok(Math.abs(expectedLevel('4', undefined, 0.6)! - 3.5) < 1e-9);
+  assert.equal(expectedLevel('4', undefined, undefined), 4);
+  assert.equal(expectedLevel('x', undefined, undefined), null);
+});
+
+test('each question has five level descriptions; the defaults are the three agreed questions', () => {
+  assert.equal(SCORE_QUESTIONS.length, 3);
+  for (const q of SCORE_QUESTIONS) assert.deepEqual(Object.keys(q.levels), ['1', '2', '3', '4', '5']);
+  assert.match(SCORE_QUESTIONS[0].text, /colour where areas meet/);
+  assert.match(SCORE_QUESTIONS[1].text, /real oil paint/);
+  assert.match(SCORE_QUESTIONS[2].text, /atmosphere and colour/);
+  assert.deepEqual(Object.keys(customQuestion('Is it nice?').levels), ['1', '2', '3', '4', '5']);
+});
+
+test('a painting is sent alone beside the goal, repeats are separate requests, arm names never appear', async () => {
+  const client = scorer(() => sharp(3));
+  const arms = { A: ['pA1', 'pA2'], B: ['pB1'] };
+  const out = await scoreArms(client, 'GOAL', arms, SCORE_QUESTIONS, { repeats: 2, seed: 7, model: 'm' });
+  assert.equal(client.requests.length, 6, '3 paintings x 2 repeats, one request each');
+  const seen = new Map<string, number>();
+  for (const r of client.requests) {
+    const parts = r.parts as string[];
+    const paintings = parts.filter(p => /^p[AB]\d$/.test(p));
+    assert.equal(paintings.length, 1, 'exactly one painting per request');
+    assert.ok(parts.includes('GOAL'));
+    seen.set(paintings[0], (seen.get(paintings[0]) ?? 0) + 1);
+    const text = JSON.stringify([parts.filter(p => !/^p[AB]\d$|^GOAL$/.test(p)), r.questions]);
+    assert.ok(!/\barms?\b|baseline|candidate/i.test(text) && !/\b[AB]\b/.test(text), `prompt names an arm: ${text}`);
+    assert.equal(Object.keys(r.questions).length, 3);
+  }
+  assert.deepEqual([...seen.values()], [2, 2, 2].slice(0, seen.size));
+  assert.equal(seen.size, 3);
+  assert.equal(out.label, 'runtime A/B (scored)');
+  const order = client.requests.map(r => (r.parts as string[]).find(p => /^p[AB]\d$/.test(p)));
+  assert.notDeepEqual(order, ['pA1', 'pA1', 'pA2', 'pA2', 'pB1', 'pB1'], 'presented in a shuffled order');
+});
+
+test('per painting mean and spread, per arm mean and B - A over runs x repeats', async () => {
+  // A paintings score 2 and 4 (repeats alike), B paintings 5 and 3 -> A mean 3, B mean 4, diff 1.
+  const level: Record<string, number> = { pA1: 2, pA2: 4, pB1: 5, pB2: 3 };
+  const out = await scoreArms(scorer(p => sharp(level[p])), 'GOAL', { A: ['pA1', 'pA2'], B: ['pB1', 'pB2'] }, SCORE_QUESTIONS.slice(0, 1), { repeats: 2, seed: 1, resamples: 500 });
+  const a1 = out.paintings.find(p => p.arm === 'A' && p.index === 0)!;
+  assert.deepEqual([a1.cells[0].mean, a1.cells[0].spread, a1.cells[0].values.length], [2, 0, 2]);
+  const arm = out.questions[0];
+  assert.equal(arm.A.mean, 3); assert.equal(arm.B.mean, 4); assert.equal(arm.diff, 1);
+  assert.equal(arm.A.n, 4);
+  assert.ok(arm.lo <= 1 && arm.hi >= 1 && arm.lo >= 0 && arm.hi <= 2);
+  assert.match(scoreReport(out), /runtime A\/B \(scored\)[\s\S]*B - A/);
+});
+
+test('repeat spread is the max minus min of the repeats; unanswered requests are failures, not scores', async () => {
+  const count = new Map<string, number>();
+  const wobble: DecisionMaker = { async decide(request) { const who = (request.parts as string[])[3]; const n = (count.get(who) ?? 0) + 1; count.set(who, n); const answers: Record<string, any> = {};
+    for (const name of Object.keys(request.questions)) answers[name] = { type: 'choice', choice: '3', probabilities: sharp(n % 2 ? 2 : 4) };
+    return { answers, model: 'f', elapsed_ms: 1, usage }; } };
+  const out = await scoreArms(wobble, 'G', { A: ['a'], B: ['b'] }, SCORE_QUESTIONS.slice(0, 1), { repeats: 2, seed: 3, resamples: 50 });
+  for (const p of out.paintings) assert.equal(p.cells[0].spread, 2);
+  const failing: DecisionMaker = { async decide() { return { fallback: 'timeout', elapsed_ms: 1 }; } };
+  const bad = await scoreArms(failing, 'G', { A: ['a'], B: ['b'] }, SCORE_QUESTIONS.slice(0, 1), { repeats: 1, seed: 3 });
+  assert.equal(bad.failures.length, 2); assert.equal(bad.questions[0].diff, null);
+});
+
+test('the bootstrap interval is deterministic for a fixed seed and brackets the difference', () => {
+  const a = [1, 2, 3, 2, 1.5, 2.5], b = [3, 4.5, 5, 4, 3.5, 4];
+  const one = bootstrapDiff(a, b, 11, 1000), two = bootstrapDiff(a, b, 11, 1000);
+  assert.deepEqual(one, two);
+  assert.ok(Math.abs(one.diff - (4 - 2)) < 0.01);
+  assert.ok(one.lo > 0.5 && one.lo <= one.diff && one.hi >= one.diff && one.hi < 3.5, JSON.stringify(one));
+  assert.notDeepEqual(bootstrapDiff(a, b, 12, 20), bootstrapDiff(a, b, 11, 20), "another seed draws other resamples");
+  assert.deepEqual(bootstrapDiff([2, 2], [3, 3], 1, 100), { diff: 1, lo: 1, hi: 1 });
+});

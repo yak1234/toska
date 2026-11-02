@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Yakub Rabiutheen <yakub.rabiutheen@gmail.com>
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Default mode `score`: each painting is judged alone beside the goal (see scoreArms); `--mode pair` keeps the pairwise judge below.
 // Blind A/B judging of two arm results against the goal, with the decision model, in BOTH orders. Luna showed a
 // left-side position bias (colour-mixing pilot P1), so each question is asked twice: A on the left, then B on the
 // left; the preference for A is the mean of the two (1 = A both times, 0.5 = it followed the position, 0 = B both
 // times). Output is labelled "runtime A/B": these are judgements of the arms' images made for the benchmark, never
 // an offline score of anything Luna did inside a run.
-//   node scripts/benchmark-judge.ts --goal goal.png --a arm-a.png --b arm-b.png [--question "Which is cleaner?"]...
+//   node scripts/benchmark-judge.ts --goal goal.png --a a1.png a2.png.. --b b1.png.. [--mode score|pair] [--repeats 2] [--question "Which is cleaner?"]...
 //     [--model gpt-6-luna] [--env-file <path to .env>] [--timeout 120000]
 // Key: OPENAI_API_KEY from the project's .env (or --env-file), else the environment. Never printed.
 import { parseArgs } from 'node:util';
@@ -138,10 +139,115 @@ async function picture(path: string): Promise<DecisionPart> {
   return { data, mimeType };
 }
 
+// ---- score mode: each painting alone beside the goal (pairwise judging showed left-position bias: 6/6 left picks) ----
+export type ScoreQuestion = { text: string; levels: Record<'1' | '2' | '3' | '4' | '5', string> };
+const level5 = (a: string, b: string, c: string, d: string, e: string): ScoreQuestion['levels'] => ({ '1': a, '2': b, '3': c, '4': d, '5': e });
+export const SCORE_QUESTIONS: ScoreQuestion[] = [
+  { text: 'How clean is the colour where areas meet?', levels: level5('Very poor: muddy, grey or dirty colour wherever areas meet.', 'Poor: frequent muddy or dull seams.', 'Fair: some clean joins, some muddy ones.', 'Good: joins are mostly clean and fresh.', 'Excellent: every join is clean, with fresh colour and no mud.') },
+  { text: 'How much does this look like real oil paint?', levels: level5('Very poor: flat digital fill or vector look, no paint character.', 'Poor: mostly digital, a little brush texture.', 'Fair: some paint character, still clearly digital.', 'Good: convincing brushwork, edges and blending.', 'Excellent: could pass for a photograph of a real oil painting.') },
+  { text: "How well does it capture the goal painting's atmosphere and colour?", levels: level5('Very poor: unrelated mood and colours.', 'Poor: a few matching colours, wrong mood.', 'Fair: roughly the right palette, atmosphere only partly there.', 'Good: close colours and mood, with some differences.', 'Excellent: atmosphere and colour match the goal very closely.') },
+];
+/** A question given on the command line: the same five generic levels. */
+export const customQuestion = (text: string): ScoreQuestion => ({ text, levels: level5('Very poor.', 'Poor.', 'Fair.', 'Good.', 'Excellent.') });
+
+const LEVELS = [1, 2, 3, 4, 5];
+/** The expected level from one answer: sum p(level) * level over the model's probabilities (normalised); else the confidence for the picked level with the rest spread evenly; else the pick. null when the pick is no level. */
+export function expectedLevel(choice: string, probabilities: Record<string, number> | undefined, confidence: number | undefined): number | null {
+  const picked = Number(choice);
+  if (!LEVELS.includes(picked)) return null;
+  if (probabilities) {
+    const ps = LEVELS.map(l => { const v = probabilities[String(l)]; return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0; });
+    const total = ps.reduce((a, b) => a + b, 0);
+    if (total > 0) return LEVELS.reduce((sum, l, i) => sum + l * ps[i] / total, 0);
+  }
+  if (typeof confidence === 'number' && Number.isFinite(confidence)) {
+    const c = Math.min(1, Math.max(0, confidence)), rest = (1 - c) / (LEVELS.length - 1);
+    return LEVELS.reduce((sum, l) => sum + l * (l === picked ? c : rest), 0);
+  }
+  return picked;
+}
+
+/** A small seeded generator (mulberry32) so the shuffle and the bootstrap repeat exactly. */
+export function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+
+/** B - A of the means with a bootstrap interval (default 90%): both samples resampled with replacement. */
+export function bootstrapDiff(a: number[], b: number[], seed = 1, resamples = 2000, level = 0.9): { diff: number; lo: number; hi: number } {
+  const diff = mean(b) - mean(a), rnd = seeded(seed);
+  const draw = (xs: number[]) => mean(xs.map(() => xs[Math.floor(rnd() * xs.length)]));
+  const diffs = Array.from({ length: resamples }, () => draw(b) - draw(a)).sort((x, y) => x - y);
+  const cut = (1 - level) / 2;
+  return { diff, lo: diffs[Math.floor(cut * (resamples - 1))], hi: diffs[Math.ceil((1 - cut) * (resamples - 1))] };
+}
+
+export type Cell = { question: string; values: number[]; mean: number | null; spread: number | null };
+export type ArmStat = { mean: number | null; n: number };
+export type Scored = { label: 'runtime A/B (scored)'; model: string | null; repeats: number;
+  paintings: { arm: Arm; index: number; cells: Cell[] }[];
+  questions: { question: string; A: ArmStat; B: ArmStat; diff: number | null; lo: number | null; hi: number | null }[];
+  failures: string[] };
+export type ScoreOptions = { repeats?: number; seed?: number; model?: string | null; resamples?: number };
+
+/** The state for one request: the goal and ONE painting, never named by arm or placed beside another. */
+export const scoreParts = (goal: DecisionPart, painting: DecisionPart): DecisionPart[] =>
+  ['GOAL painting (the target the painting below tries to recreate):', goal, 'PAINTING to judge:', painting];
+
+/** Every painting of both arms, `repeats` times each, as separate requests in a seeded random order. */
+export async function scoreArms(client: DecisionMaker, goal: DecisionPart, arms: { A: DecisionPart[]; B: DecisionPart[] }, questions: ScoreQuestion[] = SCORE_QUESTIONS, options: ScoreOptions = {}): Promise<Scored> {
+  if (!questions.length) throw new Error('Give at least one question.');
+  const repeats = options.repeats ?? 2, rnd = seeded(options.seed ?? 1);
+  const asked: Questions = Object.fromEntries(questions.map((q, i) => [`q${i}`, { type: 'choice' as const,
+    instructions: `${q.text} Judge only the painting shown after "PAINTING to judge:", against the goal. Pick the level that fits it best.`,
+    criteria: q.levels } satisfies ChoiceQuestion]));
+  const paintings = (['A', 'B'] as Arm[]).flatMap(arm => arms[arm].map((_p, index) => ({ arm, index, cells: questions.map(q => ({ question: q.text, values: [] as number[], mean: null as number | null, spread: null as number | null })) })));
+  const jobs = paintings.flatMap(p => Array.from({ length: repeats }, () => p));
+  for (let i = jobs.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [jobs[i], jobs[j]] = [jobs[j], jobs[i]]; }
+  const failures: string[] = [];
+  for (const job of jobs) {
+    const result = await client.decide({ purpose: 'benchmark-judge', parts: scoreParts(goal, arms[job.arm][job.index]), questions: asked });
+    if (result.fallback) { failures.push(`${job.arm}${job.index + 1}: ${result.fallback}`); continue; }
+    questions.forEach((_q, i) => {
+      const answer = result.answers[`q${i}`];
+      if (answer?.type !== 'choice') return;
+      const score = expectedLevel(answer.choice, answer.probabilities, typeof answer.confidence === 'number' ? answer.confidence : undefined);
+      if (score !== null) job.cells[i].values.push(score);
+    });
+  }
+  for (const p of paintings) for (const c of p.cells) if (c.values.length) { c.mean = mean(c.values); c.spread = Math.max(...c.values) - Math.min(...c.values); }
+  const out = questions.map((q, i) => {
+    const pool = (arm: Arm) => paintings.filter(p => p.arm === arm).flatMap(p => p.cells[i].values);
+    const a = pool('A'), b = pool('B');
+    const stat = (xs: number[]): ArmStat => ({ mean: xs.length ? mean(xs) : null, n: xs.length });
+    if (!a.length || !b.length) return { question: q.text, A: stat(a), B: stat(b), diff: null, lo: null, hi: null };
+    return { question: q.text, A: stat(a), B: stat(b), ...bootstrapDiff(a, b, (options.seed ?? 1) + i, options.resamples) };
+  });
+  return { label: 'runtime A/B (scored)', model: options.model ?? null, repeats, paintings, questions: out, failures };
+}
+
+const f2 = (x: number | null) => x === null ? 'n/a' : x.toFixed(2);
+/** A readable report: per question each painting's mean and repeat spread, then the arms and B - A with the 90% interval. */
+export function scoreReport(s: Scored): string {
+  const lines = [`${s.label}: ${s.model ?? 'decision model'}, each painting alone beside the goal, ${s.repeats} repeats, levels 1 (very poor) to 5 (excellent)`];
+  s.questions.forEach((q, i) => {
+    lines.push(`- ${q.question}`);
+    for (const p of s.paintings) { const c = p.cells[i]; lines.push(`    ${p.arm}${p.index + 1}: mean ${f2(c.mean)}, spread ${f2(c.spread)} (${c.values.length} answers)`); }
+    lines.push(`    arm A mean ${f2(q.A.mean)} (n=${q.A.n}), arm B mean ${f2(q.B.mean)} (n=${q.B.n}), B - A ${q.diff === null ? 'n/a' : `${q.diff >= 0 ? '+' : ''}${q.diff.toFixed(2)} (90% bootstrap ${f2(q.lo)} to ${f2(q.hi)})`}`);
+  });
+  for (const failure of s.failures) lines.push(`failed ${failure}`);
+  return lines.join('\n');
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { values } = parseArgs({ options: { goal: { type: 'string' }, a: { type: 'string' }, b: { type: 'string' }, question: { type: 'string', multiple: true },
+  const { values } = parseArgs({ options: { goal: { type: 'string' }, a: { type: 'string', multiple: true }, b: { type: 'string', multiple: true }, question: { type: 'string', multiple: true },
+    mode: { type: 'string' }, repeats: { type: 'string' }, seed: { type: 'string' },
     model: { type: 'string' }, 'env-file': { type: 'string' }, timeout: { type: 'string' }, json: { type: 'boolean' } } });
-  if (!values.goal || !values.a || !values.b) { process.stderr.write('Usage: --goal <img> --a <img> --b <img> [--question "..."]... [--model m] [--env-file .env] [--json]\n'); process.exit(2); }
+  const mode = values.mode ?? 'score';
+  if (!values.goal || !values.a?.length || !values.b?.length || (mode !== 'score' && mode !== 'pair')) {
+    process.stderr.write('Usage: --goal <img> --a <img>... --b <img>... [--mode score|pair] [--question "..."]... [--repeats 2] [--seed 1] [--model m] [--env-file .env] [--json]\n'); process.exit(2); }
+  if (mode === 'pair' && (values.a.length > 1 || values.b.length > 1)) { process.stderr.write('--mode pair takes one image for --a and one for --b.\n'); process.exit(2); }
   let envPath = values['env-file'];
   if (!envPath) {
     // @ts-ignore: an .mjs module
@@ -152,8 +258,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (!key) { process.stderr.write(`No OPENAI_API_KEY in ${envPath} or the environment.\n`); process.exit(2); }
   const model = values.model ?? BUILT_IN_ENDPOINTS.openai.defaultModel;
   const client = new DecisionClient({ endpoint: BUILT_IN_ENDPOINTS.openai, model, apiKey: key, images: true, timeout: Number(values.timeout ?? 120000) });
-  const pictures = { goal: await picture(values.goal), a: await picture(values.a), b: await picture(values.b) };
-  const judged = await judge(client, pictures, values.question?.length ? values.question : DEFAULT_QUESTIONS, model);
-  process.stdout.write((values.json ? JSON.stringify(judged, null, 2) : report(judged)) + '\n');
-  process.exitCode = judged.failures.length ? 1 : 0;
+  const goal = await picture(values.goal);
+  if (mode === 'pair') {
+    const pictures = { goal, a: await picture(values.a[0]), b: await picture(values.b[0]) };
+    const judged = await judge(client, pictures, values.question?.length ? values.question : DEFAULT_QUESTIONS, model);
+    process.stdout.write((values.json ? JSON.stringify(judged, null, 2) : report(judged)) + '\n');
+    process.exitCode = judged.failures.length ? 1 : 0;
+  } else {
+    const arms = { A: await Promise.all(values.a.map(picture)), B: await Promise.all(values.b.map(picture)) };
+    const questions = values.question?.length ? values.question.map(customQuestion) : SCORE_QUESTIONS;
+    const scored = await scoreArms(client, goal, arms, questions, { repeats: Number(values.repeats ?? 2), seed: Number(values.seed ?? 1), model });
+    process.stdout.write((values.json ? JSON.stringify(scored, null, 2) : scoreReport(scored)) + '\n');
+    process.exitCode = scored.failures.length ? 1 : 0;
+  }
 }
