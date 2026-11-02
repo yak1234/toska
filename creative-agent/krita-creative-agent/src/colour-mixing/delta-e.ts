@@ -65,6 +65,16 @@ export function deltaE00Scalar(L1: number, a1: number, b1: number, L2: number, a
   return Math.sqrt(l * l + c * c + h * h + RT * c * h);
 }
 
+/** A lower bound on ΔE00, cheap enough to skip most of a search: ΔE00^2 = l^2 + c^2 + h^2 + RT c h with |RT| <= 2 sin 60°
+ * (Δθ <= 30°, R_C <= 2), so ΔE00^2 >= l^2 + CHROMA_HUE_SHARE (c^2 + h^2); c^2 + h^2 >= (Δa'^2 + Δb^2) / max(S_C, S_H)^2,
+ * with Δa' = (1 + G) Δa >= Δa, S_H <= S_C (T <= 1.93) and C̄' <= 1.5 (C1 + C2) / 2 (G <= 0.5), so
+ *   ΔE00^2 >= (ΔL / S_L)^2 + CHROMA_HUE_SHARE (Δa^2 + Δb^2) / (1 + 0.03375 (C1 + C2))^2. */
+export const CHROMA_HUE_SHARE = 1 - Math.sin(60 * DEG);
+export function deltaE00LowerBound(L1: number, a1: number, b1: number, L2: number, a2: number, b2: number): number {
+  const l = (L2 - L1) / lightnessWeight((L1 + L2) / 2), da = a2 - a1, db = b2 - b1, scale = 1 + 0.03375 * (Math.hypot(a1, b1) + Math.hypot(a2, b2));
+  return Math.sqrt(l * l + (CHROMA_HUE_SHARE * (da * da + db * db)) / (scale * scale));
+}
+
 /** CIEDE2000 between two CIELAB colours. */
 export function deltaE00(lab1: Lab, lab2: Lab): number {
   return deltaE00Scalar(lab1[0], lab1[1], lab1[2], lab2[0], lab2[1], lab2[2]);

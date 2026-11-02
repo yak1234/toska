@@ -3,26 +3,27 @@
 // The transfer's own paint set (colour-mixing task 7d, proposal "Level 2 — its own pigment palette"). A reference transfer
 // can paint from a few tube paints: every reference colour is replaced by the closest Mixbox mix of at most three paints
 // of the set, within a strictness limit measured in CIEDE2000 (ΔE00) from the reference's own colours, never judged by eye.
-//   - recipeFor: the best mix of 1, 2 or 3 paints, by Mixbox's latent mix (mixbox.ts), minimising ΔE00 (delta-e.ts): a
-//     weight grid in steps of 1/GRID, then a pattern search on the weights. Which paints is memoised per target quantised
-//     to 5 bits a channel: every subset of at most three paints is searched on the grid at the bucket's centre and the
-//     CANDIDATES best subsets are kept. How much of each is then found for the exact 8-bit colour (memoised by it): those
-//     subsets on the grid, the REFINED best of them refined. Keeping only the centre's single best subset left 40% of
-//     the Monet benchmark's pixels out of the exact limit, against 13% with the candidates (task 7d report).
-//   - Speed: no triple is pruned. The grid mixes are target-independent (built once per subset, in CIELAB), a subset is
-//     dropped as soon as its grid cannot beat the CANDIDATES-th best so far, and a mix is skipped when ΔE00's lightness
-//     term alone (|ΔL| / S_L, a lower bound) rules it out. Pruning triples to the best pair's paints, as the brief
-//     allowed, was measured no faster after that and missed mixes such as Burnt Sienna + Ultramarine + White.
+//   - recipeFor: the best mix of 1, 2 or 3 paints, by Mixbox's latent mix (mixbox.ts), minimising ΔE00 (delta-e.ts),
+//     searched for each exact 8-bit colour (memoised by it), so a recipe depends only on the colour and the paint names.
+//     Every subset of at most three paints is scored on a weight grid in steps of 1/GRID; the subsets within MARGIN of
+//     the best grid mix are candidates, and the REFINED best of them get a pattern search on the weights; each paint
+//     alone is tried at its own tube colour. (Searching per 5-bit bucket instead, at its centre, was worse for 0.6% of
+//     colours, up to ΔE00 1.4; MARGIN 1 left 0.27 points more of p1 unmixed than an unlimited margin, MARGIN 2 0.01.)
+//   - Speed, without changing the result (tests/paint-set.test.ts holds the pruned search to the unpruned one): the grid
+//     mixes are target-independent, built once per subset in CIELAB and sorted by lightness; a subset is read only in
+//     the lightness window that can still come within MARGIN of the best so far; a mix is skipped when ΔE00's lower bound
+//     (deltaE00LowerBound) rules it out; the best subsets at the centre of the colour's 5-bit bucket (memoised) are
+//     scored first so that bound is tight from the start.
 //   - choosePaintSet: White always; greedily adds the library paint that most lowers the weighted share of the reference's
-//     colours above the limit (ties: lower weighted mean ΔE00), to 8 paints, then on while any colour is above the limit,
-//     to at most 12.
+//     colours above the limit (ties: lower weighted mean ΔE00; ranked on a grid table of every library subset), to 8
+//     paints, then on while any colour is above the limit by recipeFor (the recipe its dabs are laid with), to at most 12.
 //   - Strictness: exact ΔE00 <= 2 (default), close <= 5, loose <= 10. In exact and close a colour no mix reaches within
 //     the limit is laid as the reference colour, unmixed, and counted; in loose it is laid as its nearest mix.
 import { rgbToLatent, latentToRgb, pigmentMixMany } from './mixbox.ts';
 import type { Latent } from './mixbox.ts';
 import { hexToRgb, rgbToHex } from './mix.ts';
 import type { Rgb } from './mix.ts';
-import { srgbToLab, deltaE00Scalar, lightnessWeight } from './delta-e.ts';
+import { srgbToLab, deltaE00Scalar, lightnessWeight, CHROMA_HUE_SHARE } from './delta-e.ts';
 import type { Lab } from './delta-e.ts';
 import { PAINT_LIBRARY, PAINT_NAMES, TITANIUM_WHITE, paintByName } from './paints.ts';
 import type { Paint } from './paints.ts';
@@ -38,8 +39,9 @@ export const GRID = 16;
 export const SET_MIN = 8, SET_MAX = 12;
 /** The reference is quantised to at most this many weighted colours for choosing. */
 export const QUANTISED_COLOURS = 256;
-/** Subsets kept per 5-bit bucket, and how many of them (best on the grid first) are refined for each exact colour. */
-export const CANDIDATES = 6, REFINED = 2;
+/** Subsets whose best grid mix is within MARGIN (ΔE00) of the best are candidates, at most CANDIDATES of them; the
+ * REFINED best of those are refined. */
+export const MARGIN = 2, CANDIDATES = 6, REFINED = 2;
 
 export type Recipe = { paints: string[]; weights: number[]; rgb: Rgb; deltaE: number };
 export type WeightedColour = { rgb: Rgb; weight: number };
@@ -99,6 +101,9 @@ export class ColourHistogram {
 
 // --- mixing and the search -------------------------------------------------------------------------------------------------
 
+/** S_L's largest value (at L = 0 or 100). */
+const SL_MAX = lightnessWeight(0);
+
 /** The weight vectors of the grid for n paints: every paint at least 1/GRID, summing to 1. */
 function gridWeights(n: number): number[][] {
   if (n === 1) return [[1]];
@@ -120,13 +125,14 @@ function mixLatents(latents: readonly Latent[], idx: readonly number[], w: reado
 }
 
 /** A subset of a paint list's indices with its grid mixes in CIELAB (target-independent, built once). */
-type Subset = { idx: number[]; weights: number[][]; lab: Float64Array };
+type Subset = { idx: number[]; weights: number[][]; lab: Float64Array; chroma: Float64Array };
 
 class Palette {
   readonly latents: Latent[];
   private subsetCache = new Map<string, Subset>();
   readonly buckets = new Map<number, number[][]>();
   readonly exact = new Map<string, Recipe>();
+  readonly unpruned = new Map<string, Recipe>();
   readonly paints: readonly Paint[];
   readonly paintLabs: Lab[];
   constructor(paints: readonly Paint[]) { this.paints = paints; this.latents = paints.map(p => rgbToLatent(p.rgb)); this.paintLabs = paints.map(p => srgbToLab(p.rgb)); }
@@ -135,9 +141,12 @@ class Palette {
     const key = idx.join(',');
     let s = this.subsetCache.get(key);
     if (!s) {
-      const weights = GRIDS[idx.length - 1]!, lab = new Float64Array(weights.length * 3);
-      weights.forEach((w, g) => { const L = srgbToLab(mixLatents(this.latents, idx, w)); lab[g * 3] = L[0]; lab[g * 3 + 1] = L[1]; lab[g * 3 + 2] = L[2]; });
-      s = { idx, weights, lab };
+      // Sorted by lightness, so bestOnGrid reads only the window its lower bound leaves.
+      const mixes = GRIDS[idx.length - 1]!.map(w => ({ w, L: srgbToLab(mixLatents(this.latents, idx, w)) })).sort((a, b) => a.L[0] - b.L[0]);
+      const weights = mixes.map(m => m.w), lab = new Float64Array(weights.length * 3);
+      mixes.forEach((m, g) => { lab[g * 3] = m.L[0]; lab[g * 3 + 1] = m.L[1]; lab[g * 3 + 2] = m.L[2]; });
+      const chroma = Float64Array.from(mixes, m => Math.sqrt(m.L[1] * m.L[1] + m.L[2] * m.L[2]));
+      s = { idx, weights, lab, chroma };
       this.subsetCache.set(key, s);
     }
     return s;
@@ -150,14 +159,23 @@ class Palette {
   }
 
   /** The best grid point of the subsets given, overall; only mixes closer than `ceiling` count (d stays `ceiling` when none is). */
-  bestOnGrid(t: Lab, subsets: Iterable<number[]>, ceiling = Infinity): { idx: number[]; weights: number[]; d: number } {
+  bestOnGrid(t: Lab, subsets: Iterable<number[]>, ceiling = Infinity, prune = true): { idx: number[]; weights: number[]; d: number } {
     let best = { idx: [] as number[], weights: [] as number[], d: ceiling };
     for (const idx of subsets) {
-      const s = this.subset(idx);
-      for (let g = 0; g < s.weights.length; g++) {
+      const s = this.subset(idx), n = s.weights.length, tC = Math.sqrt(t[1] * t[1] + t[2] * t[2]);
+      // ΔE00 >= |ΔL| / S_L >= |ΔL| / SL_MAX: only mixes with L within best.d * SL_MAX of the target's can win.
+      let g = 0;
+      if (prune && best.d < Infinity) { let lo = 0, hi = n; const from = t[0] - best.d * SL_MAX; while (lo < hi) { const mid = (lo + hi) >> 1; if (s.lab[mid * 3]! < from) lo = mid + 1; else hi = mid; } g = lo; }
+      for (; g < n; g++) {
         const L = s.lab[g * 3]!, dL = L - t[0];
-        if ((dL < 0 ? -dL : dL) >= best.d * lightnessWeight((L + t[0]) / 2)) continue;   // the bound rules it out
-        const d = deltaE00Scalar(t[0], t[1], t[2], L, s.lab[g * 3 + 1]!, s.lab[g * 3 + 2]!);
+        const a = s.lab[g * 3 + 1]!, b = s.lab[g * 3 + 2]!;
+        if (prune) {
+          if (dL > best.d * SL_MAX) break;
+          // deltaE00LowerBound (delta-e.ts): never above ΔE00, so a mix it puts at or past the best cannot win.
+          const l = dL / lightnessWeight((L + t[0]) / 2), da = a - t[1], db = b - t[2], scale = 1 + 0.03375 * (tC + s.chroma[g]!);
+          if (l * l + (CHROMA_HUE_SHARE * (da * da + db * db)) / (scale * scale) >= best.d * best.d) continue;
+        }
+        const d = deltaE00Scalar(t[0], t[1], t[2], L, a, b);
         if (d < best.d) best = { idx, weights: s.weights[g]!, d };
       }
     }
@@ -188,22 +206,28 @@ class Palette {
     return { idx: keep.map(n => idx[n]!), weights: keep.map(n => w[n]! / sum), d };
   }
 
-  /** The CANDIDATES subsets (of 1, 2 or 3 paints, every one considered) whose best grid mix is closest to t. */
-  candidates(t: Lab): number[][] {
-    const n = this.paints.length, top: { idx: number[]; d: number }[] = [];
-    // The CANDIDATES best so far; a subset whose grid cannot beat the last of them is not scored in full.
+  /** The subsets (of 1, 2 or 3 paints, every one considered) whose best grid mix is within MARGIN of the best grid mix
+   * for t, best first (ties by paint indices), at most CANDIDATES. With `prune` (the default) a subset is read only while
+   * it can still come within MARGIN of the best so far, and the subsets in `seed` (likely winners) go first so that bound
+   * is tight early; the result is the same as without, which tests/paint-set.test.ts checks. */
+  candidates(t: Lab, seed: readonly number[][] = [], prune = true): number[][] {
+    const n = this.paints.length, found: { idx: number[]; d: number; key: string }[] = [], done = new Set<string>();
+    let bestD = Infinity;
     const consider = (idx: number[]) => {
-      const ceiling = top.length < CANDIDATES ? Infinity : top[top.length - 1]!.d, d = this.bestOnGrid(t, [idx], ceiling).d;
-      if (d >= ceiling) return;
-      let at = top.findIndex(s => d < s.d);
-      if (at < 0) at = top.length;
-      top.splice(at, 0, { idx, d });
-      if (top.length > CANDIDATES) top.pop();
+      const key = idx.join(',');
+      if (done.has(key)) return;
+      done.add(key);
+      const ceiling = prune ? bestD + MARGIN : Infinity, d = this.bestOnGrid(t, [idx], ceiling, prune).d;
+      if (!(d < ceiling)) return;
+      found.push({ idx, d, key });
+      if (d < bestD) bestD = d;
     };
+    for (const idx of seed) consider(idx);
     for (let i = 0; i < n; i++) consider([i]);
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) consider([i, j]);
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) for (let k = j + 1; k < n; k++) consider([i, j, k]);
-    return top.map(s => s.idx);
+    return found.filter(f => f.d < bestD + MARGIN).sort((a, b) => a.d - b.d || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .slice(0, CANDIDATES).map(f => f.idx);
   }
 
   /** The best of the candidate subsets for t: each on the grid, the REFINED best of those refined. */
@@ -214,23 +238,30 @@ class Palette {
     return best;
   }
 
-  recipe(target: Rgb): Recipe {
+  /** The recipe laid for an 8-bit colour. `prune: false` is the same search without any pruning (for the tests). */
+  recipe(target: Rgb, prune = true): Recipe {
     const r8 = Math.round(target[0] * 255), g8 = Math.round(target[1] * 255), b8 = Math.round(target[2] * 255);
-    const hex = rgbToHex([r8 / 255, g8 / 255, b8 / 255]), known = this.exact.get(hex);
+    const memo = prune ? this.exact : this.unpruned;
+    const hex = rgbToHex([r8 / 255, g8 / 255, b8 / 255]), known = memo.get(hex);
     if (known) return known;
-    // Which paints: memoised per 5-bit bucket, searched at its centre.
-    const key = ((r8 >> 3) << 10) | ((g8 >> 3) << 5) | (b8 >> 3);
-    let subsets = this.buckets.get(key);
-    if (!subsets) {
-      const centre: Rgb = [((r8 >> 3) * 8 + 4) / 255, ((g8 >> 3) * 8 + 4) / 255, ((b8 >> 3) * 8 + 4) / 255];
-      subsets = this.candidates(srgbToLab(centre));
-      this.buckets.set(key, subsets);
-    }
-    // How much of each: the bucket's candidate subsets, for this exact colour.
     const t = srgbToLab([r8 / 255, g8 / 255, b8 / 255]);
+    // Which paints: every subset scored at this exact colour. The best subsets at the centre of its 5-bit bucket
+    // (memoised) are only the seed that makes the pruning bound tight early; they do not change the result.
+    let subsets: number[][];
+    if (prune) {
+      const key = ((r8 >> 3) << 10) | ((g8 >> 3) << 5) | (b8 >> 3);
+      let seed = this.buckets.get(key);
+      if (!seed) {
+        const centre: Rgb = [((r8 >> 3) * 8 + 4) / 255, ((g8 >> 3) * 8 + 4) / 255, ((b8 >> 3) * 8 + 4) / 255];
+        seed = this.candidates(srgbToLab(centre));
+        this.buckets.set(key, seed);
+      }
+      subsets = this.candidates(t, seed);
+    } else subsets = this.candidates(t, [], false);
+    // How much of each: the candidate subsets, for this exact colour.
     let best = this.best(t, subsets);
-    // A paint straight from the tube is laid as itself (not through Mixbox's latent round trip): each candidate paint alone.
-    for (const i of new Set(subsets.flat())) {
+    // A paint straight from the tube is laid as itself (not through Mixbox's latent round trip): each paint alone.
+    for (let i = 0; i < this.paints.length; i++) {
       const P = this.paintLabs[i]!, d = deltaE00Scalar(t[0], t[1], t[2], P[0], P[1], P[2]);
       if (d <= best.d) best = { idx: [i], weights: [1], d };
     }
@@ -238,7 +269,7 @@ class Palette {
     const rgb: Rgb = best.idx.length === 1 ? [...rgbs[0]!] as Rgb : pigmentMixMany(rgbs, best.weights);
     const L = srgbToLab(rgb);
     const recipe: Recipe = { paints: best.idx.map(i => this.paints[i]!.name), weights: best.weights, rgb, deltaE: deltaE00Scalar(t[0], t[1], t[2], L[0], L[1], L[2]) };
-    this.exact.set(hex, recipe);
+    memo.set(hex, recipe);
     return recipe;
   }
 }
@@ -264,6 +295,11 @@ export function checkPaints(names: readonly string[]): void { palette(names); }
 /** The best mix of 1, 2 or 3 of the named paints for the target (components 0-1, read in 8 bits). */
 export function recipeFor(target: Rgb, paints: readonly string[]): Recipe {
   return palette(paints).recipe(target);
+}
+
+/** recipeFor's search with no pruning at all: slow, the reference the tests hold recipeFor to. */
+export function unprunedRecipeFor(target: Rgb, paints: readonly string[]): Recipe {
+  return palette(paints).recipe(target, false);
 }
 
 /** A memoised function from a dab's reference colour ("#rrggbb") to the colour it is laid in, under the strictness. */
@@ -309,9 +345,21 @@ export function choosePaintSet(colours: readonly WeightedColour[], strictness: S
     best.forEach((d, c) => { const w = colours[c]!.weight; if (d > limit) over += w; mean += w * d; });
     return { over: over / total, mean: mean / total };
   };
-  let current = score(bestWith(chosen));
   const size = () => { let k = 0; for (let i = 0; i < n; i++) if (chosen & (1 << i)) k++; return k; };
-  while (size() < Math.min(SET_MAX, n) && (size() < SET_MIN || current.over > 0)) {
+  const names = () => PAINT_NAMES.filter((_, i) => chosen & (1 << i));
+  // Whether the set is enough is judged with the recipes the dabs are laid with (recipeFor, at each colour in 8 bits), not
+  // the grid table the greedy choice ranks by: the share of the colours' weight farther than the limit, and the mean ΔE00.
+  const laid = () => {
+    let over = 0, mean = 0;
+    for (const c of colours) {
+      const d = recipeFor(c.rgb, names()).deltaE;
+      if (d > limit) over += c.weight;
+      mean += c.weight * d;
+    }
+    return { over: over / total, mean: mean / total };
+  };
+  let measured = { over: 1, mean: Infinity };   // measured once the set has SET_MIN paints
+  while (size() < Math.min(SET_MAX, n) && (size() < SET_MIN || measured.over > 0)) {
     let pick = -1, pickScore = { over: Infinity, mean: Infinity };
     for (let i = 0; i < n; i++) {
       if (chosen & (1 << i)) continue;
@@ -319,10 +367,11 @@ export function choosePaintSet(colours: readonly WeightedColour[], strictness: S
       if (s.over < pickScore.over - 1e-12 || (Math.abs(s.over - pickScore.over) <= 1e-12 && s.mean < pickScore.mean)) { pick = i; pickScore = s; }
     }
     if (pick < 0) break;
-    chosen |= 1 << pick; current = pickScore;
+    chosen |= 1 << pick;
+    if (size() >= SET_MIN) measured = laid();
   }
-  return { paints: PAINT_NAMES.filter((_, i) => chosen & (1 << i)), strictness, limit,
-    within_share: round(1 - current.over, 4), mean_delta_e: round(current.mean, 2) };
+  if (size() < SET_MIN) measured = laid();
+  return { paints: names(), strictness, limit, within_share: round(1 - measured.over, 4), mean_delta_e: round(measured.mean, 2) };
 }
 
 // --- a plan in a paint set -------------------------------------------------------------------------------------------------
@@ -332,6 +381,8 @@ export type PaintSetReport = {
   /** Share of dabs whose laid colour is within each ΔE00 band of its reference colour (an unmixed dab is at 0). */
   bands: { at_most_1: number; at_most_2: number; at_most_5: number; at_most_10: number; over_10: number };
   largest_delta_e: number; unmixed: number; changed_share: number;
+  /** The largest ΔE00 between an unmixed dab's reference colour and its nearest mix (0 when none is unmixed). */
+  unmixed_nearest_delta_e_max: number;
 };
 
 const round = (v: number, places: number) => { const k = 10 ** places; return Math.round(v * k) / k; };
@@ -339,12 +390,12 @@ const round = (v: number, places: number) => { const k = 10 ** places; return Ma
 /** Counts laid colours into a report. */
 export class PaintSetTally {
   private counts = [0, 0, 0, 0, 0];
-  private dabs = 0; private unmixed = 0; private changed = 0; private largest = 0;
+  private dabs = 0; private unmixed = 0; private changed = 0; private largest = 0; private unmixedNearest = 0;
   private paints: readonly string[]; private strictness: Strictness;
   constructor(paints: readonly string[], strictness: Strictness) { this.paints = paints; this.strictness = strictness; }
   add(reference: string, laid: Laid, weight = 1): void {
     this.dabs += weight;
-    if (laid.unmixed) this.unmixed += weight;
+    if (laid.unmixed) { this.unmixed += weight; this.unmixedNearest = Math.max(this.unmixedNearest, laid.nearest); }
     if (laid.color !== reference) this.changed += weight;
     const d = laid.deltaE;
     this.largest = Math.max(this.largest, d);
@@ -354,7 +405,8 @@ export class PaintSetTally {
     const share = (k: number) => (this.dabs ? round(this.counts[k]! / this.dabs, 4) : 0);
     return { paints: [...this.paints], strictness: this.strictness, limit: STRICTNESS_LIMITS[this.strictness], dabs: this.dabs,
       bands: { at_most_1: share(0), at_most_2: share(1), at_most_5: share(2), at_most_10: share(3), over_10: share(4) },
-      largest_delta_e: round(this.largest, 2), unmixed: this.unmixed, changed_share: this.dabs ? round(this.changed / this.dabs, 4) : 0 };
+      largest_delta_e: round(this.largest, 2), unmixed: this.unmixed, changed_share: this.dabs ? round(this.changed / this.dabs, 4) : 0,
+      unmixed_nearest_delta_e_max: round(this.unmixedNearest, 2) };
   }
 }
 

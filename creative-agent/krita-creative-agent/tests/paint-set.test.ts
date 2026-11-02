@@ -11,10 +11,11 @@ import { mkdtemp, readFile, rm, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deltaE00, deltaE00Rgb } from '../src/colour-mixing/delta-e.ts';
+import { readFileSync } from 'node:fs';
+import { deltaE00, deltaE00Rgb, deltaE00LowerBound } from '../src/colour-mixing/delta-e.ts';
 import type { Lab } from '../src/colour-mixing/delta-e.ts';
 import { PAINT_LIBRARY, PAINT_NAMES, TITANIUM_WHITE, paintByName } from '../src/colour-mixing/paints.ts';
-import { recipeFor, choosePaintSet, paintSetLayer, paintPlan, STRICTNESS_LIMITS, ColourHistogram } from '../src/colour-mixing/paint-set.ts';
+import { recipeFor, unprunedRecipeFor, choosePaintSet, paintSetLayer, paintPlan, STRICTNESS_LIMITS, ColourHistogram } from '../src/colour-mixing/paint-set.ts';
 import { pigmentMix2, pigmentMixMany } from '../src/colour-mixing/mixbox.ts';
 import { hexToRgb, rgbToHex } from '../src/colour-mixing/mix.ts';
 import type { Rgb } from '../src/colour-mixing/mix.ts';
@@ -62,6 +63,16 @@ test('ΔE00: Sharma’s 34 test pairs within 1e-4, both ways round', () => {
   assert.ok(Math.abs(deltaE00Rgb([0, 0, 0], [1, 1, 1]) - 100) < 0.01, 'black to white is 100');
 });
 
+test('ΔE00 lower bound: never above ΔE00 (20,000 random Lab pairs, near and far)', () => {
+  let a = 12345;
+  const rand = () => { a = (a * 1103515245 + 12345) >>> 0; return a / 4294967296; };
+  for (let i = 0; i < 20000; i++) {
+    const p: Lab = [rand() * 100, rand() * 200 - 100, rand() * 200 - 100];
+    const spread = i % 2 ? 4 : 120, q: Lab = [p[0] + (rand() - 0.5) * spread, p[1] + (rand() - 0.5) * spread, p[2] + (rand() - 0.5) * spread];
+    assert.ok(deltaE00LowerBound(...p, ...q) <= deltaE00(p, q) + 1e-9, `${p} ${q}`);
+  }
+});
+
 // --- recipes ---------------------------------------------------------------------------------------------------------------
 test('the library: Mixbox’s thirteen pigments plus Titanium White and Ivory Black, by user-facing name', () => {
   assert.equal(PAINT_LIBRARY.length, 15);
@@ -92,6 +103,19 @@ test('blue and yellow paints make a green: a two-paint recipe within the exact l
   const mixed = pigmentMixMany(r.paints.map(n => paintByName(n)!.rgb), r.weights);
   assert.deepEqual(r.rgb, mixed);
   assert.ok(Math.abs(deltaE00Rgb(green, r.rgb) - r.deltaE) < 1e-9);
+});
+
+// The p1 exact set (task 7d preview) and 200 of p1's own colours (tests/fixtures/p1-colours.json).
+const P1_EXACT = ['Hansa Yellow', 'Cadmium Orange', 'Cadmium Red', 'Cobalt Violet', 'Ultramarine Blue', 'Phthalo Blue', 'Phthalo Green',
+  'Permanent Green', 'Sap Green', 'Burnt Sienna', TITANIUM_WHITE, 'Ivory Black'];
+test('the laid recipe is never worse than the same search unpruned, on 200 real p1 colours', { timeout: 240000 }, () => {
+  const { colours } = JSON.parse(readFileSync(new URL('./fixtures/p1-colours.json', import.meta.url), 'utf8')) as { colours: string[] };
+  assert.equal(colours.length, 200);
+  for (const hex of colours) {
+    const c = hexToRgb(hex)!, laid = recipeFor(c, P1_EXACT), full = unprunedRecipeFor(c, P1_EXACT);
+    assert.ok(laid.deltaE <= full.deltaE + 1e-9, `${hex}: laid ${laid.deltaE} (${laid.paints}) vs unpruned ${full.deltaE} (${full.paints})`);
+    assert.ok(laid.paints.length >= 1 && laid.paints.length <= 3);
+  }
 });
 
 test('strictness limits are numbers in ΔE00: exact 2, close 5, loose 10', () => {
@@ -151,6 +175,9 @@ test('exact: an unreachable colour (#00ff00 from earth paints) is laid unmixed a
   const { report } = paintPlan(plan, earth, 'exact');
   assert.equal(report.unmixed, 1);
   assert.equal(report.dabs, 2);
+  assert.equal(report.bands.at_most_1, 1, 'bands as laid: the unmixed dab at 0');
+  assert.equal(report.unmixed_nearest_delta_e_max, Math.round(exact.nearest * 100) / 100);
+  assert.ok(report.unmixed_nearest_delta_e_max > STRICTNESS_LIMITS.exact);
   const looseReport = paintPlan(plan, earth, 'loose').report;
   assert.equal(looseReport.unmixed, 0);
   assert.ok(looseReport.largest_delta_e > 10);
@@ -216,7 +243,7 @@ test('a transfer with paints auto: every chunk’s colours come from recipes, th
     assert.ok(set.paints.includes(TITANIUM_WHITE) && set.paints.length >= 8 && set.paints.length <= 12, `${set.paints}`);
     for (const key of ['at_most_1', 'at_most_2', 'at_most_5', 'at_most_10', 'over_10']) assert.equal(typeof set.bands[key], 'number', key);
     assert.ok(Math.abs(Object.values(set.bands as Record<string, number>).reduce((a, b) => a + b, 0) - 1) < 1e-3);
-    for (const key of ['largest_delta_e', 'unmixed', 'changed_share', 'dabs']) assert.equal(typeof set[key], 'number', key);
+    for (const key of ['largest_delta_e', 'unmixed', 'changed_share', 'dabs', 'unmixed_nearest_delta_e_max']) assert.equal(typeof set[key], 'number', key);
     assert.ok(set.changed_share > 0, 'the paint set really changes colours');
     const event = h.events.find(e => e.type === 'transfer_paint_set');
     assert.ok(event && JSON.stringify(event.paints) === JSON.stringify(set.paints));

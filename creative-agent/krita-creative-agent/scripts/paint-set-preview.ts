@@ -84,7 +84,7 @@ async function main() {
   console.log(`strictness ${strictness} (ΔE00 ≤ ${STRICTNESS_LIMITS[strictness]})`);
   console.log(`paints (${paints.length}): ${paints.join(', ')}${values.paints ? '' : ` (chosen from ${PAINT_NAMES.length})`}`);
   console.log(`share per ΔE00 band: ≤1 ${percent(b.at_most_1)} · ≤2 ${percent(b.at_most_2)} · ≤5 ${percent(b.at_most_5)} · ≤10 ${percent(b.at_most_10)} · >10 ${percent(b.over_10)}`);
-  console.log(`largest ΔE00 ${report.largest_delta_e} · unmixed ${Math.round(report.unmixed).toLocaleString('en-US')} (${percent(report.unmixed / (report.dabs || 1))}) · changed ${percent(report.changed_share)}`);
+  console.log(`largest ΔE00 ${report.largest_delta_e} · unmixed ${Math.round(report.unmixed).toLocaleString('en-US')} (${percent(report.unmixed / (report.dabs || 1))}, nearest mix up to ΔE00 ${report.unmixed_nearest_delta_e_max}) · changed ${percent(report.changed_share)}`);
   console.log(`time: read and choose ${seconds(chosenAt - began)}, lay ${seconds(Date.now() - chosenAt)}${values.out ? ` · wrote ${values.out}` : ''}`);
 }
 
