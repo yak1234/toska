@@ -30,6 +30,7 @@ import xml.etree.ElementTree as ET
 from .stroke_data import normalize_stroke, number
 from .brush_controls import control_changes
 from .precision_tools import PrecisionTools
+from . import canvas_settle
 from .creative_tools import CreativeTools
 from .script_steps import one_step
 from .creative_validation import command_error
@@ -694,7 +695,8 @@ class KritaMCPExtension(CreativeTools, PrecisionTools, Extension):
             for x, y, pressure in points[1:]:
                 path.lineTo(QPointF(x, y))
             layer.paintPath(path, "ForegroundColor", "None")
-        doc.refreshProjection()
+        if not canvas_settle.refresh_settled(doc):      # the stroke runs async: wait for it before a whole-image refresh
+            return {"error": canvas_settle.not_settled()}
         return {"status": "ok", "points_count": len(points), "engine": "native",
                 "pressure_mode": "segments" if has_pressure else "preset_path",
                 "layer": layer.name()}
@@ -791,7 +793,8 @@ class KritaMCPExtension(CreativeTools, PrecisionTools, Extension):
         fill_color = params.get("color") or "#ffffff"
         rect = QRectF(x - radius, y - radius, radius * 2, radius * 2)
         layer.paintEllipse(rect, None, fill_color)
-        doc.refreshProjection()
+        if not canvas_settle.refresh_settled(doc):
+            return {"error": canvas_settle.not_settled()}
         return {"status": "ok", "x": x, "y": y, "radius": radius}
 
     def cmd_flood_fill(self, params):
@@ -940,7 +943,8 @@ class KritaMCPExtension(CreativeTools, PrecisionTools, Extension):
         else:
             return {"error": f"Unknown shape '{shape}'. Use rectangle, ellipse, line, polygon."}
 
-        doc.refreshProjection()
+        if not canvas_settle.refresh_settled(doc):
+            return {"error": canvas_settle.not_settled()}
         return {"status": "ok", "shape": shape}
 
     def cmd_clear(self, params):

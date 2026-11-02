@@ -23,6 +23,7 @@ from .filters import FilterCraft
 from .colorize import ColorizeCraft
 from .transform_craft import TransformCraft
 from .canvas_view import CanvasView
+from . import canvas_settle
 from .comic import ComicCraft
 from .merge_craft import MergeCraft
 from .flatten_craft import FlattenCraft
@@ -125,6 +126,10 @@ def merge_pass_record_error(result, error):
     note = 'Pass record could not be saved: ' + str(error)
     return {'status': 'partial', 'error_code': result.get('error_code') or 'partial_change',
             'error': result['error'] + ' (' + note + ')' if result.get('error') else note}
+
+
+class CanvasNotSettled(RuntimeError):
+    """The canvas stayed busy past canvas_settle.SETTLE_SECONDS: the GUI thread stops waiting (nothing is rolled back under a running stroke)."""
 
 
 class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, TransformCraft, CanvasView, ComicCraft, MergeCraft, FlattenCraft, ProtectionCraft, FeatureCraft, NativeCraft, MaterialCraft, ToolCraft, GuideCraft, AccentCraft, FinishCraft, TextureCraft, SnowCraft, EffectCraft, BrushworkCraft, AreaCompare):
@@ -898,7 +903,10 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         finally:
             try:
                 if operation not in STROKE_JOBS or not on_fork():
-                    doc.waitForDone()                      # a write inside the move lands after the call returns (a job has been waited on: never end the artist's strokes)
+                    # a write inside the move lands after the call returns (a job has been waited on: never end the artist's strokes);
+                    # bounded, so a canvas that never settles is an error and not a hung GUI thread (canvas_settle)
+                    if not canvas_settle.settle(doc) and not result.get('error'):
+                        result = dict(result, status='partial', error=canvas_settle.not_settled(), error_code='canvas_not_settled')
                 if self._feature_call_writes(operation, params) and not (operation in STROKE_JOBS and on_fork()):
                     kept_names = self._feature_kept_out(doc)   # read before the move ends; a fork pass has its job's own names
             except RuntimeError:
@@ -1621,21 +1629,28 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                             restored = self.cmd_configure_brush({'properties':previous_erase})
                             if restored.get('error'): raise RuntimeError(restored['error'])
                             view.setEraserMode(True)
-                doc.waitForDone()
+                # Bounded: a stroke whose merge is starved would hold the GUI thread here forever (canvas_settle).
+                if not canvas_settle.settle(doc):
+                    raise CanvasNotSettled(canvas_settle.not_settled())
         except Exception as error:
             result.update(status='partial', error=str(error), error_code='partial_change')
+            busy = isinstance(error, CanvasNotSettled) or not canvas_settle.settle(doc)
+            if busy:
+                # Krita is still painting: removing the layer or refreshing now would queue behind (or under) that stroke.
+                result.update(error=canvas_settle.not_settled(), error_code='canvas_not_settled')
             try:
-                if node is not None:
-                    if not node.remove(): raise RuntimeError('Could not remove unsuccessful contribution')
-                    session['layers'].discard(result['layer_id'])
-                    # The contribution layer no longer exists: never record or reference it.
-                    result.pop('layer_id', None); result.pop('group_id', None)
-                    result['contribution_removed'] = True
-                if source: source.setVisible(result['source_prior']['visible'])
-                doc.refreshProjection(); doc.waitForDone()
-                if self._creative_revision(doc) == revision_before:
-                    result.update(status='rejected', error_code='validation_rejected')
-                    result.pop('layer_id', None)
+                if not busy:
+                    if node is not None:
+                        if not node.remove(): raise RuntimeError('Could not remove unsuccessful contribution')
+                        session['layers'].discard(result['layer_id'])
+                        # The contribution layer no longer exists: never record or reference it.
+                        result.pop('layer_id', None); result.pop('group_id', None)
+                        result['contribution_removed'] = True
+                    if source: source.setVisible(result['source_prior']['visible'])
+                    doc.refreshProjection(); doc.waitForDone()
+                    if self._creative_revision(doc) == revision_before:
+                        result.update(status='rejected', error_code='validation_rejected')
+                        result.pop('layer_id', None)
             except Exception:
                 pass
         finally:
@@ -1643,7 +1658,8 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             view.setEraserMode(eraser)
             if source:
                 result['source_after'] = self._creative_settle(doc, session, source)
-            doc.refreshProjection(); doc.waitForDone()
+            if canvas_settle.settle(doc):
+                doc.refreshProjection(); doc.waitForDone()
         return result
 
     def _creative_unresolved(self, session):

@@ -7,6 +7,7 @@ from .qt_compat import QImage,QPainter,QPainterPath,QColor
 from .geometry_data import bounds,curve,polygon
 from .stroke_data import number
 from .bridge_config import output_dir
+from . import canvas_settle
 
 class PrecisionTools:
     def cmd_duplicate_layer(self,p):
@@ -125,7 +126,8 @@ class PrecisionTools:
         for segment in segments:path.cubicTo(*segment)
         self._apply_brush_state(view,size=size,opacity=opacity,flow=flow,color=color)
         layer.paintPath(path,'ForegroundColor','None')
-        if settle: doc.refreshProjection();doc.waitForDone()
+        # The stroke is still running on Krita's pool: a whole-image refresh queued now can starve its final merge (canvas_settle).
+        if settle and not canvas_settle.refresh_settled(doc): return {'error':canvas_settle.not_settled()}
         return {'status':'ok','rendering':'single_native_path','segments':len(segments),'variable_pressure':False}
 
     def cmd_duplicate_document(self,p):
