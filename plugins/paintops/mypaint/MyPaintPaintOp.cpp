@@ -23,6 +23,8 @@
 #include <kis_paintop_settings.h>
 #include <kis_spacing_information.h>
 #include <libmypaint/mypaint-brush.h>
+#include <KoColorModelStandardIds.h>
+#include <KoColorSpace.h>
 
 #include <cstring>
 
@@ -59,6 +61,18 @@ KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPai
                                           settings->getBool("ToskaMyPaintSampleMerged", false)));
     if (m_fullPainter) {
         m_surface->setBeforeRead([this](const QRect &rect) { copyLayerForStroke(rect); });
+    }
+    if (m_fullPainter && settings->hasProperty("ToskaMyPaintPaintMode")
+        && settings->getDouble("ToskaMyPaintPaintMode") > 0.0) {
+        // the spectral stroke's glaze: the layer is blended towards the full-strength stroke spectrally (on the RGBA
+        // layouts libpaintmix reads; any other colour space keeps the plain lerp)
+        const KoColorSpace *cs = painter->device()->colorSpace();
+        if (cs->colorModelId() == RGBAColorModelID) {
+            const KoID depth = cs->colorDepthId();
+            if (depth == Integer8BitsColorDepthID) m_glazeFormat = KisPaintMix::PixelFormat::Bgra8;
+            else if (depth == Integer16BitsColorDepthID) m_glazeFormat = KisPaintMix::PixelFormat::Bgra16;
+            else if (depth == Float32BitsColorDepthID) m_glazeFormat = KisPaintMix::PixelFormat::RgbaF32;
+        }
     }
     m_surface->setStrokeFlow(settings->hasProperty("ToskaStrokeFlow") ? float(settings->getDouble("ToskaStrokeFlow")) : 1.0f);
 
@@ -176,6 +190,29 @@ void KisMyPaintPaintOp::copyLayerForStroke(const QRect &rect)
     }
 }
 
+void KisMyPaintPaintOp::blendGlazeByTheModel(const QRect &rect)
+{
+    // the colour: the layer as the stroke began mixed with the full-strength stroke by the spectral model at the
+    // opacity (libpaintmix's copy blend, the share copy gives the stroke); the alpha: the copy's, already on the layer
+    KisPaintDeviceSP layer = painter()->device();
+    const int pixelSize = layer->pixelSize();
+    const int count = rect.width() * rect.height();
+    const int bytes = count * pixelSize;
+    if (m_glazeBuffer.size() < 3 * bytes) m_glazeBuffer.resize(3 * bytes);
+    quint8 *start = m_glazeBuffer.data(), *full = start + bytes, *lerped = full + bytes;
+    m_strokeStart->readBytes(start, rect);
+    m_fullStrength->readBytes(full, rect);
+    layer->readBytes(lerped, rect);
+    KisPaintMix::blendPixels(KisPaintMix::Model::Spectral, KisPaintMix::Blend::Copy, *m_glazeFormat, start, full, false,
+                             count, float(m_strokeOpacity));
+    const int alphaOffset = pixelSize - pixelSize / 4; // B,G,R,A or R,G,B,A: alpha is the last channel
+    const int alphaSize = pixelSize / 4;
+    for (int i = 0; i < count; i++) {
+        std::memcpy(start + i * pixelSize + alphaOffset, lerped + i * pixelSize + alphaOffset, alphaSize);
+    }
+    layer->writeBytes(start, rect);
+}
+
 void KisMyPaintPaintOp::compositeStrokeOpacity()
 {
     if (!m_fullPainter) {
@@ -193,6 +230,9 @@ void KisMyPaintPaintOp::compositeStrokeOpacity()
         layer.bitBlt(rect.topLeft(), m_strokeStart, rect);
         layer.setOpacityF(m_strokeOpacity);
         layer.bitBlt(rect.topLeft(), m_fullStrength, rect);
+        if (m_glazeFormat) {
+            blendGlazeByTheModel(rect);
+        }
     }
     painter()->addDirtyRects(rects);
 }

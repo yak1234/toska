@@ -41,6 +41,8 @@ private Q_SLOTS:
     void testEraseOpacityAndFlow();
     void testMyPaintOpacityAndFlow();
     void testMyPaintOpacityCostsTheStrokesArea();
+    void testMyPaintSpectralGlazeMixesByTheModel();
+    void testMyPaintSpectralOpacityCostsAboutRgbs();
     void testCancelReasons();
     void testBrushIsFixedAtTheCall();
     void testUndoBetweenTopUpsUndoesTheJob();

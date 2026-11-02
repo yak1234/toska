@@ -47,6 +47,8 @@
 #include <kis_image.h>
 #include <kis_paint_device.h>
 #include <kis_paint_layer.h>
+#include <kis_painter.h>
+#include <QCryptographicHash>
 #include <kis_group_layer.h>
 #include <kis_simple_stroke_strategy.h>
 #include <kundo2stack.h>
@@ -1123,6 +1125,139 @@ void TestStrokeJobs::testMyPaintOpacityCostsTheStrokesArea()
     QVERIFY(full > 0 && translucent > 0);
     QVERIFY2(translucent <= 1.5 * full + 50,
              qPrintable(QString("opacity 0.6 took %1 ms against %2 ms at opacity 1").arg(translucent).arg(full)));
+}
+
+namespace {
+/// Mean colour of \p rect of \p device, as HSV hue (degrees), saturation (0..1) and the mean alpha (0..255).
+struct MeanColour {
+    double hue, saturation, alpha;
+};
+MeanColour meanColour(KisPaintDeviceSP device, const QRect &rect)
+{
+    const QImage image = device->convertToQImage(nullptr, rect.x(), rect.y(), rect.width(), rect.height());
+    double r = 0, g = 0, b = 0, a = 0;
+    for (int y = 0; y < image.height(); y++) {
+        const QRgb *line = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); x++) {
+            r += qRed(line[x]), g += qGreen(line[x]), b += qBlue(line[x]), a += qAlpha(line[x]);
+        }
+    }
+    const double n = image.width() * image.height();
+    const QColor mean = QColor::fromRgbF(r / n / 255, g / n / 255, b / n / 255);
+    return {mean.hsvHueF() * 360.0, mean.hsvSaturationF(), a / n};
+}
+
+QByteArray deviceBytes(KisPaintDeviceSP device, const QRect &rect)
+{
+    QByteArray bytes(rect.width() * rect.height() * device->pixelSize(), 0);
+    device->readBytes(reinterpret_cast<quint8 *>(bytes.data()), rect);
+    return bytes;
+}
+}
+
+void TestStrokeJobs::testMyPaintSpectralGlazeMixesByTheModel()
+{
+    // A glaze on ONE layer: thin blue over yellow (libpaintmix's golden pair, KisPaintMixTest's blue and yellow). The stroke paints at full strength into its copy and
+    // the layer is blended towards that copy by the opacity; with the spectral model that blend must be spectral too
+    // (green), not a plain lerp of sRGB (slate grey). rgb stays exactly the lerp it was.
+    const QString preset = myPaintPreset("i)_Wet_Paint_Plus_(mypaint)");
+    QVERIFY(!preset.isEmpty());
+    const QRect canvas(0, 0, 300, 120), yellowArea(0, 0, 200, 120), overlap(60, 50, 100, 20), bare(230, 50, 30, 20);
+    struct Result {
+        KisPaintDeviceSP start, painted;
+    };
+    auto paint = [&](bool spectral, double opacity) -> Result {
+        JobDocument d(canvas.width(), canvas.height());
+        d.layer->paintDevice()->fill(yellowArea, KoColor(QColor(252, 211, 0), d.image->colorSpace())); // the yellow
+        KisPaintDeviceSP start = new KisPaintDevice(*d.layer->paintDevice());
+        QVariantMap stroke = line({{30, 60}, {150, 60}, {270, 60}}, 40, "#002185"); // the blue
+        stroke.insert("opacity", opacity);
+        QVariantMap options{{"preset", preset}};
+        if (spectral) options.insert("presetProperties", QVariantMap{{"ToskaMyPaintPaintMode", 1.0}});
+        QScopedPointer<StrokeJob> job(d.paint->paintStrokes({stroke}, options));
+        if (!settle(job.data()) || job->state() == "failed") return {};
+        d.image->waitForDone();
+        return {start, new KisPaintDevice(*d.layer->paintDevice())};
+    };
+    const Result rgbFull = paint(false, 1.0), rgbGlaze = paint(false, 0.35);
+    const Result spectralFull = paint(true, 1.0), spectralGlaze = paint(true, 0.35);
+    for (const Result &r : {rgbFull, rgbGlaze, spectralFull, spectralGlaze}) QVERIFY(r.painted);
+
+    // rgb: bit for bit the layer as the stroke began with the full-strength stroke over it at the opacity (copy)
+    KisPaintDeviceSP lerp = new KisPaintDevice(*rgbGlaze.start);
+    {
+        KisPainter painter(lerp);
+        painter.setCompositeOpId(COMPOSITE_COPY);
+        painter.setOpacityF(0.35);
+        painter.bitBlt(canvas.topLeft(), rgbFull.painted, canvas);
+    }
+    QVERIFY2(deviceBytes(rgbGlaze.painted, canvas) == deviceBytes(lerp, canvas), "rgb glaze is the plain lerp");
+
+    // opacity 1 spectral is untouched by the glaze blend (its bytes as before the change)
+    const QByteArray fullHash = QCryptographicHash::hash(deviceBytes(spectralFull.painted, canvas), QCryptographicHash::Md5).toHex();
+    qInfo() << "spectral opacity 1 md5" << fullHash;
+    QCOMPARE(fullHash, QByteArray("ace52cc3034b24c9e0f6e7ab7fa11013"));
+
+    const MeanColour rgb = meanColour(rgbGlaze.painted, overlap), spectral = meanColour(spectralGlaze.painted, overlap);
+    qInfo() << "blue 0.35 over yellow: rgb hue" << rgb.hue << "saturation" << rgb.saturation
+            << "| spectral hue" << spectral.hue << "saturation" << spectral.saturation;
+    QVERIFY2(spectral.hue >= 75 && spectral.hue <= 165, qPrintable(QString("spectral hue %1").arg(spectral.hue)));
+    QVERIFY2(spectral.saturation > rgb.saturation + 0.05,
+             qPrintable(QString("saturation spectral %1 rgb %2").arg(spectral.saturation).arg(rgb.saturation)));
+
+    // alpha by the current rule: equal to rgb's over the yellow, and the copy lerp of the full stroke's off it
+    QCOMPARE(spectral.alpha, rgb.alpha);
+    const QImage glazeAlpha = spectralGlaze.painted->convertToQImage(nullptr, 0, 0, canvas.width(), canvas.height());
+    KisPaintDeviceSP alphaLerp = new KisPaintDevice(*spectralGlaze.start);
+    {
+        KisPainter painter(alphaLerp);
+        painter.setCompositeOpId(COMPOSITE_COPY);
+        painter.setOpacityF(0.35);
+        painter.bitBlt(canvas.topLeft(), spectralFull.painted, canvas);
+    }
+    const QImage expectedAlpha = alphaLerp->convertToQImage(nullptr, 0, 0, canvas.width(), canvas.height());
+    int alphaDifferences = 0;
+    for (int y = 0; y < canvas.height(); y++) {
+        for (int x = 0; x < canvas.width(); x++) {
+            alphaDifferences += qAlpha(glazeAlpha.pixel(x, y)) != qAlpha(expectedAlpha.pixel(x, y)) ? 1 : 0;
+        }
+    }
+    QCOMPARE(alphaDifferences, 0);
+    QVERIFY2(meanColour(spectralGlaze.painted, bare).alpha > 10, "the stroke off the yellow is painted");
+}
+
+void TestStrokeJobs::testMyPaintSpectralOpacityCostsAboutRgbs()
+{
+    // The spectral glaze blend costs the stroke's changed area like rgb's: at most about twice rgb opacity's time on
+    // the same dabs (testMyPaintOpacityCostsTheStrokesArea's 2000 dabs on 6000x4500).
+    const QString preset = myPaintPreset("i)_Wet_Paint_Plus_(mypaint)");
+    QVERIFY(!preset.isEmpty());
+    auto paintDabs = [&](bool spectral, double opacity, int count) {
+        JobDocument d(6000, 4500);
+        d.layer->paintDevice()->fill(d.image->bounds(), KoColor(QColor(254, 236, 0), d.image->colorSpace()));
+        QVariantList strokes;
+        for (int i = 0; i < count; i++) {
+            const double x = 100 + (i % 50) * 115, y = 100 + (i / 50) * 105;
+            QVariantMap dab = line({{x, y}, {x + 6, y + 2}}, 20, i % 2 ? "#1e3ce6" : "#e6c81e");
+            dab.insert("opacity", opacity);
+            strokes << dab;
+        }
+        QVariantMap options{{"preset", preset}};
+        if (spectral) options.insert("presetProperties", QVariantMap{{"ToskaMyPaintPaintMode", 1.0}});
+        QElapsedTimer clock;
+        clock.start();
+        QScopedPointer<StrokeJob> job(d.paint->paintStrokes(strokes, options));
+        const bool settled = settle(job.data(), 120000) && job->state() != "failed";
+        return settled ? clock.elapsed() : qint64(-1);
+    };
+    paintDabs(true, 0.6, 50); // warm-up
+    const qint64 spectralFull = paintDabs(true, 1.0, 2000), rgbGlaze = paintDabs(false, 0.6, 2000),
+                 spectralGlaze = paintDabs(true, 0.6, 2000);
+    qInfo() << "2000 MyPaint dabs on 6000x4500: spectral opacity 1" << spectralFull << "ms, rgb opacity 0.6" << rgbGlaze
+            << "ms, spectral opacity 0.6" << spectralGlaze << "ms";
+    QVERIFY(spectralFull > 0 && rgbGlaze > 0 && spectralGlaze > 0);
+    QVERIFY2(spectralGlaze <= 2 * rgbGlaze + 50,
+             qPrintable(QString("spectral opacity 0.6 took %1 ms against rgb's %2 ms").arg(spectralGlaze).arg(rgbGlaze)));
 }
 
 void TestStrokeJobs::testOffGuiThreadRefusedAndALoneStartDabs()

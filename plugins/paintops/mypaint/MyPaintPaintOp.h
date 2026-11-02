@@ -8,6 +8,9 @@
 #define KIS_MY_PAINTOP_H_
 
 #include <QSet>
+#include <QVector>
+#include <optional>
+#include <KisPaintMix.h>
 #include <QPoint>
 #include <kis_types.h>
 #include <brushengine/kis_paintop.h>
@@ -68,6 +71,7 @@ private:
     void strokeTo(const KisPaintInformation &info, double dtime);
     void compositeStrokeOpacity();
     void copyLayerForStroke(const QRect &rect);
+    void blendGlazeByTheModel(const QRect &rect);
 
 private:
     QScopedPointer<KisMyPaintPaintOpPreset> m_brush;
@@ -91,6 +95,13 @@ private:
     KisPaintDeviceSP m_fullStrength;
     QSet<QPoint> m_copiedTiles;
     QScopedPointer<KisPainter> m_fullPainter;
+    /**
+     * Toska: set when the stroke mixes spectrally (ToskaMyPaintPaintMode > 0) on an RGBA layer: the opacity blend
+     * of m_fullStrength onto the layer mixes the colour by the spectral model (libpaintmix's blendPixels, copy) with
+     * the opacity as the weight, and keeps the copy's alpha. Without it the blend is Krita's copy, a plain lerp.
+     */
+    std::optional<KisPaintMix::PixelFormat> m_glazeFormat;
+    QVector<quint8> m_glazeBuffer;
 };
 
 #endif // KIS_MY_PAINTOP_H_
