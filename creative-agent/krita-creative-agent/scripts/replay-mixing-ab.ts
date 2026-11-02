@@ -18,8 +18,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { contourCommands } from '../src/contour-tool.mjs';
-import { generateStrokes } from '../src/stroke-generator.mjs';
+// The companion's .mjs modules carry no types for the strict config (allowJs off): typed here by what the replay uses.
+type Canvas = { width: number; height: number };
+const { contourCommands } = await import('../src/contour-tool.mjs' as string) as { contourCommands: (args: unknown, canvas: Canvas) => Json };
+const { generateStrokes } = await import('../src/stroke-generator.mjs' as string) as { generateStrokes: (recipe: unknown, canvas: Canvas) => unknown };
 import { passMixing, presetMixing, type MixingCatalog } from '../src/colour-mixing/pass-mixing.ts';
 
 export type Arm = 'A' | 'B';
