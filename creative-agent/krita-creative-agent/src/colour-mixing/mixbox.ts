@@ -1,12 +1,14 @@
+// SPDX-FileCopyrightText: 2022 Secret Weapons (Sarka Sochorova and Ondrej Jamriska)
 // SPDX-FileCopyrightText: 2026 Yakub Rabiutheen <yakub.rabiutheen@gmail.com>
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: CC-BY-NC-4.0
 // The pigment model: Mixbox 2.0 (Sochorova and Jamriska, "Practical Pigment Mixing for Digital Painting", SIGGRAPH Asia
 // 2021), the companion's copy of plugins/paintops/libpaintmix/KisPaintMixMixbox.cpp. A colour maps to the concentrations
 // of four primary pigments plus a residual; paints mix as a weighted sum in that latent space, and the pigment polynomial
 // maps back. rgbToLatent and latentToRgb follow unpackedFloatRgbToLatent and latentToFloatRgb in Mixbox's
 // javascript/mixbox.esm.js (github.com/scrtwpns/mixbox, commit a1bdb75a), in the same order, and every step goes through
 // Math.fround as the C++ computes in 32-bit floats. The table and its decoder are in mixbox-data.ts, with Mixbox's
-// licence (CC BY-NC 4.0); the polynomial's coefficients below are Mixbox's, in the published order.
+// licence (CC BY-NC 4.0); the polynomial's coefficients below are Mixbox's, in the published order, so this file is under
+// Mixbox's licence too (CC BY-NC 4.0; source, commit, licence text and original notice in mixbox-data.ts's header).
 import { decompressMixboxLut } from './mixbox-data.ts';
 import type { Rgb } from './mix.ts';
 

@@ -1,14 +1,16 @@
 /*
+ *  SPDX-FileCopyrightText: 2022 Secret Weapons (Sarka Sochorova and Ondrej Jamriska)
  *  SPDX-FileCopyrightText: 2026 Yakub Rabiutheen <yakub.rabiutheen@gmail.com>
  *
- *  SPDX-License-Identifier: GPL-2.0-or-later
+ *  SPDX-License-Identifier: CC-BY-NC-4.0
  */
 // The pigment model: Mixbox 2.0 (Sochorova and Jamriska, "Practical Pigment Mixing for Digital Painting", SIGGRAPH Asia
 // 2021). A colour maps to the concentrations of four primary pigments plus a residual; paints mix as a weighted sum in
 // that latent space, and the pigment polynomial maps back. rgbToLatent and latentToRgb follow float_rgb_to_latent and
 // latent_to_float_rgb in Mixbox's cpp/mixbox.cpp (github.com/scrtwpns/mixbox, commit a1bdb75a), step for step and in
 // the same order, so the results are the published ones. The table, its decoder and the polynomial's coefficients are
-// in KisPaintMixMixboxData.cpp, with Mixbox's licence (CC BY-NC 4.0).
+// in KisPaintMixMixboxData.cpp. A port of Mixbox's code, so under Mixbox's licence (CC BY-NC 4.0); the source, commit,
+// licence text and original notice are recorded in KisPaintMixMixboxData.cpp's header.
 #include "KisPaintMix.h"
 
 namespace KisPaintMix {
