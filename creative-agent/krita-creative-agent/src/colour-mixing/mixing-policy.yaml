@@ -13,4 +13,6 @@ kinds:
   element: spectral      # painting an element over the underpainting
   details: rgb           # small crisp marks
   accents: rgb           # highlights and edges must not pick up the colour beneath
+  reference_transfer: spectral   # paint_from_reference's dabs blend with the wet paint beneath (each dab's colour is
+                                 # solved so the mix stays on the reference); only with a carded preset
 default: rgb

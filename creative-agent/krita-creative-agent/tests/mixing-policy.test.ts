@@ -20,7 +20,7 @@ test('the shipped YAML loads, every kind mapping as the file says', () => {
   assert.equal(policy.version, 1);
   assert.equal(policy.default, 'rgb');
   assert.deepEqual(policy.kinds, { underpainting: 'rgb', block_in: 'rgb', finish: 'spectral', refine: 'spectral', blend: 'spectral',
-    glaze: 'spectral', atmosphere: 'spectral', element: 'spectral', details: 'rgb', accents: 'rgb' });
+    glaze: 'spectral', atmosphere: 'spectral', element: 'spectral', details: 'rgb', accents: 'rgb', reference_transfer: 'spectral' });
   assert.deepEqual(Object.keys(policy.kinds).sort(), [...PASS_KINDS].sort());
   assert.deepEqual(SHIPPED_POLICY, policy, 'the bundled file is what the companion reads');
   assert.deepEqual(loadMixingPolicy(), policy, 'no text: the bundled file');
@@ -79,8 +79,8 @@ test('an invalid policy is an error naming the field, and the companion falls ba
 
 test('the pass kind derivation table: tool, then plan step kind, then the preset job', () => {
   const cases: [{ tool?: string; step?: string | null; preset?: string }, PassKind][] = [
-    [{ tool: 'paint_from_reference', preset: WET }, 'underpainting'],
-    [{ tool: 'continue_reference_painting', step: 'refine', preset: WET }, 'underpainting'],
+    [{ tool: 'paint_from_reference', preset: WET }, 'reference_transfer'],
+    [{ tool: 'continue_reference_painting', step: 'refine', preset: WET }, 'reference_transfer'],
     [{ tool: 'paint_reference_surface', preset: 'k) Blender Smear' }, 'blend'],
     [{ tool: 'paint_reference_edges', preset: 'd) Ink-3 Gpen' }, 'details'],
     [{ tool: 'paint_finish' }, 'finish'],
@@ -108,7 +108,9 @@ test('the pass kind derivation table: tool, then plan step kind, then the preset
   for (const [input, kind] of cases) assert.equal(derivePassKind(input, RAW), kind, JSON.stringify(input));
   // The two cases the brief names end to end: Wet Paint Plus in a refine step mixes spectral, in an underpainting rgb.
   assert.equal(policyModel(policy, derivePassKind({ tool: 'paint_pass', step: 'refine', preset: WET }, RAW), WET, RAW), 'spectral');
-  assert.equal(policyModel(policy, derivePassKind({ tool: 'paint_from_reference', preset: WET }, RAW), WET, RAW), 'rgb');
+  // The reference transfer mixes (amendment 2026-11-01 (2)), but only with a carded preset: the default Bristles keep rgb.
+  assert.equal(policyModel(policy, derivePassKind({ tool: 'paint_from_reference', preset: WET }, RAW), WET, RAW), 'spectral');
+  assert.equal(policyModel(policy, derivePassKind({ tool: 'paint_from_reference', preset: 'f) Bristles-2 Flat Rough' }, RAW), 'f) Bristles-2 Flat Rough', RAW), 'rgb');
   assert.equal(policyModel(policy, derivePassKind({ tool: 'paint_pass', step: 'underpainting', preset: WET }, RAW), WET, RAW), 'rgb');
 });
 
@@ -159,9 +161,13 @@ test('the painting tools apply the shipped policy: a paint_pass in a refine step
   assert.ok(batched.every(p => !('pass_kind' in p)));
 });
 
-test('reference transfer jobs carry their kind: a transfer underpaints, surface blends, edges are details', () => {
-  assert.equal(referencePassKind(undefined), 'underpainting');
+test('reference transfer jobs carry their kind: a transfer is reference_transfer, surface blends, edges are details', () => {
+  assert.equal(referencePassKind(undefined), 'reference_transfer');
   assert.equal(referencePassKind('surface'), 'blend');
   assert.equal(referencePassKind('edges'), 'details');
-  assert.equal(policyModel(policy, referencePassKind(undefined), WET, RAW), 'rgb', 'Wet Paint Plus in the underpainting transfer: rgb');
+  assert.equal(policyModel(policy, referencePassKind(undefined), WET, RAW), 'spectral', 'Wet Paint Plus in the transfer: spectral (it has a card)');
+  assert.equal(policyModel(policy, referencePassKind(undefined), 'f) Bristles-2 Flat Rough', RAW), 'rgb', 'a transfer brush without a card: rgb');
+  assert.equal(policyModel(policy, referencePassKind(undefined), WET, effectiveCatalog(RAW, { TOSKA_MIXING: 'off' })), 'rgb', 'TOSKA_MIXING=off: rgb');
+  assert.equal(policy.kinds.underpainting, 'rgb', 'underpainting and block_in stay rgb');
+  assert.equal(policy.kinds.block_in, 'rgb');
 });

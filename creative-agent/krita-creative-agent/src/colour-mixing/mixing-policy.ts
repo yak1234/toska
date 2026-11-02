@@ -11,9 +11,10 @@
 //
 //   source                                   | kind
 //   -----------------------------------------|---------------------------------------------------------------
-//   tool paint_from_reference                | underpainting   (the transfer is block-in, whatever the step)
-//   tool continue_reference_painting         | underpainting   (reference-tool.mjs sends the job's own kind:
-//   tool paint_reference_surface             | blend            surface → blend, edges → details, else underpainting)
+//   tool paint_from_reference                | reference_transfer (the dab transfer, whatever the step; amendment
+//   tool continue_reference_painting         | reference_transfer  2026-11-01 (2). reference-tool.mjs sends the job's
+//   tool paint_reference_surface             | blend            own kind: surface → blend, edges → details, else
+//                                            |                  reference_transfer)
 //   tool paint_reference_edges               | details
 //   tool paint_finish                        | finish          (plugin pixel operations, no brush preset:
 //   tool refine_to_goal                      | refine           the policy has nothing to apply there; listed so
@@ -35,8 +36,8 @@ import type { MixModel } from './mix.ts';
 import { passMixing } from './pass-mixing.ts';
 import type { MixingCatalog } from './pass-mixing.ts';
 
-export type PassKind = 'underpainting' | 'block_in' | 'finish' | 'refine' | 'blend' | 'glaze' | 'atmosphere' | 'element' | 'details' | 'accents';
-export const PASS_KINDS: readonly PassKind[] = ['underpainting', 'block_in', 'finish', 'refine', 'blend', 'glaze', 'atmosphere', 'element', 'details', 'accents'];
+export type PassKind = 'underpainting' | 'block_in' | 'finish' | 'refine' | 'blend' | 'glaze' | 'atmosphere' | 'element' | 'details' | 'accents' | 'reference_transfer';
+export const PASS_KINDS: readonly PassKind[] = ['underpainting', 'block_in', 'finish', 'refine', 'blend', 'glaze', 'atmosphere', 'element', 'details', 'accents', 'reference_transfer'];
 /** Model ids, verbatim everywhere (global constraints); pigment is accepted ahead of its card and mixes rgb until it has one. */
 export type PolicyModel = MixModel | 'pigment';
 export const POLICY_MODELS: readonly PolicyModel[] = ['rgb', 'linear', 'perceptual', 'spectral', 'pigment'];
@@ -96,7 +97,7 @@ export function policyModel(policy: MixingPolicy, kind: PassKind | undefined, pr
 }
 
 const TOOL_KINDS: Readonly<Record<string, PassKind>> = Object.freeze({
-  paint_from_reference: 'underpainting', continue_reference_painting: 'underpainting', paint_reference_surface: 'blend',
+  paint_from_reference: 'reference_transfer', continue_reference_painting: 'reference_transfer', paint_reference_surface: 'blend',
   paint_reference_edges: 'details', paint_finish: 'finish', refine_to_goal: 'refine', paint_accents: 'accents',
 });
 const STEP_KINDS: Readonly<Record<string, PassKind>> = Object.freeze({
@@ -107,9 +108,10 @@ const JOB_KINDS: readonly [RegExp, PassKind][] = [
   [/^small details/i, 'details'], [/^crisp edges/i, 'details'],
 ];
 
-/** The kind of a reference transfer job by its recipe mode (reference-tool.mjs): surface blends, edges are details. */
+/** The kind of a reference transfer job by its recipe mode (reference-tool.mjs): surface blends, edges are details, the dab
+ * transfer is reference_transfer (its own kind, so underpainting and block_in stay rgb while the transfer may mix). */
 export function referencePassKind(mode: unknown): PassKind {
-  return mode === 'surface' ? 'blend' : mode === 'edges' ? 'details' : 'underpainting';
+  return mode === 'surface' ? 'blend' : mode === 'edges' ? 'details' : 'reference_transfer';
 }
 
 /** The pass kind from what the host knows: the tool, the plan step's kind (project-folder.ts FolderStepKind), the preset's

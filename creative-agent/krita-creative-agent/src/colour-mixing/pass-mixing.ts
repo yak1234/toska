@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The catalog gate for colour mixing (colour-mixing plan, task 6). A mixing model reaches the painter, and a (preset, model)
 // pair reaches the plugin, only when brush-catalog.json `mixing` holds a measured card for it:
-//   mixing.models[model] = card string; mixing.presets[preset] = { cards: { [model]: card }, default?: model }.
+//   mixing.models[model] = card string; mixing.presets[preset] = { cards: { [model]: card }, default?: model, coverage?: share }.
+// coverage is the preset's measured paint share in a mix (the brush colour's weight over the paint beneath, task 7: Wet Paint
+// Plus about 0.91), which the reference transfer's pigment-aware colour choice solves with (transfer-colours.ts).
 // rgb is the upstream behaviour and always allowed: it sends nothing. With a mixing policy (mixing-policy.ts, task 6a) a pass
 // that names no model gets the policy's model for its kind; without one (older callers) the preset's default applies.
 // Mechanism only: the catalog and policy come in as arguments, so this module imports no .mjs (and only types from the policy).
@@ -10,7 +12,7 @@ import type { MixModel } from './mix.ts';
 import { MIX_MODELS } from './mix.ts';
 import type { MixingPolicy, PassKind } from './mixing-policy.ts';
 
-export type PresetMixing = { cards?: Partial<Record<MixModel, string>>; default?: MixModel };
+export type PresetMixing = { cards?: Partial<Record<MixModel, string>>; default?: MixModel; coverage?: number };
 export type MixingCatalog = { mixing?: { models?: Partial<Record<MixModel, string>>; presets?: Record<string, PresetMixing> }; jobs?: Record<string, readonly string[]> };
 
 const isModel = (name: string): name is MixModel => (MIX_MODELS as readonly string[]).includes(name);
@@ -30,6 +32,12 @@ export function presetMixing(name: string, catalog: MixingCatalog): { cards: Par
   for (const model of measured) if (entry.cards?.[model]) cards[model] = entry.cards[model]!;
   if (!Object.keys(cards).length) return null;
   return { cards, ...(entry.default && cards[entry.default] ? { default: entry.default } : {}) };
+}
+
+/** The preset's measured paint share (0 < coverage <= 1), or null when it has no measured card or no coverage. */
+export function presetCoverage(name: string, catalog: MixingCatalog): number | null {
+  const coverage = catalog.mixing?.presets?.[name]?.coverage;
+  return presetMixing(name, catalog) && typeof coverage === 'number' && coverage > 0 && coverage <= 1 ? coverage : null;
 }
 
 /** Every measured pair, as "preset: model, model; preset: ...". */

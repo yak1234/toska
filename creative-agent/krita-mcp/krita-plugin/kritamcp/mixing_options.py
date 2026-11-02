@@ -11,16 +11,19 @@ MYPAINT = 'mypaintbrush'
 BLENDING_PRESET = re.compile(r'blend|smudg', re.I)
 
 
-def mixing_properties(paintop_id, preset_name, mixing_model, new_layer, smudge_overlay):
+def mixing_properties(paintop_id, preset_name, mixing_model, new_layer, smudge_overlay, continued=False):
     """The preset properties a pass adds to its job's copy of the preset. Empty when nothing is asked and nothing samples
-    below. Explicit smudge_overlay is applied by the caller on top, so it and smudge_rate keep winning."""
+    below. Explicit smudge_overlay is applied by the caller on top, so it and smudge_rate keep winning. `continued`: the pass
+    continues a layer an earlier chunk of its own job made (a reference transfer's pass layer), which holds only that
+    job's dabs, so a MyPaint pass that mixes keeps sampling the paint below as the first chunk did (task 7b); Color Smudge
+    continuations are left as they were."""
     if mixing_model is not None and mixing_model not in MODELS:
         raise ValueError('mixing_model must be one of ' + ', '.join(MODELS))
     properties = {}
     if mixing_model is not None and paintop_id == MYPAINT:
         if mixing_model == 'spectral':
             properties['ToskaMyPaintPaintMode'] = 1.0
-            if new_layer:
+            if new_layer or continued:
                 properties['ToskaMyPaintSampleMerged'] = True
         elif mixing_model != 'rgb':
             raise ValueError('MyPaint presets mix by rgb or spectral')

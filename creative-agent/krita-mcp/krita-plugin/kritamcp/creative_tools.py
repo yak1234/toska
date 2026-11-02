@@ -2042,7 +2042,8 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                 if model is not None:
                     raise
                 paintop = None                                               # an unreadable preset is painted as before
-            properties = mixing_properties(paintop, params['preset'], model, new_layer, bool(params.get('smudge_overlay')))
+            properties = mixing_properties(paintop, params['preset'], model, new_layer, bool(params.get('smudge_overlay')),
+                                           continued=bool(params.get('continue_layer_id')))
         if params.get('smudge_overlay'):
             # Overlay mode on the job's own copy of the saved preset; the view's preset is never touched.
             properties.update({'MergedPaint': True},

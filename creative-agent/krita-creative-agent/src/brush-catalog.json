@@ -184,8 +184,8 @@
  "mixing": {
   "models": {"spectral": "MyPaint presets only, measured in Toska 2026-11-01: mixes like paint, so blue and yellow make yellow-green where rgb makes ochre; the brush colour covers more than with rgb (about half as much of the paint beneath shows)"},
   "presets": {
-   "i) Wet Paint Plus (mypaint)": {"cards": {"spectral": "yellow over blue paints yellow-green, orange over blue a deep brown, greenish where the stroke starts on dark paint; covers more than rgb"}},
-   "i) Wet Knife Plus (mypaint)": {"cards": {"spectral": "crisp opaque band that mixes like paint: yellow over blue a light yellow-green; covers more than rgb, the least of the paint beneath shows"}}
+   "i) Wet Paint Plus (mypaint)": {"cards": {"spectral": "yellow over blue paints yellow-green, orange over blue a deep brown, greenish where the stroke starts on dark paint; covers more than rgb"}, "coverage": 0.91},
+   "i) Wet Knife Plus (mypaint)": {"cards": {"spectral": "crisp opaque band that mixes like paint: yellow over blue a light yellow-green; covers more than rgb, the least of the paint beneath shows"}, "coverage": 0.955}
   }
  }
 }

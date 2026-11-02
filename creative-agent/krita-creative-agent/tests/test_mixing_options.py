@@ -40,6 +40,18 @@ class MixingOptionsTests(unittest.TestCase):
         self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'rgb', True, False), {})
         self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', None, True, False), {})
 
+    def test_mypaint_spectral_continuation_of_its_own_layer_still_samples_merged(self):
+        # A reference transfer paints one layer per pass in chunks: a continuation's layer holds only the job's earlier
+        # dabs, so every chunk reads the paint below, as the first did (task 7b).
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'spectral', False, False, continued=True),
+                         {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True})
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', None, False, False, continued=True), {})
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'rgb', False, False, continued=True), {})
+        # Color Smudge continuations are left as they were.
+        self.assertEqual(mixing.mixing_properties(SMUDGE, 'k) Blender Basic', None, False, False, continued=True), {})
+        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', 'spectral', False, False, continued=True),
+                         {'ToskaMixingModel': 'spectral'})
+
     def test_mypaint_refuses_pigment(self):
         for model in ('pigment', 'linear', 'perceptual'):
             with self.assertRaisesRegex(ValueError, 'MyPaint presets mix by rgb or spectral'):

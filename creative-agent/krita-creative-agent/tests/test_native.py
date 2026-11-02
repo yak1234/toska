@@ -1090,6 +1090,18 @@ class ForkStrokeJobTests(unittest.TestCase):
         self.assertEqual(self._pass(h, 2)['status'], 'ok')
         self.assertNotIn('presetProperties', h.job_calls[0][1])
 
+    def test_a_mypaint_spectral_transfer_samples_merged_on_every_chunk(self):
+        # paint_from_reference with mixing (task 7b): the first chunk makes the pass layer, the rest continue it; every
+        # chunk's job gets the MyPaint properties, sample-merged included.
+        h = self.harness(); h._creative_preset_paintop = lambda name: 'mypaintbrush'
+        expected = {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True}
+        first = self._pass(h, 2, mixing_model='spectral')
+        self.assertEqual(first['status'], 'ok', first.get('error'))
+        later = self._pass(h, 2, operation_id='op-2', mixing_model='spectral',
+                           continue_layer_id=first['layer_id'])
+        self.assertEqual(later['status'], 'ok', later.get('error'))
+        self.assertEqual([call[1].get('presetProperties') for call in h.job_calls], [expected, expected])
+
     def test_a_continuation_paints_the_earlier_layer_without_activating_it(self):
         h = self.harness()
         self.assertEqual(self._pass(h, 2)['status'], 'ok')
