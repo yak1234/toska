@@ -129,6 +129,7 @@ test('a transfer with mixing spectral and Wet Paint Plus: every chunk carries sp
     assert.ok(h.calls.some(c => c.params.continue_layer_id), 'continuations too');
     for (const c of h.calls) {
       assert.equal(c.params.mixing_model, 'spectral', 'every chunk');
+      assert.equal(c.params.sample_below, true, 'the mixing dab transfer asks to read the paint below, every chunk');
       assert.ok(!('mixing' in c.params) && !('pass_kind' in c.params), 'the plugin never sees mixing or pass_kind');
     }
     const plan = planned(WET), sent = sentStrokes(h.calls), wanted = plan.passes.flatMap((p: any) => p.strokes);

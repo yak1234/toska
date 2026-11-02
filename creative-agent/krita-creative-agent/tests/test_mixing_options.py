@@ -16,41 +16,50 @@ SMUDGE, MYPAINT = 'colorsmudge', 'mypaintbrush'
 
 
 class MixingOptionsTests(unittest.TestCase):
-    def test_blender_on_new_layer_samples_below(self):
-        self.assertEqual(mixing.mixing_properties(SMUDGE, 'k) Blender Basic', None, True, False), {'MergedPaint': True})
+    """Sampling the layers below is its own choice (sample_below), never a consequence of the mixing model."""
+    def test_nothing_samples_below_unless_asked(self):
+        for paintop, preset in ((SMUDGE, 'k) Blender Basic'), (SMUDGE, 'i) Wet Bristles'), (MYPAINT, 'Ramon')):
+            for model in (None, 'rgb', 'spectral') if paintop == MYPAINT else (None, 'rgb', 'spectral', 'pigment'):
+                for new_layer in (True, False):
+                    props = mixing.mixing_properties(paintop, preset, model, new_layer, False)
+                    self.assertNotIn('MergedPaint', props, (paintop, preset, model, new_layer))
+                    self.assertNotIn('ToskaMyPaintSampleMerged', props, (paintop, preset, model, new_layer))
 
-    def test_continued_layer_is_left_alone(self):
-        self.assertEqual(mixing.mixing_properties(SMUDGE, 'k) Blender Basic', None, False, False), {})
-
-    def test_colour_laying_smudge_preset_unchanged_without_model(self):
-        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', None, True, False), {})
-
-    def test_model_on_smudge_is_passed_and_samples_below(self):
-        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', 'spectral', True, False),
-                         {'ToskaMixingModel': 'spectral', 'MergedPaint': True})
-        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', 'rgb', True, False), {'ToskaMixingModel': 'rgb'})
-
-    def test_explicit_overlay_is_not_second_guessed(self):
-        self.assertNotIn('MergedPaint', mixing.mixing_properties(SMUDGE, 'k) Blender Basic', None, True, True))
-
-    def test_mypaint_spectral_sets_paint_mode_and_samples_merged(self):
-        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'spectral', True, False),
-                         {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True})
-        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'spectral', False, False), {'ToskaMyPaintPaintMode': 1.0})
+    def test_spectral_mypaint_on_a_new_layer_only_changes_the_paint_mode(self):
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'spectral', True, False), {'ToskaMyPaintPaintMode': 1.0})
         self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'rgb', True, False), {})
         self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', None, True, False), {})
 
-    def test_mypaint_spectral_continuation_of_its_own_layer_still_samples_merged(self):
-        # A reference transfer paints one layer per pass in chunks: a continuation's layer holds only the job's earlier
-        # dabs, so every chunk reads the paint below, as the first did (task 7b).
-        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'spectral', False, False, continued=True),
+    def test_sample_below_samples_merged_for_rgb_and_spectral_alike(self):
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'rgb', True, False, sample_below=True),
+                         {'ToskaMyPaintSampleMerged': True})
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', None, True, False, sample_below=True),
+                         {'ToskaMyPaintSampleMerged': True})
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'spectral', True, False, sample_below=True),
                          {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True})
-        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', None, False, False, continued=True), {})
-        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'rgb', False, False, continued=True), {})
-        # Color Smudge continuations are left as they were.
-        self.assertEqual(mixing.mixing_properties(SMUDGE, 'k) Blender Basic', None, False, False, continued=True), {})
-        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', 'spectral', False, False, continued=True),
-                         {'ToskaMixingModel': 'spectral'})
+
+    def test_sample_below_on_a_continued_layer_samples_too(self):
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'spectral', False, False, continued=True, sample_below=True),
+                         {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True})
+        self.assertEqual(mixing.mixing_properties(MYPAINT, 'Ramon', 'spectral', False, False, continued=True),
+                         {'ToskaMyPaintPaintMode': 1.0})
+
+    def test_colour_smudge_model_is_passed_and_sampling_follows_sample_below_only(self):
+        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', 'spectral', True, False), {'ToskaMixingModel': 'spectral'})
+        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', 'rgb', True, False), {'ToskaMixingModel': 'rgb'})
+        self.assertEqual(mixing.mixing_properties(SMUDGE, 'k) Blender Basic', None, True, False, sample_below=True), {'MergedPaint': True})
+        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', 'spectral', True, False, sample_below=True),
+                         {'ToskaMixingModel': 'spectral', 'MergedPaint': True})
+        self.assertEqual(mixing.mixing_properties(SMUDGE, 'i) Wet Bristles', 'rgb', True, False, sample_below=True),
+                         {'ToskaMixingModel': 'rgb', 'MergedPaint': True})
+
+    def test_explicit_overlay_is_not_second_guessed(self):
+        self.assertNotIn('MergedPaint', mixing.mixing_properties(SMUDGE, 'k) Blender Basic', None, True, True, sample_below=True))
+
+    def test_sample_below_must_be_boolean(self):
+        params = {'name': 'Sky', 'preset': 'b) Basic-1', 'sample_below': 'yes', 'strokes': []}
+        with self.assertRaisesRegex(ValueError, 'sample_below must be boolean'):
+            validation.validate_pass(params, 100, 100, {'b) Basic-1'})
 
     def test_mypaint_refuses_pigment(self):
         for model in ('pigment', 'linear', 'perceptual'):

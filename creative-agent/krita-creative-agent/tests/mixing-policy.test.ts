@@ -231,8 +231,26 @@ test('withMixing reports its decision in the result details: stated details and 
   step = null;
   const derived = await pass.execute('m', { name: 'M', preset: KNIFE, strokes: [] });
   assert.deepEqual(seen.map(a => a.mixing_model), [undefined, undefined, 'spectral']);
-  const strip = (d: any) => ({ ...d, reason: typeof d.reason });
-  assert.deepEqual(strip(stated.details.pass_mixing), { preset: KNIFE, kind: 'details', kind_source: 'stated', model: 'rgb', reason: 'string' });
-  assert.deepEqual(strip(planned.details.pass_mixing), { preset: KNIFE, kind: 'accents', kind_source: 'plan', model: 'rgb', reason: 'string' });
-  assert.deepEqual(strip(derived.details.pass_mixing), { preset: KNIFE, kind: 'details', kind_source: 'derived', model: 'spectral', reason: 'string' });
+  const strip = (d: any) => ({ ...d, reason: typeof d.reason, sample_below_reason: typeof d.sample_below_reason });
+  assert.deepEqual(strip(stated.details.pass_mixing), { preset: KNIFE, kind: 'details', kind_source: 'stated', model: 'rgb', reason: 'string', sample_below: false, sample_below_reason: 'string' });
+  assert.deepEqual(strip(planned.details.pass_mixing), { preset: KNIFE, kind: 'accents', kind_source: 'plan', model: 'rgb', reason: 'string', sample_below: false, sample_below_reason: 'string' });
+  assert.deepEqual(strip(derived.details.pass_mixing), { preset: KNIFE, kind: 'details', kind_source: 'derived', model: 'spectral', reason: 'string', sample_below: false, sample_below_reason: 'string' });
+});
+
+test('sampling the paint below is the pass kind blend or an explicit sample_below, never the mixing model', async () => {
+  const seen: any[] = [];
+  const pass = withMixing(fakePass(seen) as any, () => RAW, { policy: () => policy, resolve: resolvePassKind });
+  const run = async (args: any) => (await pass.execute('x', { name: 'X', preset: WET, strokes: [], ...args })).details.pass_mixing;
+  const spectral = await run({ mixing: 'spectral', pass_kind: 'details' });
+  const rgbBlend = await run({ mixing: 'rgb', pass_kind: 'blend' });
+  const spectralBlend = await run({ mixing: 'spectral', pass_kind: 'blend' });
+  const explicitOn = await run({ mixing: 'rgb', pass_kind: 'details', sample_below: true });
+  const explicitOff = await run({ mixing: 'spectral', pass_kind: 'blend', sample_below: false });
+  assert.deepEqual(seen.map(a => a.sample_below), [undefined, true, true, true, undefined], 'only a true is sent');
+  assert.ok(seen.every(a => !('pass_pass_kind' in a) && !('pass_kind' in a)));
+  assert.deepEqual([spectral, rgbBlend, spectralBlend, explicitOn, explicitOff].map(r => r.sample_below), [false, true, true, true, false]);
+  assert.match(rgbBlend.sample_below_reason, /blend/);
+  assert.match(explicitOn.sample_below_reason, /asked/);
+  assert.match(explicitOff.sample_below_reason, /asked/);
+  assert.match(spectral.sample_below_reason, /not asked|no/i);
 });

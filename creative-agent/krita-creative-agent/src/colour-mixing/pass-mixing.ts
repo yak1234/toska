@@ -84,6 +84,13 @@ export function passMixing(args: { preset: string; mixing?: MixModel | string; k
   return decided.mixing_model ? { mixing_model: decided.mixing_model } : {};
 }
 
+/** Whether a pass reads the layers below: an explicit sample_below wins, else the pass kind blend, else no. */
+export function decideSampleBelow(asked: unknown, kind?: string): { sample_below: boolean; reason: string } {
+  if (typeof asked === 'boolean') return { sample_below: asked, reason: asked ? 'asked: sample_below' : 'asked: sample_below false' };
+  if (kind === 'blend') return { sample_below: true, reason: 'pass kind blend blends with what is below' };
+  return { sample_below: false, reason: 'not asked: only a blend pass or sample_below reads the paint below' };
+}
+
 type Executable = { parameters?: unknown; execute: (id: string, args: any, signal?: AbortSignal, ...rest: any[]) => Promise<any> };
 
 /** Where withMixing finds the policy and the pass kind: the policy, the kind of the plan step painting now (FolderStepKind,
@@ -105,17 +112,21 @@ export type MixingContext = {
 export function withMixing<T extends Executable>(tool: T, catalog: () => MixingCatalog, context?: MixingContext): T {
   const inner = tool.execute;
   tool.execute = async (id, args, ...rest) => {
-    const { mixing, pass_kind, ...others } = args ?? {};
+    const { mixing, pass_kind, sample_below, ...others } = args ?? {};
     const current = catalog();
     const resolved = context ? context.resolve({ tool: 'paint_pass', stated: typeof pass_kind === 'string' && pass_kind ? pass_kind : null,
       step: context.stepKind?.() ?? null, preset: others.preset }, current) : undefined;
     const decided = decidePassMixing({ preset: others.preset, ...(mixing === undefined ? {} : { mixing }),
       ...(resolved ? { kind: resolved.kind, kind_source: resolved.source } : {}) }, current, context?.policy());
     if ('error' in decided) throw new Error(decided.error);
-    const sent = decided.mixing_model ? { mixing_model: decided.mixing_model } : {};
+    // Reading the paint below is its own choice, never a consequence of the model: the pass says so (sample_below), else a
+    // blend pass does. Only a yes is sent; the plugin sets the brush's sample-merged / merged-paint from it.
+    const below = decideSampleBelow(sample_below, resolved?.kind);
+    const sent = { ...(decided.mixing_model ? { mixing_model: decided.mixing_model } : {}), ...(below.sample_below ? { sample_below: true } : {}) };
     const result = await inner(id, { ...others, ...sent }, ...rest);
     if (!context || !resolved) return result;
-    const record = { preset: others.preset, kind: resolved.kind, kind_source: resolved.source, model: decided.mixing_model ?? 'rgb', reason: decided.reason };
+    const record = { preset: others.preset, kind: resolved.kind, kind_source: resolved.source, model: decided.mixing_model ?? 'rgb', reason: decided.reason,
+      sample_below: below.sample_below, sample_below_reason: below.reason };
     context.record?.({ type: 'pass_mixing', ...record });
     return result && typeof result === 'object' ? { ...result, details: { ...(result.details ?? {}), pass_mixing: record } } : result;
   };

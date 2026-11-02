@@ -686,7 +686,8 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                     raise ValueError('mixing_model needs our Krita (the fork).')
                 from .mixing_options import mixing_properties
                 mixing_properties(self._creative_preset_paintop(params['preset']), params['preset'], params['mixing_model'],
-                                  not params.get('continue_layer_id'), bool(params.get('smudge_overlay')))
+                                  not params.get('continue_layer_id'), bool(params.get('smudge_overlay')),
+                                  sample_below=bool(params.get('sample_below')))
             if params.get('continue_layer_id'):
                 if params.get('blend_mode') or params.get('clip_to'):
                     raise ValueError('blend_mode and clip_to make a new layer; leave out continue_layer_id.')
@@ -2047,11 +2048,11 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         strokes, out = params['strokes'], {}
         options = {'name': params['name']}
         options['preset'] = params['preset']
-        # Mixing model and sample-below for blending passes on a new layer (mixing_options), then explicit overlay on top.
-        from .mixing_options import mixing_properties, BLENDING_PRESET
+        # Mixing model and, only when the pass asks (sample_below), reading the paint below (mixing_options), then explicit overlay on top.
+        from .mixing_options import mixing_properties
         model = params.get('mixing_model')
         properties = {}
-        if model is not None or BLENDING_PRESET.search(params['preset']):   # other passes never read the preset XML
+        if model is not None or params.get('sample_below'):   # other passes never read the preset XML
             try:
                 paintop = self._creative_preset_paintop(params['preset'])
             except (KeyError, AttributeError, ImportError):
@@ -2059,7 +2060,8 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                     raise
                 paintop = None                                               # an unreadable preset is painted as before
             properties = mixing_properties(paintop, params['preset'], model, new_layer, bool(params.get('smudge_overlay')),
-                                           continued=bool(params.get('continue_layer_id')))
+                                           continued=bool(params.get('continue_layer_id')),
+                                           sample_below=bool(params.get('sample_below')))
         if params.get('smudge_overlay'):
             # Overlay mode on the job's own copy of the saved preset; the view's preset is never touched.
             properties.update({'MergedPaint': True},

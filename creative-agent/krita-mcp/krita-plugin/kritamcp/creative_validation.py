@@ -54,9 +54,11 @@ def color(value):
 
 
 def validate_pass(params, width, height, presets):
-    fields(params, ('name', 'preset', 'strokes', 'layer_opacity', 'region', 'stage_id', 'expected_revision', 'continue_layer_id', 'panel', 'blend_mode', 'clip_to', 'smudge_overlay', 'smudge_rate', 'mixing_model', 'selection', 'inside_shape'), ('name', 'preset', 'strokes'))
+    fields(params, ('name', 'preset', 'strokes', 'layer_opacity', 'region', 'stage_id', 'expected_revision', 'continue_layer_id', 'panel', 'blend_mode', 'clip_to', 'smudge_overlay', 'smudge_rate', 'mixing_model', 'sample_below', 'selection', 'inside_shape'), ('name', 'preset', 'strokes'))
     if 'smudge_overlay' in params and not isinstance(params['smudge_overlay'], bool):
         raise ValueError('smudge_overlay must be boolean')
+    if 'sample_below' in params and not isinstance(params['sample_below'], bool):
+        raise ValueError('sample_below must be boolean')
     if 'mixing_model' in params and params['mixing_model'] not in MODELS:
         raise ValueError('mixing_model must be one of ' + ', '.join(MODELS))
     if 'smudge_rate' in params:

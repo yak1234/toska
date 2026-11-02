@@ -1090,14 +1090,23 @@ class ForkStrokeJobTests(unittest.TestCase):
         self.assertEqual(self._pass(h, 2)['status'], 'ok')
         self.assertNotIn('presetProperties', h.job_calls[0][1])
 
-    def test_a_mypaint_spectral_transfer_samples_merged_on_every_chunk(self):
+    def test_a_mypaint_spectral_pass_does_not_sample_merged_unless_asked(self):
+        h = self.harness(); h._creative_preset_paintop = lambda name: 'mypaintbrush'
+        self.assertEqual(self._pass(h, 2, mixing_model='spectral')['status'], 'ok')
+        self.assertEqual(self._pass(h, 2, operation_id='op-2', mixing_model='rgb', sample_below=True)['status'], 'ok')
+        self.assertEqual(self._pass(h, 2, operation_id='op-3', mixing_model='spectral', sample_below=True)['status'], 'ok')
+        self.assertEqual([call[1].get('presetProperties') for call in h.job_calls],
+                         [{'ToskaMyPaintPaintMode': 1.0}, {'ToskaMyPaintSampleMerged': True},
+                          {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True}])
+
+    def test_a_mypaint_spectral_transfer_that_asks_samples_merged_on_every_chunk(self):
         # paint_from_reference with mixing (task 7b): the first chunk makes the pass layer, the rest continue it; every
-        # chunk's job gets the MyPaint properties, sample-merged included.
+        # chunk's job gets the MyPaint properties, sample-merged included, because the transfer asks (sample_below).
         h = self.harness(); h._creative_preset_paintop = lambda name: 'mypaintbrush'
         expected = {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True}
-        first = self._pass(h, 2, mixing_model='spectral')
+        first = self._pass(h, 2, mixing_model='spectral', sample_below=True)
         self.assertEqual(first['status'], 'ok', first.get('error'))
-        later = self._pass(h, 2, operation_id='op-2', mixing_model='spectral',
+        later = self._pass(h, 2, operation_id='op-2', mixing_model='spectral', sample_below=True,
                            continue_layer_id=first['layer_id'])
         self.assertEqual(later['status'], 'ok', later.get('error'))
         self.assertEqual([call[1].get('presetProperties') for call in h.job_calls], [expected, expected])

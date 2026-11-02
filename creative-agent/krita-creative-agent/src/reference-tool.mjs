@@ -410,7 +410,11 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
        // paint_pass's mixing wrapper reads it (and never sends it to the plugin) when no model is named.
        pass_kind:referencePassKind(job.recipe.mode),
        // A dab transfer sends the model its job resolved (rgb for a job from before mixing): every chunk mixes the same way.
-       ...(job.recipe.mode?{}:{mixing:job.mixing??'rgb'})};
+       ...(job.recipe.mode?{}:{mixing:job.mixing??'rgb'}),
+       // Reading the paint below is the transfer's own ask, not the model's: a mixing dab transfer solves each dab against the
+       // canvas it lands on, so it asks (every chunk); a transfer that does not mix, and the edges, never do. A surface
+       // transfer is kind blend, which asks by its kind.
+       ...(!job.recipe.mode&&job.mixing&&job.mixing!=='rgb'?{sample_below:true}:{})};
      const rate=runtime.referenceStrokeRate,eta=rate>0&&job.total>=20000?Math.ceil((job.total-job.completed)/rate/60):0;   // a long underpainting says how long is left
      runtime.emit({type:'status',phase:'painting',message:job.recipe.name+' · '+pass.name+' · '+job.completed.toLocaleString('en-US')+'/'+job.total.toLocaleString('en-US')+' strokes'+(eta?` · about ${eta} min left`:'')});
      const began=Date.now(),result=await executePass(job.pending.id,args,signal);accept(result.details,job.pending);current=result.details;await save();

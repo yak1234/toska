@@ -88,6 +88,17 @@ added that earlier when I asked". Pilot P1 confirmed it: with mixing offered, th
   with Wet Paint Plus (derived block_in) and Wet Knife Plus (derived details) and nothing mixed. Plan and stated kinds
   follow the table; presets without a card stay `rgb`; `TOSKA_MIXING=off` and an explicit `mixing` still win. Every pass,
   inside `paint_batch` too, records a `pass_mixing` diagnostic (preset, kind, kind_source plan|stated|derived, model, reason).
+- **Sampling below is its own choice (2026-11-02, controller's ruling):** `ToskaMyPaintSampleMerged` (MyPaint) and
+  `MergedPaint` (Color Smudge) are set only when the pass asks to blend with what is below: pass kind `blend` (stated or
+  plan), or an explicit `sample_below: true` on paint_pass / paint_batch passes (`false` wins over a blend kind). Never
+  because the model is spectral, never from the preset's name: rgb and spectral get the same flags and differ only in
+  mixing. As in real paint, wet-into-wet happens only within the same paint; a glaze over dry paint stays translucent.
+  Found by `testSpectralKeepsCoverage` (55d6e0d9): the old coupling made spectral mist strokes sample the opaque picture
+  and lay it down opaquely, and confounded every rgb/spectral comparison. The `pass_mixing` diagnostic and the pass
+  result's `details.pass_mixing` record `sample_below` and `sample_below_reason`. The reference transfer asks explicitly
+  where its solve design needs it: a mixing dab transfer (model not rgb) sends `sample_below: true` on every chunk (it
+  solves each dab against the canvas it lands on); a transfer that does not mix, and edges, do not ask; a surface
+  transfer is kind `blend`, so it asks by its kind.
 - **When mixing happens** (painting practice, Claude's call): plan mixes on the palette first (`mix_colors`), block in
   without mixing, mix during the middle layers, finish details and accents clean.
 - **Luna's roles** (later, optional): label a pass the policy cannot classify ("blending existing colour or laying new
