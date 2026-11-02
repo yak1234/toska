@@ -2,7 +2,8 @@
 // client; no network, no key, no files.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { judge, summarise, armOn, apiKey, report, orderParts } from '../scripts/benchmark-judge.ts';
+import { judge, summarise, armOn, apiKey, report, orderParts, judgePicture, JUDGE_SIDE, JUDGE_PIXELS } from '../scripts/benchmark-judge.ts';
+import { encodeRgba } from '../src/shapes/png.ts';
 import type { DecisionMaker, DecisionRequest, DecisionResult } from '../src/decisions/types.ts';
 
 const pictures = { goal: 'GOAL', a: 'ARM-A', b: 'ARM-B' };
@@ -96,4 +97,31 @@ test('a close call is a tie; one order answered is single-order, whatever its si
 test('a .env line with an inline comment or quotes gives the bare key', () => {
   assert.equal(apiKey('OPENAI_API_KEY=sk-test   # the benchmark key\n', {}), 'sk-test');
   assert.equal(apiKey("export OPENAI_API_KEY='sk-q' # c", {}), 'sk-q');
+});
+
+test('a large painting is shrunk in memory before it is sent: one request with three of them stays under 5 MB', async () => {
+  // Pilot 2: three 6000 x 4500 PNGs, about 40 MB each, refused with HTTP 413. A noisy 4000 x 3000 stands in (in memory).
+  const width = 4000, height = 3000, data = new Uint8Array(width * height * 4);
+  let seed = 12345;
+  const noise = () => { seed = (seed * 1103515245 + 12345) >>> 0; return ((seed >>> 16) & 63) - 32; };
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = (y * width + x) * 4;
+    data[i] = Math.max(0, Math.min(255, (x * 255) / width + noise())); data[i + 1] = Math.max(0, Math.min(255, (y * 255) / height + noise()));
+    data[i + 2] = Math.max(0, Math.min(255, 128 + 100 * Math.sin(x / 37) * Math.cos(y / 53) + noise())); data[i + 3] = 255;
+  }
+  const png = encodeRgba({ width, height, data });
+  assert.ok(png.length > 20 * 1024 * 1024, `the fixture is a heavy PNG (${png.length} bytes)`);
+  const shrunk = judgePicture(png, 'arm-a.png');
+  assert.equal(shrunk.mimeType, 'image/jpeg');
+  assert.ok(shrunk.shrunk && Math.max(shrunk.width!, shrunk.height!) <= JUDGE_SIDE && shrunk.width! * shrunk.height! <= JUDGE_PIXELS, `${shrunk.width} x ${shrunk.height}`);
+  assert.deepEqual([...Buffer.from(shrunk.data as string, 'base64').subarray(0, 3)], [0xff, 0xd8, 0xff], 'a JPEG');
+  let body = 0;
+  const client: DecisionMaker = { async decide(request) { body = Math.max(body, JSON.stringify(request).length); return { fallback: 'timeout', elapsed_ms: 1 }; } };
+  const part = { data: shrunk.data, mimeType: shrunk.mimeType };
+  await judge(client, { goal: part, a: part, b: part }, ['q']);
+  assert.ok(body > 0 && body < 5 * 1024 * 1024, `request body ${body} bytes`);
+  // A small picture goes as it is; a large file this script cannot read is refused by name, never sent.
+  const small = encodeRgba({ width: 4, height: 4, data: new Uint8Array(64).fill(200) });
+  assert.deepEqual(judgePicture(small, 'goal.png'), { data: small.toString('base64'), mimeType: 'image/png', shrunk: false });
+  assert.throws(() => judgePicture(Buffer.alloc(5 * 1024 * 1024, 7), 'arm-b.tif'), /arm-b\.tif is 5\.0 MB/);
 });

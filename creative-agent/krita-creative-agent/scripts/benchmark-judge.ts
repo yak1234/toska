@@ -9,14 +9,15 @@
 //     [--model gpt-6-luna] [--env-file <path to .env>] [--timeout 120000]
 // Key: OPENAI_API_KEY from the project's .env (or --env-file), else the environment. Never printed.
 import { parseArgs } from 'node:util';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { extname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { basename, extname, join } from 'node:path';
 import { DecisionClient } from '../src/decisions/client.ts';
 import { BUILT_IN_ENDPOINTS } from '../src/decisions/endpoints.ts';
 // @ts-ignore: an .mjs module
 import { parseDotEnv } from '../src/langfuse-tracing.mjs';
-import { boundedImage } from '../src/bounded-image.ts';
+import { reduceRgba } from '../src/bounded-image.ts';
+import { decodeRgba, pngSize } from '../src/png-rgba.ts';
+import { encodeJpeg } from '../src/jpeg-encode.ts';
 import type { ChoiceQuestion, DecisionMaker, DecisionPart, Questions } from '../src/decisions/types.ts';
 
 export const DEFAULT_QUESTIONS = ['Which is cleaner where colours meet?', 'Which looks more like the goal painting?'];
@@ -114,10 +115,27 @@ export function apiKey(dotEnv: string | null, env: NodeJS.ProcessEnv = process.e
   return (dotEnv === null ? '' : parseDotEnv(dotEnv).OPENAI_API_KEY) || env.OPENAI_API_KEY || null;
 }
 
-async function picture(directory: string, path: string): Promise<DecisionPart> {
-  const bounded = await boundedImage(directory, path, 1_500_000);
-  const mimeType = bounded.reduced ? 'image/png' : ({ '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' } as Record<string, string>)[extname(path).toLowerCase()] ?? 'image/png';
-  return { data: bounded.data.toString('base64'), mimeType };
+// Pilot 2 sent three 6000 x 4500 PNGs (about 40 MB each) and the endpoint refused the request (HTTP 413). A picture over
+// JUDGE_PIXELS or JUDGE_BYTES is shrunk in memory: its longest side to at most JUDGE_SIDE (and its area to JUDGE_PIXELS) by
+// area averaging, then a JPEG at JUDGE_QUALITY, so the three pictures of one request stay well under 5 MB.
+export const JUDGE_PIXELS = 1_500_000, JUDGE_BYTES = 4 * 1024 * 1024, JUDGE_SIDE = 1500, JUDGE_QUALITY = 90;
+const MIME: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.png': 'image/png' };
+
+/** One picture as the decision client takes it: the file itself when it is small, else a shrunk JPEG. `name` is for errors. */
+export function judgePicture(file: Buffer, name: string): { data: string; mimeType: string; shrunk: boolean; width?: number; height?: number } {
+  const size = pngSize(file);
+  if (file.length <= JUDGE_BYTES && (!size || size.width * size.height <= JUDGE_PIXELS))
+    return { data: file.toString('base64'), mimeType: MIME[extname(name).toLowerCase()] ?? 'image/png', shrunk: false };
+  const pixels = decodeRgba(file, Number.MAX_SAFE_INTEGER, { ignoreColour: true });
+  if (!pixels) throw new Error(`${basename(name)} is ${(file.length / 1048576).toFixed(1)} MB and not an 8-bit PNG this script can shrink: export it as an 8-bit PNG, or a JPEG under ${JUDGE_BYTES / 1048576} MB.`);
+  const k = Math.min(1, JUDGE_SIDE / Math.max(pixels.width, pixels.height), Math.sqrt(JUDGE_PIXELS / (pixels.width * pixels.height)));
+  const small = reduceRgba(pixels, Math.max(1, Math.floor(pixels.width * k) * Math.floor(pixels.height * k)));
+  return { data: encodeJpeg(small, JUDGE_QUALITY).toString('base64'), mimeType: 'image/jpeg', shrunk: true, width: small.width, height: small.height };
+}
+
+async function picture(path: string): Promise<DecisionPart> {
+  const { data, mimeType } = judgePicture(await readFile(path), path);
+  return { data, mimeType };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -134,11 +152,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (!key) { process.stderr.write(`No OPENAI_API_KEY in ${envPath} or the environment.\n`); process.exit(2); }
   const model = values.model ?? BUILT_IN_ENDPOINTS.openai.defaultModel;
   const client = new DecisionClient({ endpoint: BUILT_IN_ENDPOINTS.openai, model, apiKey: key, images: true, timeout: Number(values.timeout ?? 120000) });
-  const scratch = await mkdtemp(join(tmpdir(), 'benchmark-judge-'));
-  try {
-    const pictures = { goal: await picture(scratch, values.goal), a: await picture(scratch, values.a), b: await picture(scratch, values.b) };
-    const judged = await judge(client, pictures, values.question?.length ? values.question : DEFAULT_QUESTIONS, model);
-    process.stdout.write((values.json ? JSON.stringify(judged, null, 2) : report(judged)) + '\n');
-    process.exitCode = judged.failures.length ? 1 : 0;
-  } finally { await rm(scratch, { recursive: true, force: true }); }
+  const pictures = { goal: await picture(values.goal), a: await picture(values.a), b: await picture(values.b) };
+  const judged = await judge(client, pictures, values.question?.length ? values.question : DEFAULT_QUESTIONS, model);
+  process.stdout.write((values.json ? JSON.stringify(judged, null, 2) : report(judged)) + '\n');
+  process.exitCode = judged.failures.length ? 1 : 0;
 }
