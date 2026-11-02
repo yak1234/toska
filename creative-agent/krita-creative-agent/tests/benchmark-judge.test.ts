@@ -221,3 +221,16 @@ test('the bootstrap interval is deterministic for a fixed seed and brackets the 
   assert.notDeepEqual(bootstrapDiff(a, b, 12, 20), bootstrapDiff(a, b, 11, 20), "another seed draws other resamples");
   assert.deepEqual(bootstrapDiff([2, 2], [3, 3], 1, 100), { diff: 1, lo: 1, hi: 1 });
 });
+
+test('question order is shuffled per request (seeded) and answers are attributed by question id', async () => {
+  // The fake answers by question text: a level that depends only on which question it is.
+  const levelOf = (text: string) => (text.includes('colour where areas meet') ? 1 : text.includes('real oil paint') ? 3 : 5);
+  const run = async () => { const c = scorer((_p, q) => sharp(levelOf(q))); const out = await scoreArms(c, 'GOAL', { A: ['pA1'], B: ['pB1'] }, SCORE_QUESTIONS, { repeats: 4, seed: 5, resamples: 20 }); return { c, out }; };
+  const { c, out } = await run();
+  const orders = c.requests.filter(r => (r.parts as string[]).includes('pA1')).map(r => Object.keys(r.questions).join(','));
+  assert.equal(orders.length, 4);
+  assert.ok(new Set(orders).size > 1, `question order differs across requests for one painting: ${orders}`);
+  for (const p of out.paintings) assert.deepEqual(p.cells.map(cell => cell.mean), [1, 3, 5], 'each answer lands on its own question');
+  const again = await run();
+  assert.deepEqual(again.c.requests.map(r => Object.keys(r.questions).join(',')), c.requests.map(r => Object.keys(r.questions).join(',')), 'deterministic under the seed');
+});

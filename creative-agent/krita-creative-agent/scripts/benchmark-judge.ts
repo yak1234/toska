@@ -199,15 +199,17 @@ export const scoreParts = (goal: DecisionPart, painting: DecisionPart): Decision
 export async function scoreArms(client: DecisionMaker, goal: DecisionPart, arms: { A: DecisionPart[]; B: DecisionPart[] }, questions: ScoreQuestion[] = SCORE_QUESTIONS, options: ScoreOptions = {}): Promise<Scored> {
   if (!questions.length) throw new Error('Give at least one question.');
   const repeats = options.repeats ?? 2, rnd = seeded(options.seed ?? 1);
-  const asked: Questions = Object.fromEntries(questions.map((q, i) => [`q${i}`, { type: 'choice' as const,
+  const entries = questions.map((q, i) => [`q${i}`, { type: 'choice' as const,
     instructions: `${q.text} Judge only the painting shown after "PAINTING to judge:", against the goal. Pick the level that fits it best.`,
-    criteria: q.levels } satisfies ChoiceQuestion]));
+    criteria: q.levels } satisfies ChoiceQuestion] as const);
+  /** The questions of one request in a fresh seeded order (ids stay q<index>, answers are read back by id). */
+  const askedShuffled = (): Questions => { const e = [...entries]; for (let i = e.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [e[i], e[j]] = [e[j], e[i]]; } return Object.fromEntries(e); };
   const paintings = (['A', 'B'] as Arm[]).flatMap(arm => arms[arm].map((_p, index) => ({ arm, index, cells: questions.map(q => ({ question: q.text, values: [] as number[], mean: null as number | null, spread: null as number | null })) })));
   const jobs = paintings.flatMap(p => Array.from({ length: repeats }, () => p));
   for (let i = jobs.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [jobs[i], jobs[j]] = [jobs[j], jobs[i]]; }
   const failures: string[] = [];
   for (const job of jobs) {
-    const result = await client.decide({ purpose: 'benchmark-judge', parts: scoreParts(goal, arms[job.arm][job.index]), questions: asked });
+    const result = await client.decide({ purpose: 'benchmark-judge', parts: scoreParts(goal, arms[job.arm][job.index]), questions: askedShuffled() });
     if (result.fallback) { failures.push(`${job.arm}${job.index + 1}: ${result.fallback}`); continue; }
     questions.forEach((_q, i) => {
       const answer = result.answers[`q${i}`];
