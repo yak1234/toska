@@ -126,7 +126,7 @@ export function modelResultText(result, {compactLayers=false,focusLayerIds=[],li
 }
 // What a result over its limit always keeps (with its compact layers): what the painter needs to address the canvas.
 const KEPT=['status','error','error_code','layer_id','layer_count','top_level_layers','hidden_layers','layers_note','layers_truncated',
-  'revision','width','height','image_width','image_height','scale','region','name'];
+  'revision','width','height','image_width','image_height','scale','region','name','rendering_code','rendering_note'];
 /** An observation's layers in the layer index's budget: each as id and name with only the flags that are set (depth,
  * hidden, locked, group); past the budget the top-level layers with counts; past that the newest top-level ones. */
 function compactLayerList(all) {

@@ -18,6 +18,7 @@ from .qt_compat import QColor, QPainterPath, QImage
 from .qt_compat import QMessageBox
 import json
 import threading
+import time
 from collections import deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -160,6 +161,9 @@ class PaintRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(timeout, (int, float)) or timeout <= 0:
             timeout = LONG_TIMEOUT if action in LONG_RUNNING else DEFAULT_TIMEOUT
 
+        # When the reply is due: a canvas wait inside the command ends before it (canvas_settle.reply_due).
+        command["_reply_due"] = time.monotonic() + timeout
+
         # Assign command ID and queue it
         command_counter += 1
         command_id = command_counter
@@ -246,9 +250,11 @@ class KritaMCPExtension(CreativeTools, PrecisionTools, Extension):
             command_id, command = item
             self._executing = True
             command_executing.set()
+            canvas_settle.reply_due(command.get("_reply_due"))
             try:
                 result = self.execute_command(command)
             finally:
+                canvas_settle.reply_due(None)
                 self._executing = False
                 command_executing.clear()
             command_queue.set_result(command_id, result)
@@ -695,11 +701,12 @@ class KritaMCPExtension(CreativeTools, PrecisionTools, Extension):
             for x, y, pressure in points[1:]:
                 path.lineTo(QPointF(x, y))
             layer.paintPath(path, "ForegroundColor", "None")
-        if not canvas_settle.refresh_settled(doc):      # the stroke runs async: wait for it before a whole-image refresh
-            return {"error": canvas_settle.not_settled()}
+        waited = canvas_settle.refresh_or_report(doc)   # the stroke runs async: wait for it before a whole-image refresh
+        if waited.get("error"):
+            return waited
         return {"status": "ok", "points_count": len(points), "engine": "native",
                 "pressure_mode": "segments" if has_pressure else "preset_path",
-                "layer": layer.name()}
+                "layer": layer.name(), **waited}
 
     def _stroke_pixel(self, params, doc, layer, view):
         """Upstream's BGRA8 soft-circle renderer (kept for hardness control)."""
@@ -793,9 +800,10 @@ class KritaMCPExtension(CreativeTools, PrecisionTools, Extension):
         fill_color = params.get("color") or "#ffffff"
         rect = QRectF(x - radius, y - radius, radius * 2, radius * 2)
         layer.paintEllipse(rect, None, fill_color)
-        if not canvas_settle.refresh_settled(doc):
-            return {"error": canvas_settle.not_settled()}
-        return {"status": "ok", "x": x, "y": y, "radius": radius}
+        waited = canvas_settle.refresh_or_report(doc)
+        if waited.get("error"):
+            return waited
+        return {"status": "ok", "x": x, "y": y, "radius": radius, **waited}
 
     def cmd_flood_fill(self, params):
         """Contiguously flood-fill pixels matching the seed color.
@@ -943,9 +951,10 @@ class KritaMCPExtension(CreativeTools, PrecisionTools, Extension):
         else:
             return {"error": f"Unknown shape '{shape}'. Use rectangle, ellipse, line, polygon."}
 
-        if not canvas_settle.refresh_settled(doc):
-            return {"error": canvas_settle.not_settled()}
-        return {"status": "ok", "shape": shape}
+        waited = canvas_settle.refresh_or_report(doc)
+        if waited.get("error"):
+            return waited
+        return {"status": "ok", "shape": shape, **waited}
 
     def cmd_clear(self, params):
         """Clear the active layer to a solid color."""

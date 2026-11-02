@@ -43,3 +43,16 @@ test('Krita HTTP 500 command results retain recoverable validation and genuine u
     }
   } finally {globalThis.fetch=original;}
 });
+
+test('a painting change gets a reply time past the plugin canvas-settle ceiling, and still rendering is a landed result',async()=>{
+  const bridge=new PaintingBridge('.',{}), original=globalThis.fetch;
+  const landed={status:'ok',layer_id:'l1',rendering_code:'canvas_still_rendering',rendering_note:'The paint landed. Krita is still rendering.'};
+  try {
+    let sent;
+    globalThis.fetch=async(url,options)=>{sent=JSON.parse(options.body);return {ok:true,json:async()=>landed};};
+    assert.deepEqual(await bridge.call('paint_pass',{},'session','operation'),landed);
+    assert.ok(sent.timeout>=1200+60,'the plugin waits up to 1200 s for a canvas that keeps rendering');
+    await bridge.call('peek',{},'session');
+    assert.equal(sent.timeout,120,'reads keep the short reply time');
+  } finally {globalThis.fetch=original;}
+});

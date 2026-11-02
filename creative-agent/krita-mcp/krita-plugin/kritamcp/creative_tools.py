@@ -129,7 +129,12 @@ def merge_pass_record_error(result, error):
 
 
 class CanvasNotSettled(RuntimeError):
-    """The canvas stayed busy past canvas_settle.SETTLE_SECONDS: the GUI thread stops waiting (nothing is rolled back under a running stroke)."""
+    """The canvas made no progress for canvas_settle.SETTLE_SECONDS: the GUI thread stops waiting (nothing is rolled back under a running stroke)."""
+
+
+def note_still_rendering(result, waited):
+    """The paint landed and Krita is still rendering it (canvas_settle.RENDERING): the change stands, with a notice."""
+    result.update(canvas_settle.outcome(canvas_settle.RENDERING, waited))
 
 
 class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, TransformCraft, CanvasView, ComicCraft, MergeCraft, FlattenCraft, ProtectionCraft, FeatureCraft, NativeCraft, MaterialCraft, ToolCraft, GuideCraft, AccentCraft, FinishCraft, TextureCraft, SnowCraft, EffectCraft, BrushworkCraft, AreaCompare):
@@ -905,9 +910,15 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             try:
                 if operation not in STROKE_JOBS or not on_fork():
                     # a write inside the move lands after the call returns (a job has been waited on: never end the artist's strokes);
-                    # bounded, so a canvas that never settles is an error and not a hung GUI thread (canvas_settle)
-                    if not canvas_settle.settle(doc) and not result.get('error'):
-                        result = dict(result, status='partial', error=canvas_settle.not_settled(), error_code='canvas_not_settled')
+                    # bounded, so a canvas that never settles is an error and not a hung GUI thread (canvas_settle); one
+                    # still rendering at the ceiling has landed (its wait already spent, so it is not waited on twice)
+                    if not result.get('rendering_code'):
+                        waited = time.monotonic()
+                        state = canvas_settle.settle_state(doc)
+                        if state == canvas_settle.RENDERING:
+                            note_still_rendering(result, time.monotonic() - waited)
+                        elif state == canvas_settle.STUCK and not result.get('error'):
+                            result = dict(result, status='partial', error=canvas_settle.not_settled(), error_code='canvas_not_settled')
                 if self._feature_call_writes(operation, params) and not (operation in STROKE_JOBS and on_fork()):
                     kept_names = self._feature_kept_out(doc)   # read before the move ends; a fork pass has its job's own names
             except RuntimeError:
@@ -940,8 +951,12 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             self._feature_report(doc, result, kept_names)   # which protected features Krita kept the call's writes out of
         lap('protect_enforce')
         try:
-            checkpoint = self._creative_commit_view(doc, session)
-            result.update({key: value for key, value in checkpoint.items() if key != 'status'})
+            if result.get('rendering_code'):
+                # Saving or observing now waits for the whole render, past the time the reply is due: the next one does.
+                result['checkpoint_deferred'] = True
+            else:
+                checkpoint = self._creative_commit_view(doc, session)
+                result.update({key: value for key, value in checkpoint.items() if key != 'status'})
         except Exception as error:
             result.update(status='partial', error='Checkpoint failed: ' + str(error), error_code='checkpoint_failed')
         lap('checkpoint')
@@ -1625,17 +1640,23 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                     try:
                         response = getattr(self, 'cmd_'+name)(value)
                         if response.get('error'): raise RuntimeError(response['error'])
+                        if response.get('rendering_code'): result.update(rendering_code=response['rendering_code'], rendering_note=response['rendering_note'])
                     finally:
                         if previous_erase:
                             restored = self.cmd_configure_brush({'properties':previous_erase})
                             if restored.get('error'): raise RuntimeError(restored['error'])
                             view.setEraserMode(True)
-                # Bounded: a stroke whose merge is starved would hold the GUI thread here forever (canvas_settle).
-                if not canvas_settle.settle(doc):
+                # Bounded: a stroke whose merge is starved would hold the GUI thread here forever (canvas_settle). A canvas
+                # still rendering at the ceiling has the paint: the remaining commands wait in turn, and stop when stuck.
+                waited = time.monotonic()
+                state = canvas_settle.RENDERING if result.get('rendering_code') else canvas_settle.settle_state(doc)
+                if state == canvas_settle.STUCK:
                     raise CanvasNotSettled(canvas_settle.not_settled())
+                if state == canvas_settle.RENDERING and not result.get('rendering_code'):
+                    note_still_rendering(result, time.monotonic() - waited)
         except Exception as error:
             result.update(status='partial', error=str(error), error_code='partial_change')
-            busy = isinstance(error, CanvasNotSettled) or not canvas_settle.settle(doc)
+            busy = isinstance(error, CanvasNotSettled) or bool(result.get('rendering_code')) or not canvas_settle.settle(doc)
             if busy:
                 # Krita is still painting: removing the layer or refreshing now would queue behind (or under) that stroke.
                 result.update(error=canvas_settle.not_settled(), error_code='canvas_not_settled')
@@ -1659,7 +1680,7 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             view.setEraserMode(eraser)
             if source:
                 result['source_after'] = self._creative_settle(doc, session, source)
-            if canvas_settle.settle(doc):
+            if not result.get('rendering_code') and canvas_settle.settle(doc):
                 doc.refreshProjection(); doc.waitForDone()
         return result
 

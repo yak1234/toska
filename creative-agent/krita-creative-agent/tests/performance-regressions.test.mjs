@@ -153,3 +153,11 @@ test('painting runs have no fixed time cap; chat turns keep the 10-minute cap',(
   runtime.mode='ask'; runtime.executionPhase='ask'; assert.equal(runtime.runDeadlineMs(),600000);
   runtime.mode='autopilot'; runtime.executionPhase='plan'; assert.equal(runtime.runDeadlineMs(),600000,'planning turns stay capped');
 });
+
+test('a result over its budget keeps the still-rendering notice, so the painter never repeats a landed change', async () => {
+  const {modelResultText}=await import('../src/tools.mjs');
+  const text=JSON.parse(modelResultText({status:'ok',layer_id:'l1',rendering_code:'canvas_still_rendering',rendering_note:'The paint landed.',
+    note:'n'.repeat(9000),other:Array.from({length:400},(_,i)=>({i,text:'x'.repeat(40)}))},{compactLayers:true}));
+  assert.equal(text.rendering_code,'canvas_still_rendering');
+  assert.equal(text.rendering_note,'The paint landed.');
+});

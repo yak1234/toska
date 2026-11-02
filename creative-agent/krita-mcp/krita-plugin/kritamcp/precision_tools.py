@@ -127,8 +127,9 @@ class PrecisionTools:
         self._apply_brush_state(view,size=size,opacity=opacity,flow=flow,color=color)
         layer.paintPath(path,'ForegroundColor','None')
         # The stroke is still running on Krita's pool: a whole-image refresh queued now can starve its final merge (canvas_settle).
-        if settle and not canvas_settle.refresh_settled(doc): return {'error':canvas_settle.not_settled()}
-        return {'status':'ok','rendering':'single_native_path','segments':len(segments),'variable_pressure':False}
+        waited=canvas_settle.refresh_or_report(doc) if settle else {}
+        if waited.get('error'): return waited
+        return {'status':'ok','rendering':'single_native_path','segments':len(segments),'variable_pressure':False,**waited}
 
     def cmd_duplicate_document(self,p):
         doc,err=self._require_document()

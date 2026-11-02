@@ -39,6 +39,21 @@ class Doc:
     def height(self): return 100
 
 
+class ProgressDoc(Doc):
+    """Busy while Krita re-renders (live filter masks on a big image): the barrier try fails, but the revision moves on
+    every poll until `progress_for` seconds pass; it goes idle at `idle_after` seconds (None: never)."""
+    def __init__(self, events, progress_for, idle_after=None):
+        super().__init__(events, settles=False, barrier=True)
+        self.started, self.progress_for, self.idle_after, self.count = time.monotonic(), progress_for, idle_after, 0
+    def _try(self):
+        self.events.append('try')
+        return self.idle_after is not None and time.monotonic() - self.started >= self.idle_after
+    def revision(self):
+        if time.monotonic() - self.started < self.progress_for:
+            self.count += 1
+        return self.count
+
+
 class Layer:
     def __init__(self, events): self.events = events
     def locked(self): return False
@@ -110,6 +125,45 @@ class SettleHelperTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 2)
         self.assertNotIn('wait', events)
 
+    def limits(self, stall, ceiling):
+        helper = self.helper()
+        previous = helper.SETTLE_SECONDS, helper.CEILING_SECONDS
+        helper.SETTLE_SECONDS, helper.CEILING_SECONDS = stall, ceiling
+        self.addCleanup(lambda: (setattr(helper, 'SETTLE_SECONDS', previous[0]), setattr(helper, 'CEILING_SECONDS', previous[1])))
+        return helper
+
+    def test_a_slow_render_that_keeps_making_progress_settles_after_the_stall_window(self):
+        helper = self.limits(0.05, 5)
+        events, started = [], time.monotonic()
+        self.assertEqual(helper.settle_state(ProgressDoc(events, progress_for=10, idle_after=0.3)), helper.SETTLED)
+        self.assertGreater(time.monotonic() - started, 0.25)
+
+    def test_progress_that_stops_is_stuck_one_stall_window_later(self):
+        helper = self.limits(0.05, 5)
+        started = time.monotonic()
+        self.assertEqual(helper.settle_state(ProgressDoc([], progress_for=0.15)), helper.STUCK)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertGreater(time.monotonic() - started, 0.15)
+
+    def test_still_progressing_at_the_ceiling_is_still_rendering_not_stuck(self):
+        helper = self.limits(0.05, 0.3)
+        started = time.monotonic()
+        self.assertEqual(helper.settle_state(ProgressDoc([], progress_for=10)), helper.RENDERING)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertFalse(helper.settle(ProgressDoc([], progress_for=10)))
+
+    def test_the_ceiling_never_passes_the_time_the_reply_is_due(self):
+        helper = self.limits(0.05, 30)
+        previous = helper.REPLY_MARGIN_SECONDS
+        helper.REPLY_MARGIN_SECONDS = 0.1
+        helper.reply_due(time.monotonic() + 0.4)
+        try:
+            started = time.monotonic()
+            self.assertEqual(helper.settle_state(ProgressDoc([], progress_for=10)), helper.RENDERING)
+            self.assertLess(time.monotonic() - started, 1)
+        finally:
+            helper.reply_due(None); helper.REPLY_MARGIN_SECONDS = previous
+
     def test_refresh_settled_waits_then_refreshes_and_refuses_to_refresh_an_unsettled_canvas(self):
         events = []
         self.assertTrue(self.helper().refresh_settled(Doc(events)))
@@ -151,6 +205,22 @@ class CurveStrokeTests(unittest.TestCase):
         self.assertIn(NOT_SETTLED, result['error'])
         self.assertNotIn('refresh', events)
 
+    def test_curve_stroke_still_rendering_at_the_ceiling_landed_without_a_refresh(self):
+        events = []
+        tools = self.tools(ProgressDoc(events, progress_for=10), Layer(events))
+        module = sys.modules[type(tools).__module__].canvas_settle
+        previous = module.SETTLE_SECONDS, module.CEILING_SECONDS
+        module.SETTLE_SECONDS, module.CEILING_SECONDS = 0.05, 0.2
+        try:
+            result = tools.cmd_curve_stroke(dict(self.PARAMS))
+        finally:
+            module.SETTLE_SECONDS, module.CEILING_SECONDS = previous
+        self.assertEqual(result['status'], 'ok')
+        self.assertNotIn('error', result)
+        self.assertEqual(result['rendering_code'], 'canvas_still_rendering')
+        self.assertEqual(result['rendering'], 'single_native_path')
+        self.assertNotIn('refresh', events)
+
     def test_settle_false_leaves_the_wait_to_the_caller(self):
         events = []
         self.tools(Doc(events), Layer(events)).cmd_curve_stroke(dict(self.PARAMS), settle=False)
@@ -186,6 +256,31 @@ class BridgeCommandTests(unittest.TestCase):
         self.check_order(lambda d, l: self.extension(d, l).cmd_draw_shape({'shape': 'line', 'x': 0, 'y': 0, 'x2': 5, 'y2': 5}))
         self.check_order(lambda d, l: self.extension(d, l).cmd_draw_shape({'shape': 'polygon', 'points': [[0, 0], [5, 0], [5, 5]]}))
 
+    def test_a_command_settles_within_the_time_its_reply_is_due_and_the_next_one_starts_fresh(self):
+        helper = sys.modules[INIT_PACKAGE + '.canvas_settle']
+        extension, seen = self.module.KritaMCPExtension(None), []
+        extension.execute_command = lambda command: seen.append(helper._reply_due) or {'status': 'ok'}
+        due = time.monotonic() + 120
+        self.module.command_queue.push(1, {'action': 'health', '_reply_due': due})
+        extension.process_commands()
+        self.assertEqual(seen, [due])
+        self.assertIsNone(helper._reply_due)
+
+    def test_a_canvas_still_rendering_is_no_error_from_each_command(self):
+        helper = sys.modules[INIT_PACKAGE + '.canvas_settle']
+        previous = helper.SETTLE_SECONDS, helper.CEILING_SECONDS
+        helper.SETTLE_SECONDS, helper.CEILING_SECONDS = 0.05, 0.15
+        try:
+            for run in (lambda e: e.cmd_stroke({'points': [[0, 0], [5, 5]]}), lambda e: e.cmd_fill({'x': 5, 'y': 5, 'radius': 3}),
+                        lambda e: e.cmd_draw_shape({'shape': 'line'})):
+                events = []
+                result = run(self.extension(ProgressDoc(events, progress_for=10), Layer(events)))
+                self.assertNotIn('error', result)
+                self.assertEqual(result['rendering_code'], 'canvas_still_rendering')
+                self.assertNotIn('refresh', events)
+        finally:
+            helper.SETTLE_SECONDS, helper.CEILING_SECONDS = previous
+
     def test_a_canvas_that_never_settles_is_an_error_from_each_command(self):
         helper = sys.modules[INIT_PACKAGE + '.canvas_settle']
         previous, helper.SETTLE_SECONDS = helper.SETTLE_SECONDS, 0.02
@@ -209,7 +304,34 @@ class StuckDoc(toolbox.native.Document):
     def refreshProjection(self, *a): self.events.append('refresh')
 
 
+class RenderingDoc(StuckDoc):
+    """Never idle within the test, but the revision keeps moving: Krita is slowly re-rendering, not stuck."""
+    def __init__(self): super().__init__(); self.count = 0
+    def revision(self): self.count += 1; return self.count
+
+
 class CommandsLoopTests(unittest.TestCase):
+    def test_a_canvas_still_rendering_at_the_ceiling_reports_that_the_paint_landed(self):
+        h = toolbox.Harness(); h.doc = RenderingDoc()
+        h._creative_session.update(document_id=native.module.document_id(h.doc))
+        h.cmd_new_layer({}); original = h.doc.active
+        helper = native.module.canvas_settle
+        previous = helper.SETTLE_SECONDS, helper.CEILING_SECONDS
+        helper.SETTLE_SECONDS, helper.CEILING_SECONDS = 0.05, 0.2
+        started = time.monotonic()
+        try:
+            result = toolbox.call(h, [('curve_stroke', {})], original.identity)
+        finally:
+            helper.SETTLE_SECONDS, helper.CEILING_SECONDS = previous
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(result['status'], 'ok', result.get('error'))
+        self.assertNotIn('error', result)
+        self.assertEqual(result['rendering_code'], 'canvas_still_rendering')
+        self.assertIn('landed', result['rendering_note'])
+        self.assertNotIn('wait', h.doc.events)
+        self.assertNotIn('refresh', h.doc.events)
+
+
     def test_a_never_settling_canvas_returns_the_did_not_settle_error_within_the_deadline(self):
         h = toolbox.Harness(); h.doc = StuckDoc()
         h._creative_session.update(document_id=native.module.document_id(h.doc))

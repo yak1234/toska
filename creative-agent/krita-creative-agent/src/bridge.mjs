@@ -15,8 +15,11 @@ export class PaintingBridge {
     if (sessionId) request.session_id = sessionId;
     if (operationId) request.operation_id = operationId;
     const mutating = ['begin','paint_pass','adjust_layer','painting_toolbox','review_pass','merge_passes','flatten_passes','finish','snow','effect',...CRAFT_OPERATIONS,...COMIC_OPERATIONS].includes(operation);
-    // Filters can run long on a large canvas; past this the outcome is uncertain, never retried.
-    const timeout = LONG_OPERATIONS.includes(operation) ? 300 : 120;
+    // Filters can run long on a large canvas; past this the outcome is uncertain, never retried. A change waits for the
+    // canvas to settle while Krita keeps rendering (live filter masks on a big image take minutes), up to the plugin's
+    // ceiling (canvas_settle.CEILING_SECONDS, 1200 s) and never past this reply time; a canvas that stops making progress
+    // replies within a minute. Still rendering at the ceiling is a landed change (rendering_code canvas_still_rendering).
+    const timeout = mutating ? 1260 : LONG_OPERATIONS.includes(operation) ? 300 : 120;
     let result;
     try {
       const token = process.env.KRITA_MCP_TOKEN;
