@@ -854,6 +854,54 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual([p.name for p in self.target.iterdir()], ['Toska.app'])   # no staging or old copy left
         self.assertTrue(package_app.verify_signature(installed)[0])
 
+    def add_companion(self, break_manifest=False):
+        """A minimal creative-agent-bundle in the fake app (the real manifest format), with the real stdlib-only plugin modules."""
+        resources = self.fake.contents / 'Resources'
+        plugin = resources / 'krita' / 'pykrita' / 'kritamcp'
+        plugin.mkdir(parents=True)
+        source = REPO / 'creative-agent' / 'krita-mcp' / 'krita-plugin' / 'kritamcp'
+        for name in ('bundled_release.py', 'node_runtime.py', 'bridge_config.py'):
+            shutil.copy2(source / name, plugin / name)
+        bundled, manifest = _helpers.make_release(resources.parent)
+        if break_manifest:
+            (bundled / 'release-manifest.json').write_text('{ not json')
+        self.fake.sign()
+        return manifest['build_id']
+
+    def app_data(self):
+        return self.home / 'Library' / 'Application Support' / 'KritaAgent'
+
+    def test_an_app_without_a_companion_installs_as_before_and_creates_no_app_data(self):
+        result = self.install('--to', self.target, self.fake.app)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / 'Library').exists())
+        self.assertNotIn('companion', result.stdout + result.stderr)
+
+    def test_the_companion_in_the_app_is_installed_so_the_panel_need_not_do_it(self):
+        build_id = self.add_companion()
+        result = self.install('--to', self.target, self.fake.app)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.app_data() / 'creative-agent' / build_id / '.complete').is_file())
+        config = json.loads((self.app_data() / 'creative-agent-config.json').read_text())
+        self.assertEqual(config['build_id'], build_id)
+        self.assertEqual(config['bridge_url'], 'http://127.0.0.1:5679')
+        self.assertIn(build_id, result.stdout)
+        self.assertTrue(str(config['companion']).startswith(str(self.app_data())))      # nothing outside the isolated home
+
+    def test_a_dry_run_does_not_install_the_companion(self):
+        self.add_companion()
+        result = self.install('--dry-run', '--to', self.target, self.fake.app)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.home / 'Library').exists())
+
+    def test_a_broken_companion_manifest_only_warns_and_the_install_succeeds(self):
+        self.add_companion(break_manifest=True)
+        result = self.install('--to', self.target, self.fake.app)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.target / 'Toska.app' / 'Contents/MacOS/krita').exists())
+        self.assertIn('Connect', result.stderr)
+        self.assertFalse((self.app_data() / 'creative-agent-config.json').exists())
+
     def test_the_old_name_is_replaced_by_the_new_app_and_never_left_beside_it(self):
         old = self.target / 'Krita Agent.app'
         (old / 'Contents').mkdir(parents=True)

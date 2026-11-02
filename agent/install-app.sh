@@ -23,6 +23,11 @@
 #   bundle and are untouched. It then says to remake the Dock icon and the Desktop link, and names ~/Desktop/Krita Agent
 #   if it is a link to a removed app (it never touches that link).
 # - Removes the quarantine attribute (com.apple.quarantine) from the installed copy.
+# - When the app carries a companion (Contents/Resources/creative-agent-bundle), installs it at once, as the panel does at the first
+#   "Connect assistant" (bundled_release.ensure_installed, same arguments): the build is copied to
+#   $HOME/Library/Application Support/KritaAgent/creative-agent/<build id>/ and creative-agent-config.json names it, so the MCP test
+#   tools accept the new build without a visit to the panel. It runs with /usr/bin/python3 -I (the modules are stdlib only) and is
+#   skipped by --dry-run. If it fails, a warning says the panel will do it on Connect; the install still succeeds.
 set -euo pipefail
 NAME="Toska.app"
 LEGACY_NAME="Krita Agent.app"                 # the name before the rename: same bundle id, replaced by the new app
@@ -140,6 +145,33 @@ else
   mv "$staging" "$target"
 fi
 echo "installed $target"
+# The companion inside the app: the same step the panel runs at "Connect assistant", so it is ready now. Never fatal.
+plugin_dir="$target/Contents/Resources/krita/pykrita/kritamcp"
+if [[ -f $target/Contents/Resources/creative-agent-bundle/release-manifest.json ]]; then
+  if companion_out=$(/usr/bin/python3 -I - "$plugin_dir" "$HOME" 2>&1 <<'PY'
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import bundled_release, node_runtime
+from bridge_config import bridge_port
+ORGANIZATION = 'KritaAgent'                     # the app's settings folder name, as the panel's QCoreApplication.organizationName()
+home = sys.argv[2]
+app_data = os.path.join(home, 'Library', 'Application Support', ORGANIZATION)
+bundled = bundled_release.bundled_dir(sys.argv[1])
+if bundled is None:
+    raise SystemExit('the app has no usable companion bundle')
+spec = json.loads((bundled / 'release-manifest.json').read_text()).get('node_runtime')
+runtimes = node_runtime.default_root(home=home)
+node = node_runtime.node_path(spec, runtimes) if spec else ''
+config = bundled_release.ensure_installed(bundled, app_data, runtimes, node, bridge_url='http://127.0.0.1:%d' % bridge_port('', ORGANIZATION),
+                                          cache_dir=os.path.join(home, 'Library', 'Caches', ORGANIZATION, 'creative-agent'))
+print('companion build %s is installed (%s)' % (bundled_release.load_config(config).get('build_id', '?'), config))
+PY
+  ); then
+    echo "$companion_out"
+  else
+    echo "warning: could not install the companion (${companion_out##*$'\n'}); the panel will do it when you press Connect assistant" >&2
+  fi
+fi
 if (( $#legacies )); then
   for legacy in $legacies; do
     rm -rf "$legacy" && echo "removed the old $legacy"
