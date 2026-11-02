@@ -119,7 +119,9 @@ const centre = (stroke: Stroke): [number, number] => {
 };
 
 /** A solver for one pass: each stroke's colour solved against the view under it moved `overlap` of the way to the wanted
- * colour (C' = lerp(C, T, overlap), overlapShare above), memoised by (canvas, wanted) colour pair. */
+ * colour (C' = lerp(C, T, overlap), overlapShare above), at the preset's measured coverage times the stroke's opacity (the
+ * plugin paints a MyPaint dab at its opacity; the coverage was measured at opacity 1), memoised by (canvas, wanted colour,
+ * coverage). */
 export function transferSolver(model: MixModel, coverage: number, view: CanvasView, overlap = 0) {
   const known = new Map<string, string>();
   return function solve<T extends Stroke>(strokes: readonly T[]): T[] {
@@ -128,11 +130,12 @@ export function transferSolver(model: MixModel, coverage: number, view: CanvasVi
       if (!wanted) return stroke;
       const [x, y] = centre(stroke), under = canvasColour(view, x, y, (stroke.size * view.scale) / 4);
       if (!under) return stroke;
-      const key = rgbToHex(under) + stroke.color;
+      const opacity = typeof stroke.opacity === 'number' && stroke.opacity >= 0 && stroke.opacity < 1 ? stroke.opacity : 1;
+      const share = coverage * opacity, key = rgbToHex(under) + stroke.color + share;
       let color = known.get(key);
       if (color === undefined) {
         const below: Rgb = [0, 1, 2].map(k => under[k]! + (wanted[k]! - under[k]!) * overlap) as Rgb;
-        color = rgbToHex(solvePaint(model, below, wanted, coverage)); known.set(key, color);
+        color = rgbToHex(solvePaint(model, below, wanted, share)); known.set(key, color);
       }
       return color === stroke.color ? stroke : { ...stroke, color };
     });

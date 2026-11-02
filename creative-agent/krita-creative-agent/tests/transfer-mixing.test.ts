@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mix2, hexToRgb, rgbToHex } from '../src/colour-mixing/mix.ts';
 import type { MixModel, Rgb } from '../src/colour-mixing/mix.ts';
-import { solvePaint, overlapShare, SOLVE_STEPS, SOLVE_TOLERANCE } from '../src/colour-mixing/transfer-colours.ts';
+import { solvePaint, overlapShare, transferSolver, SOLVE_STEPS, SOLVE_TOLERANCE } from '../src/colour-mixing/transfer-colours.ts';
 import { presetCoverage } from '../src/colour-mixing/pass-mixing.ts';
 import { SHIPPED_POLICY } from '../src/colour-mixing/mixing-policy.ts';
 import { encodeRgba } from '../src/shapes/png.ts';
@@ -119,6 +119,21 @@ async function studio(options: { batch?: number; through?: 'tools' | 'reference'
 const planned = (preset: string) => generateReferencePlan(recipe(preset), image, canvas);
 const sentStrokes = (calls: Call[]) => calls.flatMap(c => c.params.strokes);
 
+test('a dab below opacity 1 is solved at coverage \u00d7 its opacity: the plugin paints MyPaint dabs at their opacity', () => {
+  // A uniform canvas view, a dab wanting T over C: full, half and absent opacity.
+  const C: Rgb = [0.2, 0.3, 0.7], T: Rgb = [0.9, 0.8, 0.1], px = [C[0], C[1], C[2]].map(v => Math.round(v * 255));
+  const data = new Uint8Array(40 * 40 * 4);
+  for (let i = 0; i < 40 * 40; i++) data.set([px[0]!, px[1]!, px[2]!, 255], i * 4);
+  const view = { width: 40, height: 40, data, scale: 1 }, under = px.map(v => v / 255) as Rgb;
+  const dab = (opacity?: number) => ({ start: [20, 20], segments: [[20, 20, 22, 20, 22, 20]], size: 8, color: rgbToHex(T), ...(opacity === undefined ? {} : { opacity }) });
+  const [full, half, plain, again] = transferSolver('spectral', 0.91, view)([dab(1), dab(0.5), dab(), dab(0.5)]);
+  assert.equal(full!.color, rgbToHex(solvePaint('spectral', under, T, 0.91)), 'opacity 1: the measured coverage');
+  assert.equal(plain!.color, full!.color, 'no opacity: 1');
+  assert.equal(half!.color, rgbToHex(solvePaint('spectral', under, T, 0.91 * 0.5)), 'opacity 0.5: coverage \u00d7 0.5');
+  assert.notEqual(half!.color, full!.color);
+  assert.equal(again!.color, half!.color, 'memoised per coverage, not across it');
+});
+
 test('a transfer with mixing spectral and Wet Paint Plus: every chunk carries spectral, and each dab is solved against the canvas', async t => {
   if (!SHIPPED_HAS_SPECTRAL) return t.skip('TOSKA_MIXING=off in this shell');
   const h = await studio();
@@ -141,7 +156,7 @@ test('a transfer with mixing spectral and Wet Paint Plus: every chunk carries sp
       assert.deepEqual({ ...s, color: '' }, { ...wanted[i], color: '' }, 'only the colour changes');
       // Solved against C' = lerp(C, T, s): what is seen of a dab mostly lies on earlier dabs of its own pass.
       const below = [0, 1, 2].map(k => C[k]! + (T[k]! - C[k]!) * share) as Rgb;
-      assert.equal(s.color, rgbToHex(solvePaint('spectral', below, T, 0.91)), `dab ${i}`);
+      assert.equal(s.color, rgbToHex(solvePaint('spectral', below, T, 0.91 * (wanted[i].opacity ?? 1))), `dab ${i}`);
       if (s.color !== wanted[i].color) changed++;
     });
     assert.ok(changed > 0, 'the dabs were solved, not painted as the reference (C\u2032 is near T, so the change is small)');
