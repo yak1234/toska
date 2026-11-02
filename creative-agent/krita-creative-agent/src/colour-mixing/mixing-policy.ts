@@ -30,6 +30,11 @@
 //   job "soft light, glow and atmosphere"    | atmosphere
 //   job "small details…", "crisp edges…"     | details
 //   any other job, or a preset in no job     | block_in
+//
+// Kind source (resolvePassKind): stated (the tool's kind, or the pass_kind a caller sends), plan (the plan step), derived
+// (the preset's job). A derived kind on a preset with a measured card mixes with the card's model, not the table's (pilot 5,
+// 2026-11-02: Wet Paint Plus derived block_in and Wet Knife Plus derived details, so the only carded presets never mixed
+// without a plan); stated and plan kinds follow the table. pass-mixing.ts decidePassMixing applies it.
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
 import type { MixModel } from './mix.ts';
@@ -121,4 +126,17 @@ export function derivePassKind({ tool, step, preset }: { tool?: string; step?: s
   if (step && Object.hasOwn(STEP_KINDS, step)) return STEP_KINDS[step]!;
   const job = preset ? Object.entries(catalog.jobs ?? {}).find(([, presets]) => presets.includes(preset))?.[0] : undefined;
   return (job && JOB_KINDS.find(([pattern]) => pattern.test(job))?.[1]) || 'block_in';
+}
+
+/** Where a pass kind came from: stated by the caller (the tool's own kind, or the internal pass_kind the reference tools
+ * send), the plan step painting now, or derived from the preset's catalog job. Only a derived kind yields to the preset's
+ * measured card (pass-mixing.ts passMixing). */
+export type KindSource = 'stated' | 'plan' | 'derived';
+
+/** The pass kind and its source: a stated kind, else derivePassKind's rule (a tool or plan step kind, else the preset job). */
+export function resolvePassKind({ tool, stated, step, preset }: { tool?: string; stated?: string | null; step?: string | null; preset?: string }, catalog: { jobs?: Record<string, readonly string[]> }): { kind: PassKind; source: KindSource } {
+  if (isKind(stated)) return { kind: stated, source: 'stated' };
+  if (tool && Object.hasOwn(TOOL_KINDS, tool)) return { kind: TOOL_KINDS[tool]!, source: 'stated' };
+  if (step && Object.hasOwn(STEP_KINDS, step)) return { kind: STEP_KINDS[step]!, source: 'plan' };
+  return { kind: derivePassKind({ preset }, catalog), source: 'derived' };
 }

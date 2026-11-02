@@ -10,7 +10,7 @@
 // Mechanism only: the catalog and policy come in as arguments, so this module imports no .mjs (and only types from the policy).
 import type { MixModel } from './mix.ts';
 import { MIX_MODELS } from './mix.ts';
-import type { MixingPolicy, PassKind } from './mixing-policy.ts';
+import type { KindSource, MixingPolicy, PassKind } from './mixing-policy.ts';
 
 export type PresetMixing = { cards?: Partial<Record<MixModel, string>>; default?: MixModel; coverage?: number };
 export type MixingCatalog = { mixing?: { models?: Partial<Record<MixModel, string>>; presets?: Record<string, PresetMixing> }; jobs?: Record<string, readonly string[]> };
@@ -46,18 +46,27 @@ function measuredPairs(catalog: MixingCatalog): string {
   return rows.map(([name, models]) => `${name}: ${models.join(', ')}`).join('; ');
 }
 
-/** What the plugin gets for a pass: `mixing_model`, or nothing (rgb), or the refusal. Order: the pass's explicit `mixing`
- * (refused without a card) > the policy's model for the pass kind, where the preset has a card for it > rgb. Without a
- * policy, the preset's default stands in for the policy. A policy never refuses: no card means rgb. */
-export function passMixing(args: { preset: string; mixing?: MixModel | string; kind?: PassKind | string }, catalog: MixingCatalog, policy?: MixingPolicy): { mixing_model?: MixModel } | { error: string } {
+/** What the plugin gets for a pass, and why: `mixing_model`, or nothing (rgb), or the refusal. Order: the pass's explicit
+ * `mixing` (refused without a card) > for a kind only derived from the preset's catalog job, the preset's measured card
+ * (its default, else its first carded model: the preset was carded to blend wet paint; pilot 5) > the policy's model for
+ * the pass kind, where the preset has a card for it > rgb. A stated or plan kind always follows the policy table. Without
+ * a policy, the preset's default stands in for the policy. A policy never refuses: no card means rgb. */
+export function decidePassMixing(args: { preset: string; mixing?: MixModel | string; kind?: PassKind | string; kind_source?: KindSource }, catalog: MixingCatalog, policy?: MixingPolicy): { mixing_model?: MixModel; reason: string } | { error: string } {
   const named = args.mixing;
   if (named === undefined) {
     const own = presetMixing(args.preset, catalog);
-    if (!policy) return own?.default && own.default !== 'rgb' ? { mixing_model: own.default } : {};
-    const model = args.kind && Object.hasOwn(policy.kinds, args.kind) ? policy.kinds[args.kind as PassKind] ?? policy.default : policy.default;
-    return model !== 'rgb' && isModel(model) && own?.cards[model] ? { mixing_model: model } : {};
+    if (!policy) return own?.default && own.default !== 'rgb' ? { mixing_model: own.default, reason: 'the preset\'s default (no policy)' } : { reason: 'no policy and no preset default' };
+    if (args.kind_source === 'derived' && own) {
+      const card = own.default ?? (Object.keys(own.cards) as MixModel[]).find(m => m !== 'rgb');
+      if (card && card !== 'rgb') return { mixing_model: card, reason: `kind derived from the preset's job: the preset's measured ${card} card` };
+    }
+    const kind = args.kind && Object.hasOwn(policy.kinds, args.kind) ? args.kind : undefined;
+    const model = kind ? policy.kinds[kind as PassKind] ?? policy.default : policy.default;
+    const rule = kind ? `policy ${kind}: ${model}` : `policy default: ${model}`;
+    if (model === 'rgb') return { reason: rule };
+    return isModel(model) && own?.cards[model] ? { mixing_model: model, reason: rule } : { reason: `${rule}, but ${args.preset} has no measured ${model} card: rgb` };
   }
-  if (named === 'rgb') return {};
+  if (named === 'rgb') return { reason: 'explicit mixing rgb' };
   const measured = measuredModels(catalog);
   if (!measured.length) return { error: `Mixing "${named}" is not available: no mixing model has a measured card yet. Leave mixing out; the preset blends as it always does.` };
   const own = presetMixing(args.preset, catalog);
@@ -65,34 +74,50 @@ export function passMixing(args: { preset: string; mixing?: MixModel | string; k
     const here = own ? `${args.preset} has measured cards for ${Object.keys(own.cards).join(', ')}` : `${args.preset} has no measured mixing card`;
     return { error: `Mixing "${named}" has no measured card for ${args.preset}: ${here}. Measured pairs: ${measuredPairs(catalog)}. Leave mixing out (or rgb) for the preset's usual blending.` };
   }
-  return { mixing_model: named };
+  return { mixing_model: named, reason: `explicit mixing ${named}` };
+}
+
+/** What the plugin gets for a pass (decidePassMixing without its reason). */
+export function passMixing(args: { preset: string; mixing?: MixModel | string; kind?: PassKind | string; kind_source?: KindSource }, catalog: MixingCatalog, policy?: MixingPolicy): { mixing_model?: MixModel } | { error: string } {
+  const decided = decidePassMixing(args, catalog, policy);
+  if ('error' in decided) return decided;
+  return decided.mixing_model ? { mixing_model: decided.mixing_model } : {};
 }
 
 type Executable = { parameters?: unknown; execute: (id: string, args: any, signal?: AbortSignal, ...rest: any[]) => Promise<any> };
 
 /** Where withMixing finds the policy and the pass kind: the policy, the kind of the plan step painting now (FolderStepKind,
- * studio.mjs paintStepKind), and how a kind is derived (mixing-policy.ts derivePassKind, passed in to keep this module's
- * imports type-only). */
+ * studio.mjs paintStepKind), how a kind and its source are resolved (mixing-policy.ts resolvePassKind, passed in to keep
+ * this module's imports type-only), and where each pass's decision is recorded (the `pass_mixing` diagnostic). */
 export type MixingContext = {
   policy: () => MixingPolicy;
   stepKind?: () => string | null | undefined;
-  derive: (input: { tool?: string; step?: string | null; preset?: string }, catalog: MixingCatalog) => PassKind;
+  resolve: (input: { tool?: string; stated?: string | null; step?: string | null; preset?: string }, catalog: MixingCatalog) => { kind: PassKind; source: KindSource };
+  record?: (event: Record<string, unknown>) => void;
 };
 
 /** Wraps a paint_pass tool so its prompt-facing `mixing` becomes the plugin's `mixing_model` (or is refused); the batch,
- * paint_recipe and the reference tools capture this execute, so their passes get the same handling. With a context, a pass
- * that names no model gets the policy's: its kind is the host's internal `pass_kind` (the reference tools send their own;
- * never sent to the plugin), else derived from the plan step and the preset's job. */
+ * paint_recipe and the reference tools capture this execute, so their passes (every pass inside a paint_batch included)
+ * get the same handling. With a context, a pass that names no model gets the policy's: its kind is the host's internal
+ * `pass_kind` (stated; the reference tools send their own; never sent to the plugin), else the plan step's, else derived
+ * from the preset's job. With a context, the decision (preset, kind, kind_source, model, reason) is recorded as a
+ * `pass_mixing` diagnostic and returned in the result's details.pass_mixing. */
 export function withMixing<T extends Executable>(tool: T, catalog: () => MixingCatalog, context?: MixingContext): T {
   const inner = tool.execute;
   tool.execute = async (id, args, ...rest) => {
     const { mixing, pass_kind, ...others } = args ?? {};
     const current = catalog();
-    const kind = context ? (typeof pass_kind === 'string' && pass_kind ? pass_kind
-      : context.derive({ tool: 'paint_pass', step: context.stepKind?.() ?? null, preset: others.preset }, current)) : undefined;
-    const sent = passMixing({ preset: others.preset, ...(mixing === undefined ? {} : { mixing }), ...(kind ? { kind } : {}) }, current, context?.policy());
-    if ('error' in sent) throw new Error(sent.error);
-    return inner(id, { ...others, ...sent }, ...rest);
+    const resolved = context ? context.resolve({ tool: 'paint_pass', stated: typeof pass_kind === 'string' && pass_kind ? pass_kind : null,
+      step: context.stepKind?.() ?? null, preset: others.preset }, current) : undefined;
+    const decided = decidePassMixing({ preset: others.preset, ...(mixing === undefined ? {} : { mixing }),
+      ...(resolved ? { kind: resolved.kind, kind_source: resolved.source } : {}) }, current, context?.policy());
+    if ('error' in decided) throw new Error(decided.error);
+    const sent = decided.mixing_model ? { mixing_model: decided.mixing_model } : {};
+    const result = await inner(id, { ...others, ...sent }, ...rest);
+    if (!context || !resolved) return result;
+    const record = { preset: others.preset, kind: resolved.kind, kind_source: resolved.source, model: decided.mixing_model ?? 'rgb', reason: decided.reason };
+    context.record?.({ type: 'pass_mixing', ...record });
+    return result && typeof result === 'object' ? { ...result, details: { ...(result.details ?? {}), pass_mixing: record } } : result;
   };
   return tool;
 }

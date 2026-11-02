@@ -1,6 +1,7 @@
 # Which mixing model each kind of paint pass uses. A rule applies only when the pass's preset has a measured
 # catalog card for that model (brush-catalog.json "mixing"); otherwise the pass mixes as rgb. The painter's explicit
 # `mixing` on a pass wins. Painting practice: block in without mixing, mix in the middle layers, finish clean.
+# A kind only derived from the preset's catalog job (no plan step, none stated) yields to the preset's measured card.
 version: 1
 kinds:
   underpainting: rgb     # reference transfer / block-in: big separate shapes

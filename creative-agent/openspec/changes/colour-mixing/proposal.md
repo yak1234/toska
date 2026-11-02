@@ -83,6 +83,11 @@ added that earlier when I asked". Pilot P1 confirmed it: with mixing offered, th
   paint pass by the companion: underpainting/block-in and accents/details → `rgb`; finish, refine, blend, glaze and
   atmosphere passes → `spectral` (later `pigment`). A rule applies only when the pass's preset has a measured card for
   that model; otherwise `rgb`. The painter may still override per pass. The policy file can be edited without code.
+- **Derived kinds yield to the card (2026-11-02, after pilot 5):** a pass whose kind is only derived from the preset's
+  catalog job (no plan step, none stated) mixes with the preset's measured card model when it has one; pilot 5 painted
+  with Wet Paint Plus (derived block_in) and Wet Knife Plus (derived details) and nothing mixed. Plan and stated kinds
+  follow the table; presets without a card stay `rgb`; `TOSKA_MIXING=off` and an explicit `mixing` still win. Every pass,
+  inside `paint_batch` too, records a `pass_mixing` diagnostic (preset, kind, kind_source plan|stated|derived, model, reason).
 - **When mixing happens** (painting practice, Claude's call): plan mixes on the palette first (`mix_colors`), block in
   without mixing, mix during the middle layers, finish details and accents clean.
 - **Luna's roles** (later, optional): label a pass the policy cannot classify ("blending existing colour or laying new

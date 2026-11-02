@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { loadMixingPolicy, mixingPolicyOrRgb, policyModel, derivePassKind, referencePassKind, PASS_KINDS, RGB_POLICY, SHIPPED_POLICY } from '../src/colour-mixing/mixing-policy.ts';
+import { loadMixingPolicy, mixingPolicyOrRgb, policyModel, derivePassKind, resolvePassKind, referencePassKind, PASS_KINDS, RGB_POLICY, SHIPPED_POLICY } from '../src/colour-mixing/mixing-policy.ts';
 import type { PassKind } from '../src/colour-mixing/mixing-policy.ts';
 import { passMixing, withMixing } from '../src/colour-mixing/pass-mixing.ts';
 import { effectiveCatalog, CATALOG } from '../src/brush-catalog.mjs';
@@ -117,10 +117,10 @@ test('the pass kind derivation table: tool, then plan step kind, then the preset
 const fakePass = (seen: any[]) => ({ name: 'paint_pass', parameters: {},
   execute: async (_id: string, args: any) => { seen.push(args); return { content: [{ type: 'text', text: '{}' }], details: { status: 'ok' } }; } });
 
-test('withMixing with a policy: the step kind, an explicit pass_kind (stripped), else the preset job', async () => {
+test('withMixing with a policy: the step kind, an explicit pass_kind (stripped), else the preset job (its card when carded)', async () => {
   const seen: any[] = [];
   let step: string | null = 'refine';
-  const pass = withMixing(fakePass(seen) as any, () => RAW, { policy: () => policy, stepKind: () => step, derive: derivePassKind });
+  const pass = withMixing(fakePass(seen) as any, () => RAW, { policy: () => policy, stepKind: () => step, resolve: resolvePassKind });
   await pass.execute('a', { name: 'A', preset: WET, strokes: [] });
   step = 'underpainting';
   await pass.execute('b', { name: 'B', preset: WET, strokes: [] });
@@ -129,7 +129,8 @@ test('withMixing with a policy: the step kind, an explicit pass_kind (stripped),
   await pass.execute('d', { name: 'D', preset: WET, strokes: [] });
   await pass.execute('e', { name: 'E', preset: WET, strokes: [], mixing: 'spectral' });
   await pass.execute('f', { name: 'F', preset: WET, strokes: [], pass_kind: 'underpainting' });
-  assert.deepEqual(seen.map(a => a.mixing_model), ['spectral', undefined, 'spectral', undefined, 'spectral', undefined]);
+  // d: no plan step, so the kind is derived from Wet Paint Plus's job (block_in) and its spectral card decides (pilot 5).
+  assert.deepEqual(seen.map(a => a.mixing_model), ['spectral', undefined, 'spectral', 'spectral', 'spectral', undefined]);
   assert.ok(seen.every(a => !('pass_kind' in a) && !('mixing' in a)), 'the plugin never sees pass_kind or mixing');
 });
 
@@ -170,4 +171,68 @@ test('reference transfer jobs carry their kind: a transfer is reference_transfer
   assert.equal(policyModel(policy, referencePassKind(undefined), WET, effectiveCatalog(RAW, { TOSKA_MIXING: 'off' })), 'rgb', 'TOSKA_MIXING=off: rgb');
   assert.equal(policy.kinds.underpainting, 'rgb', 'underpainting and block_in stay rgb');
   assert.equal(policy.kinds.block_in, 'rgb');
+});
+
+// Pilot 5 (local-notes/benchmarks/colour-mixing/pilot-p5): with no plan step a pass's kind came from the preset's first
+// catalog job, so Wet Paint Plus (block_in) and Wet Knife Plus (details), the only carded presets, never mixed. A kind that
+// is only derived from the preset's job now yields to the preset's measured card; an explicit kind keeps the policy table.
+const AIRBRUSH = 'b) Airbrush Soft';
+
+test('derived kind: a preset with a measured card uses its card model; explicit kinds follow the policy table', () => {
+  assert.deepEqual(passMixing({ preset: WET, kind: 'block_in', kind_source: 'derived' }, RAW, policy), { mixing_model: 'spectral' }, 'derived + Wet Paint Plus');
+  assert.deepEqual(passMixing({ preset: KNIFE, kind: 'details', kind_source: 'derived' }, RAW, policy), { mixing_model: 'spectral' }, 'derived + Wet Knife Plus');
+  assert.deepEqual(passMixing({ preset: KNIFE, kind: 'details', kind_source: 'plan' }, RAW, policy), {}, 'plan details + Wet Knife Plus: rgb');
+  assert.deepEqual(passMixing({ preset: KNIFE, kind: 'details', kind_source: 'stated' }, RAW, policy), {}, 'stated details + Wet Knife Plus: rgb');
+  assert.deepEqual(passMixing({ preset: WET, kind: 'underpainting', kind_source: 'plan' }, RAW, policy), {}, 'plan underpainting: rgb');
+  assert.deepEqual(passMixing({ preset: AIRBRUSH, kind: 'atmosphere', kind_source: 'derived' }, RAW, policy), {}, 'derived + Airbrush Soft (no card): rgb');
+  assert.deepEqual(passMixing({ preset: WET, kind: 'block_in', kind_source: 'derived', mixing: 'rgb' }, RAW, policy), {}, 'explicit rgb still wins');
+  const off = effectiveCatalog(RAW, { TOSKA_MIXING: 'off' });
+  for (const preset of [WET, KNIFE, AIRBRUSH]) assert.deepEqual(passMixing({ preset, kind: 'block_in', kind_source: 'derived' }, off, policy), {}, `TOSKA_MIXING=off: ${preset} rgb`);
+});
+
+test('resolvePassKind names where the kind came from: stated, plan or derived', () => {
+  assert.deepEqual(resolvePassKind({ tool: 'paint_pass', stated: 'finish', step: 'underpainting', preset: WET }, RAW), { kind: 'finish', source: 'stated' });
+  assert.deepEqual(resolvePassKind({ tool: 'paint_pass', step: 'accents', preset: KNIFE }, RAW), { kind: 'accents', source: 'plan' });
+  assert.deepEqual(resolvePassKind({ tool: 'paint_pass', step: 'whole', preset: KNIFE }, RAW), { kind: 'details', source: 'derived' });
+  assert.deepEqual(resolvePassKind({ tool: 'paint_pass', step: null, preset: WET }, RAW), { kind: 'block_in', source: 'derived' });
+});
+
+test('paint_batch with no plan step: each pass gets its own model, and a pass_mixing diagnostic carries kind_source', async () => {
+  const calls: any[] = [], events: any[] = [];
+  const runtime = { faulted: false, mode: 'agent', executionPhase: 'agent', study: { directory: '/nonexistent', references: [] }, emit() {},
+    paintStepKind: () => null, diagnostics: { record: (event: any) => events.push(event) },
+    async callNative(operation: string, params: any) { calls.push({ operation, params }); return { status: 'ok', revision: 1, layer_id: 'l' }; } };
+  const tools = paintingTools(runtime);
+  const stroke = { start: [10, 10], segments: [[12, 12, 18, 18, 20, 20]], opacity: 1, flow: 1, color: '#336699', size: 8 };
+  const batch = tools.find(t => t.name === 'paint_batch')!;
+  await batch.execute('b1', { actions: [{ tool: 'paint_pass', arguments: { name: 'Lake', preset: WET, strokes: [stroke] } },
+    { tool: 'paint_pass', arguments: { name: 'Mist', preset: AIRBRUSH, strokes: [stroke] } },
+    { tool: 'paint_pass', arguments: { name: 'Glints', preset: KNIFE, strokes: [stroke] } }] }, undefined as any, undefined as any);
+  const carded = !!CATALOG.mixing?.presets?.[WET]?.cards?.spectral;   // TOSKA_MIXING=off in the shell: rgb
+  const batched = calls.filter(c => c.operation === 'paint_pass').map(c => c.params);
+  assert.deepEqual(batched.map(p => p.mixing_model), carded ? ['spectral', undefined, 'spectral'] : [undefined, undefined, undefined]);
+  assert.ok(batched.every(p => !('kind_source' in p) && !('pass_kind' in p)), 'the plugin never sees the decision fields');
+  const decided = events.filter(e => e.type === 'pass_mixing');
+  assert.deepEqual(decided.map(e => [e.preset, e.kind, e.kind_source, e.model]), [
+    [WET, 'block_in', 'derived', carded ? 'spectral' : 'rgb'],
+    [AIRBRUSH, 'atmosphere', 'derived', 'rgb'],
+    [KNIFE, 'details', 'derived', carded ? 'spectral' : 'rgb'],
+  ]);
+  assert.ok(decided.every(e => typeof e.reason === 'string' && e.reason.length > 0), 'each decision says why');
+});
+
+test('withMixing reports its decision in the result details: stated details and a plan accents step keep Wet Knife Plus rgb', async () => {
+  const seen: any[] = [];
+  let step: string | null = null;
+  const pass = withMixing(fakePass(seen) as any, () => RAW, { policy: () => policy, stepKind: () => step, resolve: resolvePassKind });
+  const stated = await pass.execute('k', { name: 'K', preset: KNIFE, strokes: [], pass_kind: 'details' });
+  step = 'accents';
+  const planned = await pass.execute('l', { name: 'L', preset: KNIFE, strokes: [] });
+  step = null;
+  const derived = await pass.execute('m', { name: 'M', preset: KNIFE, strokes: [] });
+  assert.deepEqual(seen.map(a => a.mixing_model), [undefined, undefined, 'spectral']);
+  const strip = (d: any) => ({ ...d, reason: typeof d.reason });
+  assert.deepEqual(strip(stated.details.pass_mixing), { preset: KNIFE, kind: 'details', kind_source: 'stated', model: 'rgb', reason: 'string' });
+  assert.deepEqual(strip(planned.details.pass_mixing), { preset: KNIFE, kind: 'accents', kind_source: 'plan', model: 'rgb', reason: 'string' });
+  assert.deepEqual(strip(derived.details.pass_mixing), { preset: KNIFE, kind: 'details', kind_source: 'derived', model: 'spectral', reason: 'string' });
 });
