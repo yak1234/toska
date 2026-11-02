@@ -6,7 +6,7 @@
 // that: for each mixing model (rgb, spectral) and each preset (Wet Paint Plus, Wet Knife Plus), a fresh 3000x2000 white test
 // document (made and closed here) holds three panels, each on one new layer that later passes continue:
 //   1 blue into yellow, 2 sunset sky (blue top, orange bottom, alternating blending strokes across the middle), 3 red over green.
-//   node scripts/mixing-showcase.ts [--out <folder>]
+//   node scripts/mixing-showcase.ts [--out <folder>] [--variant default|glaze|layered]
 // Krita must be idle with no document open (checked first). Writes per (preset, model) the full result PNG, per preset a labelled
 // sheet showcase-<preset>.jpg (rgb row above spectral row), numbers.json and report.md in the folder (default
 // ../local-notes/benchmarks/colour-mixing/showcase). The strokes are fixed (seeded jitter), so a rerun differs only by Krita.
@@ -83,7 +83,25 @@ function columns(ox: number, y0: number, y1: number, x0: number, step: number, c
 }
 
 /** The three panels' strokes and measuring zones, one column of the canvas each. Pure and deterministic. */
-export function buildLayout(canvas = CANVAS): PanelPlan[] {
+export type Variant = { opacity?: number; flow?: number; secondOpacity?: number; secondRepeat?: number };
+/** Named variants (--variant): default full strength; glaze = every stroke at 0.35 opacity and flow; layered = the second colour
+ * (the blue, the blending rows, the red) repeated 3 times at opacity 0.3, flow 1, the first colour at full strength. */
+export const VARIANTS: Record<string, Variant> = { default: {}, glaze: { opacity: 0.35, flow: 0.35 }, layered: { secondOpacity: 0.3, secondRepeat: 3 } };
+
+/** Applies a variant to a built layout: every stroke's opacity and flow, and the second pass of each panel repeated. */
+export function applyVariant(panels: PanelPlan[], v: Variant): PanelPlan[] {
+  const set = (strokes: Stroke[], opacity?: number, flow?: number) => strokes.map(s => ({ ...s, opacity: opacity ?? s.opacity, flow: flow ?? s.flow }));
+  return panels.map(panel => ({ ...panel, passes: panel.passes.map((pass, i) => {
+    let strokes = set(pass.strokes, v.opacity, v.flow);
+    if (i === 1) strokes = Array.from({ length: v.secondRepeat ?? 1 }, () => set(strokes, v.secondOpacity)).flat();
+    return { ...pass, strokes };
+  }) }));
+}
+
+export function buildLayout(canvas = CANVAS, variant: Variant = {}): PanelPlan[] {
+  return applyVariant(baseLayout(canvas), variant);
+}
+function baseLayout(canvas: typeof CANVAS): PanelPlan[] {
   const w = Math.floor(canvas.width / 3);
   const col = (i: number): Rect => [i * w, 0, w, canvas.height];
 
@@ -297,7 +315,9 @@ async function live(argv: string[]) {
   const url = process.env.KRITA_URL ?? 'http://127.0.0.1:5679';
   const out = resolve(args.out ?? new URL('../../local-notes/benchmarks/colour-mixing/showcase', import.meta.url).pathname);
   const log = (...m: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...m);
-  const panels = buildLayout();
+  const variantName = args.variant ?? 'default';
+  if (!VARIANTS[variantName]) throw new Error('--variant is one of ' + Object.keys(VARIANTS).join(', '));
+  const panels = buildLayout(CANVAS, VARIANTS[variantName]);
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
 
   async function health(ms = 10000): Promise<Json> { return await (await fetch(url + '/health', { signal: AbortSignal.timeout(ms) })).json() as Json; }
@@ -373,7 +393,7 @@ async function live(argv: string[]) {
     execFileSync('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '90', sheet, '--out', join(out, `showcase-${preset.slug}.jpg`)], { stdio: 'ignore' });
     await rm(sheet, { force: true });
   }
-  const meta = { date: new Date().toISOString(), build: chatHealth.build?.build_id, krita: chatHealth.krita_version, canvas: CANVAS, bridge: url };
+  const meta = { variant: variantName, date: new Date().toISOString(), build: chatHealth.build?.build_id, krita: chatHealth.krita_version, canvas: CANVAS, bridge: url };
   await writeFile(join(out, 'numbers.json'), JSON.stringify({ ...meta, zones: Object.fromEntries(panels.map(p => [p.id, p.zones])), results, steps }, null, 2));
   await writeFile(join(out, 'report.md'), reportMarkdown(results, meta));
   await rm(join(out, 'work'), { recursive: true, force: true });

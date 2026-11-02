@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildLayout, CANVAS, COLOURS, composeSheet, encodePng, hsvl, intersect, lineStroke, rng, strokesBounds, zoneStats, panelMetrics, MODELS, PRESETS, reading } from '../scripts/mixing-showcase.ts';
+import { buildLayout, VARIANTS, CANVAS, COLOURS, composeSheet, encodePng, hsvl, intersect, lineStroke, rng, strokesBounds, zoneStats, panelMetrics, MODELS, PRESETS, reading } from '../scripts/mixing-showcase.ts';
 import type { Image, Rect, Results } from '../scripts/mixing-showcase.ts';
 import { decodeRgba } from '../src/png-rgba.ts';
 
@@ -125,4 +125,16 @@ test('the reading names both presets and says which model keeps more green', () 
   assert.match(lines[0]!, /Wet Paint Plus/); assert.match(lines[0]!, /Spectral makes noticeably more green/);
   assert.match(lines[1]!, /keeps the middle more colourful/);
   const r: Rect = [0, 0, 1, 1]; assert.deepEqual(intersect(r, [5, 5, 1, 1]), null);
+});
+
+test('variants: glaze lowers every stroke, layered repeats only the second colour at low opacity', () => {
+  const base = buildLayout(), glaze = buildLayout(CANVAS, VARIANTS.glaze), layered = buildLayout(CANVAS, VARIANTS.layered);
+  for (const panel of glaze) for (const pass of panel.passes) assert.ok(pass.strokes.every(s => s.opacity === 0.35 && s.flow === 0.35));
+  layered.forEach((panel, i) => {
+    assert.equal(panel.passes[0]!.strokes.length, base[i]!.passes[0]!.strokes.length);
+    assert.ok(panel.passes[0]!.strokes.every(s => s.opacity === 1 && s.flow === 1));
+    assert.equal(panel.passes[1]!.strokes.length, base[i]!.passes[1]!.strokes.length * 3);
+    assert.ok(panel.passes[1]!.strokes.every(s => s.opacity === 0.3 && s.flow === 1));
+  });
+  assert.deepEqual(buildLayout(CANVAS, {}), base);
 });
