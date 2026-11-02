@@ -37,6 +37,41 @@ export function solvePaint(model: MixModel, canvas: Rgb, target: Rgb, coverage: 
   return best;
 }
 
+/** solvePaint's steps without the clamp: null when a step would leave gamut (the target is out of the paint's reach). */
+function solveInGamut(model: MixModel, canvas: Rgb, target: Rgb, coverage: number): Rgb | null {
+  let paint: Rgb = [target[0], target[1], target[2]], best = paint, bestError = Infinity;
+  for (let step = 0; ; step++) {
+    const got = mix2(model, canvas, paint, coverage), error = worst(got, target);
+    if (error < bestError) { best = paint; bestError = error; }
+    if (error < SOLVE_TOLERANCE || step === SOLVE_STEPS) return best;
+    paint = [paint[0] + target[0] - got[0], paint[1] + target[1] - got[1], paint[2] + target[2] - got[2]];
+    if (paint.some(v => !(v >= 0 && v <= 1))) return null;
+  }
+}
+
+/** Bisection steps for how far toward its target a feathered dab can reach in gamut. */
+export const REACH_STEPS = 8;
+
+/** The paint for a dab of opacity `opacity` wanting `target` over `canvas`. Opacity 1: solvePaint at the measured coverage,
+ * as before. Below 1 the dab paints at coverage x opacity, and a plain dab of the reference colour at that opacity would
+ * only move the canvas toward T by the opacity: so its target is lerp(C, T, opacity), not T (solving a 0.02-opacity dab to
+ * land on T asks for a colour far out of gamut, which clamps to a saturated edge). Where even that target is out of
+ * reach, the dab moves toward it only as far as an in-gamut paint can (the largest k in [0, 1] with lerp(C, T, opacity k)
+ * solvable without clamping; k = 0 is the canvas itself), so a feathered dab never lays a clamped colour. */
+export function solveDab(model: MixModel, canvas: Rgb, target: Rgb, coverage: number, opacity: number): Rgb {
+  if (!(opacity >= 0 && opacity < 1)) return solvePaint(model, canvas, target, coverage);
+  const share = coverage * opacity;
+  const toward = (k: number): Rgb => [0, 1, 2].map(i => canvas[i]! + (target[i]! - canvas[i]!) * opacity * k) as Rgb;
+  const whole = solveInGamut(model, canvas, toward(1), share);
+  if (whole) return whole;
+  let low = 0, high = 1, best: Rgb = [canvas[0], canvas[1], canvas[2]];
+  for (let step = 0; step < REACH_STEPS; step++) {
+    const middle = (low + high) / 2, paint = solveInGamut(model, canvas, toward(middle), share);
+    if (paint) { low = middle; best = paint; } else high = middle;
+  }
+  return best;
+}
+
 // Overlap within a pass (fix round 1). A transfer's dabs are 1.5 steps wide a step apart and painted in shuffled order, so
 // most of what is finally seen of a dab lies on an earlier dab of the same pass (whose colour is about T), not on the canvas
 // the pass started from (C). Solving against C then overshoots by about (1 - cov)(T - C). The solve uses
@@ -120,8 +155,8 @@ const centre = (stroke: Stroke): [number, number] => {
 
 /** A solver for one pass: each stroke's colour solved against the view under it moved `overlap` of the way to the wanted
  * colour (C' = lerp(C, T, overlap), overlapShare above), at the preset's measured coverage times the stroke's opacity (the
- * plugin paints a MyPaint dab at its opacity; the coverage was measured at opacity 1), memoised by (canvas, wanted colour,
- * coverage). */
+ * plugin paints a MyPaint dab at its opacity; the coverage was measured at opacity 1) toward lerp(C', T, opacity) (solveDab),
+ * memoised by (canvas, wanted colour, coverage, opacity). */
 export function transferSolver(model: MixModel, coverage: number, view: CanvasView, overlap = 0) {
   const known = new Map<string, string>();
   return function solve<T extends Stroke>(strokes: readonly T[]): T[] {
@@ -131,11 +166,11 @@ export function transferSolver(model: MixModel, coverage: number, view: CanvasVi
       const [x, y] = centre(stroke), under = canvasColour(view, x, y, (stroke.size * view.scale) / 4);
       if (!under) return stroke;
       const opacity = typeof stroke.opacity === 'number' && stroke.opacity >= 0 && stroke.opacity < 1 ? stroke.opacity : 1;
-      const share = coverage * opacity, key = rgbToHex(under) + stroke.color + share;
+      const key = rgbToHex(under) + stroke.color + coverage + ':' + opacity;
       let color = known.get(key);
       if (color === undefined) {
         const below: Rgb = [0, 1, 2].map(k => under[k]! + (wanted[k]! - under[k]!) * overlap) as Rgb;
-        color = rgbToHex(solvePaint(model, below, wanted, share)); known.set(key, color);
+        color = rgbToHex(solveDab(model, below, wanted, coverage, opacity)); known.set(key, color);
       }
       return color === stroke.color ? stroke : { ...stroke, color };
     });

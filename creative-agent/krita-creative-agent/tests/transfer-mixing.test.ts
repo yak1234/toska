@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mix2, hexToRgb, rgbToHex } from '../src/colour-mixing/mix.ts';
 import type { MixModel, Rgb } from '../src/colour-mixing/mix.ts';
-import { solvePaint, overlapShare, transferSolver, SOLVE_STEPS, SOLVE_TOLERANCE } from '../src/colour-mixing/transfer-colours.ts';
+import { solvePaint, solveDab, overlapShare, transferSolver, SOLVE_STEPS, SOLVE_TOLERANCE } from '../src/colour-mixing/transfer-colours.ts';
 import { presetCoverage } from '../src/colour-mixing/pass-mixing.ts';
 import { SHIPPED_POLICY } from '../src/colour-mixing/mixing-policy.ts';
 import { encodeRgba } from '../src/shapes/png.ts';
@@ -129,9 +129,42 @@ test('a dab below opacity 1 is solved at coverage \u00d7 its opacity: the plugin
   const [full, half, plain, again] = transferSolver('spectral', 0.91, view)([dab(1), dab(0.5), dab(), dab(0.5)]);
   assert.equal(full!.color, rgbToHex(solvePaint('spectral', under, T, 0.91)), 'opacity 1: the measured coverage');
   assert.equal(plain!.color, full!.color, 'no opacity: 1');
-  assert.equal(half!.color, rgbToHex(solvePaint('spectral', under, T, 0.91 * 0.5)), 'opacity 0.5: coverage \u00d7 0.5');
+  assert.equal(half!.color, rgbToHex(solveDab('spectral', under, hexToRgb(rgbToHex(T))!, 0.91, 0.5)), 'opacity 0.5: coverage \u00d7 0.5, toward lerp(C, T, 0.5)');
   assert.notEqual(half!.color, full!.color);
   assert.equal(again!.color, half!.color, 'memoised per coverage, not across it');
+});
+
+const lerp = (a: Rgb, b: Rgb, t: number) => [0, 1, 2].map(k => a[k]! + (b[k]! - a[k]!) * t) as Rgb;
+const far = (a: Rgb, b: Rgb) => Math.max(...[0, 1, 2].map(k => Math.abs(a[k]! - b[k]!)));
+
+test('a solved opacity-1 dab is the solve at the measured coverage, unchanged', () => {
+  for (const model of ['rgb', 'spectral', 'pigment'] as MixModel[]) {
+    const C: Rgb = [0.2, 0.3, 0.7], T: Rgb = [0.9, 0.8, 0.1];
+    assert.deepEqual(solveDab(model, C, T, 0.91, 1), solvePaint(model, C, T, 0.91), model);
+  }
+});
+
+test('a feathered dab lands where a plain dab of the reference colour at its opacity would: lerp(C, T, a), not on T', () => {
+  const C: Rgb = [0.45, 0.5, 0.55], T: Rgb = [0.55, 0.5, 0.45];   // close colours: the target is reachable
+  for (const model of ['rgb', 'spectral', 'pigment'] as MixModel[]) for (const a of [0.02, 0.1, 0.4]) {
+    const paint = solveDab(model, C, T, 0.91, a), got = mix2(model, C, paint, 0.91 * a);
+    assert.ok(far(got, lerp(C, T, a)) < 2 / 255, `${model} a=${a}: lands on lerp(C, T, a), got ${got}`);
+  }
+});
+
+test('feathered dabs never leave gamut: no channel is clamped to 0 or 1, and each mix lies between C and T', () => {
+  let seed = 7;
+  const rand = () => { seed = (seed * 1103515245 + 12345) >>> 0; return 0.05 + 0.9 * seed / 4294967296; };
+  for (const model of ['rgb', 'spectral', 'pigment'] as MixModel[]) for (let n = 0; n < 60; n++) {
+    const C: Rgb = [rand(), rand(), rand()], T: Rgb = [rand(), rand(), rand()], a = [0.02, 0.05, 0.15, 0.3, 0.6][n % 5]!;
+    const paint = solveDab(model, C, T, 0.91, a);
+    for (const v of paint) assert.ok(v > 0 && v < 1, `${model} a=${a} C=${C} T=${T}: paint ${paint} is clamped`);
+    // No overshoot: each channel of the mix stays between C and lerp(C, T, a), within the solver's few-step accuracy
+    // (a non-linear model's fixed point is not always reached in SOLVE_STEPS, as at opacity 1).
+    const got = mix2(model, C, paint, 0.91 * a), L = lerp(C, T, a);
+    for (let k = 0; k < 3; k++)
+      assert.ok(got[k]! >= Math.min(C[k]!, L[k]!) - 0.05 && got[k]! <= Math.max(C[k]!, L[k]!) + 0.05, `${model} a=${a}: mix ${got} overshoots ${L}`);
+  }
 });
 
 test('a transfer with mixing spectral and Wet Paint Plus: every chunk carries spectral, and each dab is solved against the canvas', async t => {
@@ -156,7 +189,7 @@ test('a transfer with mixing spectral and Wet Paint Plus: every chunk carries sp
       assert.deepEqual({ ...s, color: '' }, { ...wanted[i], color: '' }, 'only the colour changes');
       // Solved against C' = lerp(C, T, s): what is seen of a dab mostly lies on earlier dabs of its own pass.
       const below = [0, 1, 2].map(k => C[k]! + (T[k]! - C[k]!) * share) as Rgb;
-      assert.equal(s.color, rgbToHex(solvePaint('spectral', below, T, 0.91 * (wanted[i].opacity ?? 1))), `dab ${i}`);
+      assert.equal(s.color, rgbToHex(solveDab('spectral', below, T, 0.91, wanted[i].opacity ?? 1)), `dab ${i}`);
       if (s.color !== wanted[i].color) changed++;
     });
     assert.ok(changed > 0, 'the dabs were solved, not painted as the reference (C\u2032 is near T, so the change is small)');
