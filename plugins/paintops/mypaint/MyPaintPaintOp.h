@@ -64,6 +64,7 @@ protected:
 private:
     KisSpacingInformation computeSpacing(const KisPaintInformation &info, qreal lodScale) const;
     void strokeTo(const KisPaintInformation &info, double dtime);
+    void compositeStrokeOpacity();
 
 private:
     QScopedPointer<KisMyPaintPaintOpPreset> m_brush;
@@ -73,6 +74,17 @@ private:
     KisImageWSP m_image;
     double m_dtime, m_radius, m_previousTime = 0;
     bool m_isStrokeStarted;
+    /**
+     * Toska: a stroke's opacity below 1 (ToskaStrokeOpacity, which a script's stroke job, libkis Node.paintStrokes,
+     * sets on its copy of the preset; the engine paints its dabs itself and never reads the painter's opacity). The
+     * brush paints, smudges and samples at full strength on m_fullStrength, a copy of the layer, and every dab's
+     * area of the layer becomes the layer as the stroke began (m_strokeStart) blended towards it by the opacity, as
+     * Krita's other engines composite a stroke (wash mode). The stroke's flow (ToskaStrokeFlow) scales each dab.
+     */
+    qreal m_strokeOpacity {1.0};
+    KisPaintDeviceSP m_strokeStart;
+    KisPaintDeviceSP m_fullStrength;
+    QScopedPointer<KisPainter> m_fullPainter;
 };
 
 #endif // KIS_MY_PAINTOP_H_

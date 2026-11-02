@@ -103,6 +103,12 @@ public:
     MyPaintSurface* surface();
     MyPaintSurface2* surface2();
 
+    /**
+     * Toska: a stroke's flow (0..1, as Krita's other engines take it): every dab's alpha, as the brush computed it
+     * (the preset's own opaque dynamics), is multiplied by it. 1 leaves dabs untouched.
+     */
+    void setStrokeFlow(float flow);
+
 private:
     KisPainter *m_painter;
     KisPaintDeviceSP m_imageDevice;
@@ -115,6 +121,7 @@ private:
     KisFixedPaintDeviceSP m_blendDevice;
     KisFixedPaintDeviceSP m_maskDevice;
     bool m_sampleMerged {false};
+    float m_strokeFlow {1.0f};
     // Toska: log spectra of the canvas colours the spectral blend and sample have met, and the dab blend's memo
     // (made on first use)
     std::unique_ptr<KisPaintMix::LogSpectrumCache> m_logSpectra;

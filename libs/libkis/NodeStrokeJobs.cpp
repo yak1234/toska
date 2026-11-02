@@ -500,12 +500,18 @@ KisResourcesSnapshotSP StrokeJobFeeder::snapshotFor(const StrokeJobInput &input)
 {
     // One brush per size, flow, opacity and colour, shared by the job's strokes that use it (a snapshot costs a
     // preset copy; the strokes only read it, one at a time).
-    const QString presetKey = QStringLiteral("%1/%2").arg(input.size).arg(input.flow);
+    const QString presetKey = QStringLiteral("%1/%2/%3").arg(input.size).arg(input.flow).arg(input.opacity);
     KisPaintOpPresetSP preset = m_presets.value(presetKey);
     if (!preset) {
         preset = basePreset->clone().dynamicCast<KisPaintOpPreset>();
         if (input.size > 0) preset->settings()->setPaintOpSize(input.size);
         if (input.flow >= 0) preset->settings()->setPaintOpFlow(input.flow);
+        if (preset->paintOp().id() == QLatin1String("mypaintbrush")) {
+            // The MyPaint engine paints its dabs itself: it never reads the painter's opacity (the Opacity resource
+            // below) or FlowValue, so it takes the stroke's own on this copy of the preset (KisMyPaintPaintOp).
+            if (input.opacity >= 0) preset->settings()->setProperty("ToskaStrokeOpacity", input.opacity);
+            if (input.flow >= 0) preset->settings()->setProperty("ToskaStrokeFlow", input.flow);
+        }
         preset->settings()->setPaintOpCompositeOp(compositeOp);
         m_presets.insert(presetKey, preset);
     }

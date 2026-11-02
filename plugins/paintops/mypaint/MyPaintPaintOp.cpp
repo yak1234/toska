@@ -16,6 +16,8 @@
 #include <kis_node.h>
 #include <kis_paint_information.h>
 #include <kis_painter.h>
+#include <kis_selection.h>
+#include <kis_paint_device.h>
 #include <kis_paintop.h>
 #include <kis_paintop_plugin_utils.h>
 #include <kis_paintop_settings.h>
@@ -30,15 +32,32 @@ KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPai
     m_image = image;
 
     m_brush.reset(new KisMyPaintPaintOpPreset());
-    m_surface.reset(new KisMyPaintSurface(this->painter(), nullptr, m_image,
+
+    if (settings->getBool("EraserMode")) {
+        painter->setCompositeOpId(COMPOSITE_ERASE);
+    }
+    KisPainter *surfacePainter = this->painter();
+    m_strokeOpacity = settings->hasProperty("ToskaStrokeOpacity")
+        ? qBound(0.0, settings->getDouble("ToskaStrokeOpacity"), 1.0) : 1.0;
+    if (m_strokeOpacity < 1.0) {
+        // copies of the layer's tiles (copy on write): the stroke paints the second at full strength
+        m_strokeStart = new KisPaintDevice(*painter->device());
+        m_fullStrength = new KisPaintDevice(*painter->device());
+        m_fullPainter.reset(new KisPainter(m_fullStrength, painter->selection()));
+        m_fullPainter->setChannelFlags(painter->channelFlags());
+        m_fullPainter->copyMirrorInformationFrom(painter);
+        m_fullPainter->setPaintColor(painter->paintColor());
+        m_fullPainter->setCompositeOpId(painter->compositeOpId());
+        surfacePainter = m_fullPainter.data();
+    }
+    m_surface.reset(new KisMyPaintSurface(surfacePainter, nullptr, m_image,
                                           settings->getBool("ToskaMyPaintSampleMerged", false)));
+    m_surface->setStrokeFlow(settings->hasProperty("ToskaStrokeFlow") ? float(settings->getDouble("ToskaStrokeFlow")) : 1.0f);
 
     m_brush->apply(settings);
     applyToskaPaintMode(m_brush->brush(), settings);
 
     if (settings->getBool("EraserMode")) {
-
-        painter->setCompositeOpId(COMPOSITE_ERASE);
         mypaint_brush_set_base_value(m_brush->brush(), MYPAINT_BRUSH_SETTING_ERASER, false);
     }
 
@@ -128,6 +147,28 @@ void KisMyPaintPaintOp::strokeTo(const KisPaintInformation &info, double dtime)
 {
     strokeBrushTo(m_brush->brush(), m_surface.data(), info.pos().x(), info.pos().y(), info.pressure(),
                   info.xTilt(), info.yTilt(), dtime);
+    compositeStrokeOpacity();
+}
+
+void KisMyPaintPaintOp::compositeStrokeOpacity()
+{
+    if (!m_fullPainter) {
+        return;
+    }
+    const QVector<QRect> rects = m_fullPainter->takeDirtyRegion();
+    if (rects.isEmpty()) {
+        return;
+    }
+    // each area: the layer as the stroke began, then the full-strength stroke over it at the stroke's opacity
+    KisPainter layer(painter()->device());
+    layer.setCompositeOpId(COMPOSITE_COPY);
+    for (const QRect &rect : rects) {
+        layer.setOpacityToUnit();
+        layer.bitBlt(rect.topLeft(), m_strokeStart, rect);
+        layer.setOpacityF(m_strokeOpacity);
+        layer.bitBlt(rect.topLeft(), m_fullStrength, rect);
+    }
+    painter()->addDirtyRects(rects);
 }
 
 KisSpacingInformation KisMyPaintPaintOp::paintAt(const KisPaintInformation& info) {

@@ -39,6 +39,9 @@
 #include <KoColorSpaceRegistry.h>
 #include <KoCompositeOpRegistry.h>
 #include <brushengine/kis_paintop_preset.h>
+#include <brushengine/kis_paintop_registry.h>
+#include <KisResourceModel.h>
+#include <KoResourcePaths.h>
 #include <brushengine/kis_paintop_settings.h>
 #include <kis_image.h>
 #include <kis_paint_device.h>
@@ -1016,6 +1019,79 @@ void TestStrokeJobs::testEraseOpacityAndFlow()
     QVERIFY2(full > 240, qPrintable(QString("full %1").arg(full)));
     QVERIFY2(lowOpacity > 50 && lowOpacity < 110, qPrintable(QString("opacity 0.3: %1").arg(lowOpacity)));
     QVERIFY2(lowFlow > 50 && lowFlow < 110, qPrintable(QString("flow 0.3: %1").arg(lowFlow)));
+}
+
+/**
+ * Krita's MyPaint preset \p base (a .myb of the install), added to the resource database as a preset of the MyPaint
+ * engine; its name, or an empty string. The tests' resource database has no MyPaint loader (the engine's plugin
+ * registers it after the database is read), so the .myb files are not in it.
+ */
+QString myPaintPreset(const QString &base)
+{
+    const QString shown = QString(base).replace('_', ' '); // the database names a preset as Krita shows it
+    if (!presetName(shown).isEmpty()) return presetName(shown);
+    QFile file(KoResourcePaths::getApplicationRoot() + "/share/krita/paintoppresets/" + base + ".myb");
+    if (!file.open(QIODevice::ReadOnly)) return QString();
+    KisPaintOpSettingsSP settings = KisPaintOpRegistry::instance()->createSettings(
+        KoID("mypaintbrush"), KisGlobalResourcesInterface::instance());
+    if (!settings) return QString();
+    settings->setProperty("paintop", "mypaintbrush");
+    settings->setProperty("MyPaint/json", file.readAll());
+    settings->setProperty("EraserMode", 0);
+    KisPaintOpPresetSP preset(new KisPaintOpPreset());
+    preset->setSettings(settings);
+    preset->setName(base);
+    preset->setFilename(base + preset->defaultFileExtension());
+    QImage thumbnail(16, 16, QImage::Format_ARGB32);
+    thumbnail.fill(Qt::white);
+    preset->setImage(thumbnail);
+    preset->setValid(true);
+    KisResourceModel model(ResourceType::PaintOpPresets);
+    if (!model.addResource(preset)) return QString();
+    return presetName(shown);
+}
+
+/// Mean alpha (0..255) of \p rect of \p alpha.
+double meanAlpha(const QImage &alpha, const QRect &rect)
+{
+    double sum = 0;
+    const QRect clipped = rect & alpha.rect();
+    for (int y = clipped.top(); y <= clipped.bottom(); y++) {
+        for (int x = clipped.left(); x <= clipped.right(); x++) sum += alpha.constScanLine(y)[x];
+    }
+    return clipped.isEmpty() ? 0 : sum / (clipped.width() * clipped.height());
+}
+
+void TestStrokeJobs::testMyPaintOpacityAndFlow()
+{
+    // A stroke's opacity and flow scale a MyPaint preset's paint as they do a pixel brush's (testEraseOpacityAndFlow):
+    // the MyPaint engine paints its dabs itself and never reads the painter's opacity or the FlowValue property.
+    const QString preset = myPaintPreset("i)_Wet_Paint_Plus_(mypaint)");
+    QVERIFY2(!preset.isEmpty(), "Krita's i)_Wet_Paint_Plus_(mypaint).myb, added to the resource database");
+    auto paintRow = [&](double opacity, double flow, double pressure) {
+        JobDocument d(300, 60);
+        QVariantMap stroke = line({{30, 30, pressure}, {150, 30, pressure}, {270, 30, pressure}}, 24, "#1e3ce6");
+        stroke.insert("opacity", opacity);
+        stroke.insert("flow", flow);
+        QScopedPointer<StrokeJob> job(d.paint->paintStrokes({stroke}, {{"preset", preset}}));
+        if (!settle(job.data()) || job->state() == "failed") return -1.0;
+        return meanAlpha(d.alpha(), QRect(60, 24, 180, 13));
+    };
+    for (double pressure : {1.0, 0.6}) {
+        const double full = paintRow(1.0, 1.0, pressure), glaze = paintRow(0.35, 1.0, pressure),
+                     both = paintRow(0.35, 0.35, pressure), flowed = paintRow(1.0, 0.35, pressure);
+        qInfo() << "pressure" << pressure << "full" << full << "opacity 0.35" << glaze << "both 0.35" << both
+                << "flow 0.35" << flowed;
+        QVERIFY2(full > 60, qPrintable(QString("full %1").arg(full)));
+        // opacity: the stroke at full strength blended over the layer as it was, as Krita's wash mode composites
+        QVERIFY2(qAbs(glaze / full - 0.35) < 0.05, qPrintable(QString("opacity 0.35: %1 of %2").arg(glaze).arg(full)));
+        // flow scales each dab: less paint, and with opacity less again
+        QVERIFY2(flowed < full, qPrintable(QString("flow 0.35: %1 of %2").arg(flowed).arg(full)));
+        QVERIFY2(both < glaze, qPrintable(QString("both 0.35: %1, opacity alone %2").arg(both).arg(glaze)));
+    }
+    // at pressure 0.6 the dabs are light enough that flow shows on its own
+    const double light = paintRow(1.0, 1.0, 0.6), lightFlowed = paintRow(1.0, 0.35, 0.6);
+    QVERIFY2(lightFlowed < 0.6 * light, qPrintable(QString("flow 0.35 at pressure 0.6: %1 of %2").arg(lightFlowed).arg(light)));
 }
 
 void TestStrokeJobs::testOffGuiThreadRefusedAndALoneStartDabs()

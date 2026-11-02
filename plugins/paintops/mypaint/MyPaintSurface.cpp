@@ -277,6 +277,11 @@ void KisMyPaintSurface::get_color_pigment(MyPaintSurface2 *self, float x, float 
     }
 }
 
+void KisMyPaintSurface::setStrokeFlow(float flow)
+{
+    m_strokeFlow = qBound(0.0f, flow, 1.0f);
+}
+
 /*GIMP's draw_dab and get_color code*/
 template <typename channelType>
 int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float radius, float color_r, float color_g,
@@ -286,6 +291,9 @@ int KisMyPaintSurface::drawDabImpl(MyPaintSurface *self, float x, float y, float
 
     Q_UNUSED(self);
     Q_UNUSED(lock_alpha);
+    if (m_strokeFlow < 1.0f) {
+        opaque = qBound(0.0f, opaque, 1.0f) * m_strokeFlow;
+    }
     const float one_over_radius2 = 1.0f / (radius * radius);
     const double angle_rad = kisDegreesToRadians(angle);
     const float cs = cos(angle_rad);
