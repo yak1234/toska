@@ -107,8 +107,17 @@ plain RGB dabs, so mixing elsewhere barely matters.
   brush's coverage, it gives the colour wanted (the inverse of `mix_colors`), so a mixing transfer stays faithful.
 - **Level 2 — its own pigment palette:** the transfer can work from a limited palette of pigments (8–12 tube colours,
   chosen per painting); every dab is mixed from those pigments with Mixbox, so colours share pigments and the painting
-  holds together like a real one. A **palette strictness** setting runs from faithful (close to the reference's
-  colours) to painterly (palette-led interpretation).
+  holds together like a real one. **Palette strictness is a number, never a style word** (the user, 2026-11-02:
+  "painterly … can mean a lot of things especially for agent that doesn't see the canvas exactly"). It is the largest
+  colour difference allowed between the reference colour and the best mix of the palette, in CIEDE2000 (ΔE00),
+  computed by the tool from the reference's own pixels, not judged by the agent from a view:
+  - `exact` (default): ΔE00 ≤ 2, about the smallest difference people notice. Where the palette cannot reach a colour
+    within 2, the tool adds a pigment (up to 12) or, past that, lays that colour unmixed, and reports how many dabs.
+  - `close`: ΔE00 ≤ 5, a visible but small shift. Palette colours win over the reference where they are within 5.
+  - `loose`: ΔE00 ≤ 10, the palette leads; colours outside the palette's reach shift to the nearest mix.
+  The tool reports per transfer: palette, the share of dabs at each ΔE00 band, and the largest ΔE00, so the agent and the
+  benchmark read results as numbers. The agent picks a level only from the user's words ("as close as possible" →
+  `exact`); it never chooses a looser level on its own.
 - **Level 3 (later) — layered transfer:** coarse passes, then fine dabs as semi-transparent glazes that mix with the
   layer below.
 - **A/B:** the same reference transferred plain vs with mixing and a palette, everything else fixed.
