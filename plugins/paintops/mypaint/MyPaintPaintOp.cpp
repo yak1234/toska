@@ -25,6 +25,7 @@
 #include <libmypaint/mypaint-brush.h>
 #include <KoColorModelStandardIds.h>
 #include <KoColorSpace.h>
+#include <KoColorProfile.h>
 
 #include <cstring>
 
@@ -64,15 +65,9 @@ KisMyPaintPaintOp::KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPai
     }
     if (m_fullPainter && settings->hasProperty("ToskaMyPaintPaintMode")
         && settings->getDouble("ToskaMyPaintPaintMode") > 0.0) {
-        // the spectral stroke's glaze: the layer is blended towards the full-strength stroke spectrally (on the RGBA
-        // layouts libpaintmix reads; any other colour space keeps the plain lerp)
-        const KoColorSpace *cs = painter->device()->colorSpace();
-        if (cs->colorModelId() == RGBAColorModelID) {
-            const KoID depth = cs->colorDepthId();
-            if (depth == Integer8BitsColorDepthID) m_glazeFormat = KisPaintMix::PixelFormat::Bgra8;
-            else if (depth == Integer16BitsColorDepthID) m_glazeFormat = KisPaintMix::PixelFormat::Bgra16;
-            else if (depth == Float32BitsColorDepthID) m_glazeFormat = KisPaintMix::PixelFormat::RgbaF32;
-        }
+        // the spectral stroke's glaze: the layer is blended towards the full-strength stroke spectrally (on the
+        // sRGB-encoded RGBA layouts libpaintmix reads, glazeFormatFor; any other colour space keeps the plain lerp)
+        m_glazeFormat = glazeFormatFor(painter->device()->colorSpace());
     }
     m_surface->setStrokeFlow(settings->hasProperty("ToskaStrokeFlow") ? float(settings->getDouble("ToskaStrokeFlow")) : 1.0f);
 
@@ -170,6 +165,18 @@ void KisMyPaintPaintOp::strokeTo(const KisPaintInformation &info, double dtime)
     strokeBrushTo(m_brush->brush(), m_surface.data(), info.pos().x(), info.pos().y(), info.pressure(),
                   info.xTilt(), info.yTilt(), dtime);
     compositeStrokeOpacity();
+}
+
+std::optional<KisPaintMix::PixelFormat> KisMyPaintPaintOp::glazeFormatFor(const KoColorSpace *cs)
+{
+    if (!cs || cs->colorModelId() != RGBAColorModelID) return std::nullopt;
+    // a linear-light profile holds linear values; the model would read them as encoded and mix the wrong colours
+    if (!cs->profile() || cs->profile()->isLinear()) return std::nullopt;
+    const KoID depth = cs->colorDepthId();
+    if (depth == Integer8BitsColorDepthID) return KisPaintMix::PixelFormat::Bgra8;
+    if (depth == Integer16BitsColorDepthID) return KisPaintMix::PixelFormat::Bgra16;
+    if (depth == Float32BitsColorDepthID) return KisPaintMix::PixelFormat::RgbaF32;
+    return std::nullopt;
 }
 
 void KisMyPaintPaintOp::copyLayerForStroke(const QRect &rect)

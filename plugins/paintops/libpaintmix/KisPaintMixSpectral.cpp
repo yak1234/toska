@@ -48,13 +48,19 @@ float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
 }
 
-// helpers.c rgb_to_spectral (assigns where libmypaint accumulates into a zeroed array)
+namespace {
+// 0..1, and 0 for NaN: a float layer's out-of-range values would make a negative band, which the log step cannot take
+float inGamut(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f; }
+}
+
+// helpers.c rgb_to_spectral (assigns where libmypaint accumulates into a zeroed array); components clamped to 0..1
+// first (libmypaint's are always in range)
 void toSpectrum(Rgb c, float out[10])
 {
     const float offset = 1.0f - WGM_EPSILON;
-    const float r = c.r * offset + WGM_EPSILON;
-    const float g = c.g * offset + WGM_EPSILON;
-    const float b = c.b * offset + WGM_EPSILON;
+    const float r = inGamut(c.r) * offset + WGM_EPSILON;
+    const float g = inGamut(c.g) * offset + WGM_EPSILON;
+    const float b = inGamut(c.b) * offset + WGM_EPSILON;
     for (int i = 0; i < 10; i++) {
         out[i] = spectral_r_small[i] * r + spectral_g_small[i] * g + spectral_b_small[i] * b;
     }

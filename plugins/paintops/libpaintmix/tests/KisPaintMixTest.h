@@ -24,6 +24,7 @@ private Q_SLOTS:
     void testBlendPixelsOneColourOverTransparentIsExact();
     void testBlendPixelsTinyAlphaIsFinite();
     void testBlendPixelsBgra16AndFloatNumeric();
+    void testSpectralOutOfRangeFloatIsFinite();
     void testBlendPixelsCopyAlpha();
     void testGoldenVectors();
     void testSpeed();

@@ -295,6 +295,27 @@ void KisPaintMixTest::testBlendPixelsTinyAlphaIsFinite()
     }
 }
 
+void KisPaintMixTest::testSpectralOutOfRangeFloatIsFinite()
+{
+    // A float layer holds values outside 0..1 (a negative channel, an HDR highlight); the spectral model's log step would
+    // turn a negative band into NaN. Inputs are clamped to 0..1 first: the result is finite and in range, and equals the
+    // mix of the clamped colours.
+    const float srcF[4] = {0.2f, -0.4f, 0.9f, 1.0f};
+    float dstF[4] = {2.5f, 0.6f, -0.3f, 1.0f};
+    blendPixels(Model::Spectral, Blend::Copy, PixelFormat::RgbaF32, reinterpret_cast<uint8_t *>(dstF), reinterpret_cast<const uint8_t *>(srcF), true, 1, 0.5f);
+    for (float v : dstF) {
+        QVERIFY2(std::isfinite(v) && v >= 0.0f && v <= 1.0f, qPrintable(QString::number(v)));
+    }
+    const Rgb clamped = mix2(Model::Spectral, Rgb{1.0f, 0.6f, 0.0f}, Rgb{0.2f, 0.0f, 0.9f}, 0.5f);
+    QCOMPARE(dstF[0], clamped.r);
+    QCOMPARE(dstF[1], clamped.g);
+    QCOMPARE(dstF[2], clamped.b);
+    const Rgb colours[2] = {{2.5f, 0.6f, -0.3f}, {0.2f, -0.4f, 0.9f}};
+    const float weights[2] = {0.5f, 0.5f};
+    const Rgb many = mixMany(Model::Spectral, colours, weights, 2);
+    QVERIFY(std::isfinite(many.r) && std::isfinite(many.g) && std::isfinite(many.b));
+}
+
 void KisPaintMixTest::testBlendPixelsBgra16AndFloatNumeric()
 {
     // Over, op 0.5, sa 1, da 0.5: a = 0.5 + 0.5 * 0.5 = 0.75, t = 0.5 / 0.75 = 2/3. Expected values are written out by hand.

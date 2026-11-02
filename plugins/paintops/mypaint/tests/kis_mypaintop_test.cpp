@@ -1078,4 +1078,34 @@ void KisMyPaintOpTest::testSpectralKeepsCoverage()
     }
 }
 
+void KisMyPaintOpTest::testSpectralGlazeOnlyOnEncodedProfiles()
+{
+    // libpaintmix's spectral model takes sRGB-encoded components (as libmypaint's stroke_to_2 does). A linear-light
+    // profile (Krita's default for 32-bit float RGBA) holds linear values, so its glaze keeps Krita's plain lerp;
+    // encoded profiles at every depth mix spectrally.
+    KoColorSpaceRegistry *registry = KoColorSpaceRegistry::instance();
+    const KoColorSpace *rgb8 = registry->rgb8();
+    const KoColorSpace *rgb16 = registry->colorSpace(RGBAColorModelID.id(), Integer16BitsColorDepthID.id(), "sRGB-elle-V2-srgbtrc.icc");
+    QVERIFY(rgb8 && rgb16);
+    QVERIFY(!rgb8->profile()->isLinear() && !rgb16->profile()->isLinear());
+    QCOMPARE(KisMyPaintPaintOp::glazeFormatFor(rgb8), std::optional<KisPaintMix::PixelFormat>(KisPaintMix::PixelFormat::Bgra8));
+    QCOMPARE(KisMyPaintPaintOp::glazeFormatFor(rgb16), std::optional<KisPaintMix::PixelFormat>(KisPaintMix::PixelFormat::Bgra16));
+
+    const KoColorSpace *linearF32 = registry->colorSpace(RGBAColorModelID.id(), Float32BitsColorDepthID.id(), "sRGB-elle-V2-g10.icc");
+    QVERIFY(linearF32);
+    QVERIFY(linearF32->profile()->isLinear());
+    QVERIFY(!KisMyPaintPaintOp::glazeFormatFor(linearF32));
+
+    const KoColorSpace *encodedF32 = registry->colorSpace(RGBAColorModelID.id(), Float32BitsColorDepthID.id(), "sRGB-elle-V2-srgbtrc.icc");
+    QVERIFY(encodedF32);
+    QVERIFY(!encodedF32->profile()->isLinear());
+    QCOMPARE(KisMyPaintPaintOp::glazeFormatFor(encodedF32), std::optional<KisPaintMix::PixelFormat>(KisPaintMix::PixelFormat::RgbaF32));
+
+    const KoColorSpace *linear16 = registry->colorSpace(RGBAColorModelID.id(), Integer16BitsColorDepthID.id(), "sRGB-elle-V2-g10.icc");
+    QVERIFY(linear16);
+    QVERIFY(!KisMyPaintPaintOp::glazeFormatFor(linear16));
+
+    QVERIFY(!KisMyPaintPaintOp::glazeFormatFor(registry->colorSpace(GrayAColorModelID.id(), Integer8BitsColorDepthID.id(), QString())));
+}
+
 SIMPLE_TEST_MAIN(KisMyPaintOpTest)

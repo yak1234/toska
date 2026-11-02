@@ -47,6 +47,9 @@ private Q_SLOTS:
 
     // Toska: spectral changes mixing, not coverage (pilot-p5 replay)
     void testSpectralKeepsCoverage();
+
+    // Toska: the spectral glaze only where the layer holds sRGB-encoded values
+    void testSpectralGlazeOnlyOnEncodedProfiles();
 };
 
 #endif // KIS_MYPAINTOP_TEST_H

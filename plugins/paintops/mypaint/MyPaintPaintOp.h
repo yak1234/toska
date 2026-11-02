@@ -22,12 +22,20 @@
 #include "MyPaintSurface.h"
 
 class KisPainter;
+class KoColorSpace;
 
 
 class KisMyPaintPaintOp : public KisPaintOp
 {
 
 public:
+    /**
+     * Toska: the layout the spectral glaze blends \p cs in (libpaintmix's blendPixels), or none when the glaze keeps
+     * Krita's plain lerp: RGBA at 8, 16 or 32-bit float whose profile is sRGB-encoded (not linear), since the spectral
+     * model takes encoded components.
+     */
+    static std::optional<KisPaintMix::PixelFormat> glazeFormatFor(const KoColorSpace *cs);
+
 
     KisMyPaintPaintOp(const KisPaintOpSettingsSP settings, KisPainter * painter, KisNodeSP node, KisImageSP image);
     ~KisMyPaintPaintOp() override;
