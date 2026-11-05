@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Yakub Rabiutheen
+  SPDX-License-Identifier: CC-BY-SA-4.0
+  The Layers panel's move up button, in the agent panel's icon style.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><g fill="none" stroke="#4d5967" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M4 7l4-4 4 4"/></g></svg>

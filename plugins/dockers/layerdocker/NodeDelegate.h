@@ -42,6 +42,9 @@ public:
 
     /// Height of a group row: baseRowHeight times percent (clamped to 40..100), at least minHeight (so the property
     /// icons are not cut), never taller than baseRowHeight.
+    /// A row's small property icons: an off property shows only while the pointer is on the row. Hit areas never change.
+    static bool shouldDrawBadge(bool isMutable, bool isOn, bool rowHovered);
+
     static int groupRowHeight(int baseRowHeight, int percent, int minHeight = 1);
 
 Q_SIGNALS:

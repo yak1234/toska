@@ -61,6 +61,14 @@ void TestNodeDelegate::cleanup()
     m_doc = nullptr;
 }
 
+void TestNodeDelegate::testBadgesShowOnlyWhenOnOrHovered()
+{
+    QVERIFY(!NodeDelegate::shouldDrawBadge(true, false, false));   // an off lock takes no room on screen
+    QVERIFY(NodeDelegate::shouldDrawBadge(true, true, false));     // a locked layer says so
+    QVERIFY(NodeDelegate::shouldDrawBadge(true, false, true));     // every property stays reachable on hover
+    QVERIFY(NodeDelegate::shouldDrawBadge(false, false, false));   // an error is always shown
+}
+
 void TestNodeDelegate::testGroupRowHeightFunction()
 {
     QCOMPARE(NodeDelegate::groupRowHeight(30, 70), 21);

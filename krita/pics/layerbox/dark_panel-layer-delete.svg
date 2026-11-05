@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Yakub Rabiutheen
+  SPDX-License-Identifier: CC-BY-SA-4.0
+  The Layers panel's delete button, in the agent panel's icon style.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><g fill="none" stroke="#c8ced6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.500h10M6.500 4.500V3h3v1.500M4.500 4.500l.5 8.500h6l.5-8.500"/></g></svg>

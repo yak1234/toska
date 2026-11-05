@@ -126,6 +126,7 @@ NodeView::NodeView(QWidget *parent)
     setItemDelegate(&d->delegate);
 
     setMouseTracking(true);
+    viewport()->setAttribute(Qt::WA_Hover);      // a row shows its off properties while the pointer is on it
     setSelectionBehavior(SelectRows);
     setDefaultDropAction(Qt::MoveAction);
     setVerticalScrollMode(QAbstractItemView::ScrollPerItem);

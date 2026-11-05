@@ -61,6 +61,22 @@
       </widget>
      </item>
      <item>
+      <widget class="KisDoubleSliderSpinBox" name="doubleOpacity">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="MinimumExpanding" vsizetype="Minimum">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="toolTip">
+        <string>Layer Opacity</string>
+       </property>
+       <property name="whatsThis">
+        <string>Adjust the transparency of the layer</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="KisLayerFilterWidgetToolButton" name="bnLayerFilters">
        <property name="sizePolicy">
         <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
@@ -88,39 +104,6 @@
          <width>22</width>
          <height>22</height>
         </size>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="opacityLayout" stretch="0,0,0">
-     <property name="topMargin">
-      <number>0</number>
-     </property>
-     <property name="bottomMargin">
-      <number>0</number>
-     </property>
-     <item>
-      <widget class="QLabel" name="opacityLabel">
-       <property name="text">
-        <string>Opacity:</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="KisDoubleSliderSpinBox" name="doubleOpacity">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="MinimumExpanding" vsizetype="Minimum">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="toolTip">
-        <string>Layer Opacity</string>
-       </property>
-       <property name="whatsThis">
-        <string>Adjust the transparency of the layer</string>
        </property>
       </widget>
      </item>
@@ -157,6 +140,7 @@
      </item>
     </layout>
    </item>
+   
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout">
      <item>

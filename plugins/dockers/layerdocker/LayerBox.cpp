@@ -196,26 +196,25 @@ LayerBox::LayerBox()
 
     slotUpdateIcons();
 
-    m_wdgLayerBox->bnAdd->setIconSize(QSize(22, 22));
-    m_wdgLayerBox->bnDelete->setIconSize(QSize(22, 22));
-    m_wdgLayerBox->bnRaise->setIconSize(QSize(22, 22));
-    m_wdgLayerBox->bnLower->setIconSize(QSize(22, 22));
-    m_wdgLayerBox->bnProperties->setIconSize(QSize(22, 22));
-    m_wdgLayerBox->bnDuplicate->setIconSize(QSize(22, 22));
-    m_wdgLayerBox->bnClippingMask->setIconSize(QSize(22, 22));
+    m_wdgLayerBox->bnAdd->setIconSize(QSize(16, 16));
+    m_wdgLayerBox->bnDelete->setIconSize(QSize(16, 16));
+    m_wdgLayerBox->bnRaise->setIconSize(QSize(16, 16));
+    m_wdgLayerBox->bnLower->setIconSize(QSize(16, 16));
+    m_wdgLayerBox->bnProperties->setIconSize(QSize(16, 16));
+    m_wdgLayerBox->bnDuplicate->setIconSize(QSize(16, 16));
+    m_wdgLayerBox->bnClippingMask->setIconSize(QSize(16, 16));
+
+    // Thumbnails are generated while the list itself shows, not the dock: the agent panel's Layers tab holds this widget
+    // while the dock is hidden (openspec panel-layers-brushes).
+    m_wdgLayerBox->listLayers->installEventFilter(this);
 
     m_wdgLayerBox->bnLower->setEnabled(false);
     m_wdgLayerBox->bnRaise->setEnabled(false);
 
     m_wdgLayerBox->doubleOpacity->setRange(0, 100, 0);
-    if (cfg.sliderLabels()) {
-        m_wdgLayerBox->opacityLabel->hide();
-        KisSpinBoxI18nHelper::setText(m_wdgLayerBox->doubleOpacity,
-                                      i18nc("{n} is the number value, % is the percent sign", "Opacity: {n}%"));
-    } else {
-        KisSpinBoxI18nHelper::setText(m_wdgLayerBox->doubleOpacity,
-                                      i18nc("{n} is the number value, % is the percent sign", "{n}%"));
-    }
+    // Blend mode, opacity, filter and settings share one row: the slider says only the value.
+    KisSpinBoxI18nHelper::setText(m_wdgLayerBox->doubleOpacity,
+                                  i18nc("{n} is the number value, % is the percent sign", "{n}%"));
 
     connect(m_wdgLayerBox->doubleOpacity, SIGNAL(valueChanged(qreal)), SLOT(slotOpacitySliderMoved(qreal)));
     connect(&m_nodeOpacityCompressor, SIGNAL(timeout()), SLOT(slotOpacityChanged()));
@@ -559,6 +558,8 @@ void LayerBox::setCanvas(KoCanvasBase *canvas)
         return;
 
     setEnabled(canvas != 0);
+    if (widget()) widget()->setEnabled(canvas != 0);
+    m_wdgLayerBox->listLayers->parentWidget()->setEnabled(canvas != 0);   // it may live in the agent panel's tab
 
     if (m_canvas) {
         m_canvas->disconnectCanvasObserver(this);
@@ -597,7 +598,7 @@ void LayerBox::setCanvas(KoCanvasBase *canvas)
                                       m_selectionActionsAdapter.data(),
                                       m_nodeManager);
 
-        if (isVisible()) {
+        if (m_wdgLayerBox->listLayers->isVisible()) {
             m_nodeModel->setIdleTaskManager(m_canvas->viewManager()->idleTasksManager());
         }
 
@@ -664,19 +665,16 @@ void LayerBox::unsetCanvas()
     m_canvas = 0;
 }
 
-void LayerBox::showEvent(QShowEvent *event)
+bool LayerBox::eventFilter(QObject *watched, QEvent *event)
 {
-    QDockWidget::showEvent(event);
-
-    if (m_canvas) {
-        m_nodeModel->setIdleTaskManager(m_canvas->viewManager()->idleTasksManager());
+    if (watched == m_wdgLayerBox->listLayers) {
+        if (event->type() == QEvent::Show && m_canvas) {
+            m_nodeModel->setIdleTaskManager(m_canvas->viewManager()->idleTasksManager());
+        } else if (event->type() == QEvent::Hide) {
+            m_nodeModel->setIdleTaskManager(0);
+        }
     }
-}
-
-void LayerBox::hideEvent(QHideEvent *event)
-{
-    QDockWidget::hideEvent(event);
-    m_nodeModel->setIdleTaskManager(0);
+    return QDockWidget::eventFilter(watched, event);
 }
 
 void LayerBox::notifyImageDeleted()
@@ -1329,13 +1327,13 @@ void LayerBox::slotForgetAboutSavedNodeBeforeEditSelectionMode()
 }
 
 void LayerBox::slotUpdateIcons() {
-    m_wdgLayerBox->bnAdd->setIcon(KisIconUtils::loadIcon("addlayer"));
-    m_wdgLayerBox->bnRaise->setIcon(KisIconUtils::loadIcon("arrowup"));
-    m_wdgLayerBox->bnDelete->setIcon(KisIconUtils::loadIcon("deletelayer"));
-    m_wdgLayerBox->bnLower->setIcon(KisIconUtils::loadIcon("arrowdown"));
-    m_wdgLayerBox->bnProperties->setIcon(KisIconUtils::loadIcon("properties"));
-    m_wdgLayerBox->bnDuplicate->setIcon(KisIconUtils::loadIcon("duplicatelayer"));
-    m_wdgLayerBox->bnClippingMask->setIcon(KisIconUtils::loadIcon("clip-to-layer"));
+    m_wdgLayerBox->bnAdd->setIcon(KisIconUtils::loadIcon("panel-layer-add"));
+    m_wdgLayerBox->bnRaise->setIcon(KisIconUtils::loadIcon("panel-layer-up"));
+    m_wdgLayerBox->bnDelete->setIcon(KisIconUtils::loadIcon("panel-layer-delete"));
+    m_wdgLayerBox->bnLower->setIcon(KisIconUtils::loadIcon("panel-layer-down"));
+    m_wdgLayerBox->bnProperties->setIcon(KisIconUtils::loadIcon("panel-layer-properties"));
+    m_wdgLayerBox->bnDuplicate->setIcon(KisIconUtils::loadIcon("panel-layer-duplicate"));
+    m_wdgLayerBox->bnClippingMask->setIcon(KisIconUtils::loadIcon("panel-layer-clip"));
     m_wdgLayerBox->configureLayerDockerToolbar->setIcon(KisIconUtils::loadIcon("view-choose"));
 
     // call child function about needing to update icons

@@ -2127,7 +2127,7 @@ void KisConfig::setToolbarSlider(int sliderNumber, const QString &slider)
 
 int KisConfig::layerThumbnailSize(bool defaultValue) const
 {
-    return (defaultValue ? 20 : m_cfg.readEntry("layerThumbnailSize", 20));
+    return (defaultValue ? 32 : m_cfg.readEntry("layerThumbnailSize", 32));
 }
 
 void KisConfig::setLayerThumbnailSize(int size)
@@ -2979,7 +2979,7 @@ void KisConfig::setRenamePastedLayers(bool value)
 
 KisConfig::LayerInfoTextStyle KisConfig::layerInfoTextStyle(bool defaultValue) const
 {
-    return (KisConfig::LayerInfoTextStyle)(defaultValue ? INFOTEXT_NONE : m_cfg.readEntry("layerInfoTextStyle", (int)INFOTEXT_NONE));
+    return (KisConfig::LayerInfoTextStyle)(defaultValue ? INFOTEXT_BALANCED : m_cfg.readEntry("layerInfoTextStyle", (int)INFOTEXT_BALANCED));
 }
 
 void KisConfig::setLayerInfoTextStyle(KisConfig::LayerInfoTextStyle value)

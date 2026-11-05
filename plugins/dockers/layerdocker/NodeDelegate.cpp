@@ -25,6 +25,7 @@
 #include <QModelIndex>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPointer>
 #include <QStyle>
 #include <QStyleOptionViewItem>
@@ -94,6 +95,11 @@ QPixmap tintIconPixmap(const QPixmap &source, const QColor &color)
 }
 
 } // namespace
+
+bool NodeDelegate::shouldDrawBadge(bool isMutable, bool isOn, bool rowHovered)
+{
+    return !isMutable || isOn || rowHovered;     // errors and mismatches (not mutable) always say so
+}
 
 int NodeDelegate::groupRowHeight(int baseRowHeight, int percent, int minHeight)
 {
@@ -210,14 +216,37 @@ void NodeDelegate::paint(QPainter *p, const QStyleOptionViewItem &o, const QMode
     {
         QStyleOptionViewItem option = getOptions(o, index);
         QStyle *style = option.widget ? option.widget->style() : QApplication::style();
-        style->drawPrimitive(QStyle::PE_PanelItemViewItem, &option, p, option.widget);
+
+        // The row's background: a quiet rounded band across its columns, not the style's flat selection.
+        const bool selected = option.state & QStyle::State_Selected;
+        if (selected || (option.state & QStyle::State_MouseOver)) {
+            QColor band = option.palette.color(QPalette::Highlight);
+            band.setAlphaF(selected ? 0.28 : 0.10);
+            const int radius = 8;
+            QRect shape = option.rect;
+            if (index.column() == NodeView::VISIBILITY_COL) {
+                shape.setRight(shape.right() + 2 * radius);
+            } else {
+                shape.setLeft(shape.left() - 2 * radius);
+            }
+            p->save();
+            p->setClipRect(option.rect);
+            p->setRenderHint(QPainter::Antialiasing);
+            p->setPen(Qt::NoPen);
+            p->setBrush(band);
+            p->drawRoundedRect(shape, radius, radius);
+            p->restore();
+        }
 
         bool shouldGrayOut = index.data(KisNodeModel::ShouldGrayOutRole).toBool();
+        if (index.column() != NodeView::VISIBILITY_COL) {
+            KisBaseNode::PropertyList props = index.data(KisNodeModel::PropertiesRole).value<KisBaseNode::PropertyList>();
+            OptionalProperty visibility = d->findVisibilityProperty(props);
+            if (visibility && !visibility->state.toBool()) shouldGrayOut = true;     // a hidden layer is dimmed
+        }
         if (shouldGrayOut) {
             option.state &= ~QStyle::State_Enabled;
         }
-
-        drawFrame(p, option, index);
 
         if (index.column() == NodeView::SELECTED_COL) {
             drawSelectedButton(p, o, index, style);
@@ -634,13 +663,17 @@ void NodeDelegate::drawThumbnail(QPainter *p, const QStyleOptionViewItem &option
     QBrush brush(d->checkers);
     p->setBrushOrigin(offset);
     QRect imageRectLowRes = QRect(img.rect().topLeft(), img.rect().size()/devicePixelRatio);
+
+    // Rounded, with no frame.
+    QPainterPath rounded;
+    rounded.addRoundedRect(QRectF(imageRectLowRes.translated(offset)), 4, 4);
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing);
+    p->setClipPath(rounded, Qt::IntersectClip);
     p->fillRect(imageRectLowRes.translated(offset), brush);
-
     p->drawImage(offset, img);
+    p->restore();
     p->setOpacity(oldOpacity); // restore old opacity
-
-    QRect borderRect = kisGrowRect(imageRectLowRes, 1).translated(offset);
-    KritaUtils::renderExactRect(p, borderRect, scm.gridColor(option, d->view));
 }
 
 QRect NodeDelegate::iconsRect(const QStyleOptionViewItem &option, const QModelIndex &index) const
@@ -1080,7 +1113,7 @@ void NodeDelegate::drawIcons(QPainter *p, const QStyleOptionViewItem &option, co
 
     Q_FOREACH (OptionalProperty prop, realProps) {
         x += scm.iconMargin();
-        if (prop) {
+        if (prop && shouldDrawBadge(prop->isMutable, prop->state.toBool(), option.state & QStyle::State_MouseOver)) {
             QIcon icon = prop->state.toBool() ? prop->onIcon : prop->offIcon;
             bool fullColor = prop->state.toBool() && option.state & QStyle::State_Enabled;
 

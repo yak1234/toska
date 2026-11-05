@@ -22,6 +22,7 @@ private Q_SLOTS:
     void init();
     void cleanup();
 
+    void testBadgesShowOnlyWhenOnOrHovered();
     void testGroupRowHeightFunction();
     void testGroupRowsAreShorterThanLayerRows();
     void testHitRectsFollowTheGroupRowHeight();

@@ -9,6 +9,13 @@
     <file>dark_arrowdown.svg</file>
     <file>dark_arrowup.svg</file>
     <file>dark_clip-to-layer.svg</file>
+    <file>dark_panel-layer-add.svg</file>
+    <file>dark_panel-layer-duplicate.svg</file>
+    <file>dark_panel-layer-clip.svg</file>
+    <file>dark_panel-layer-down.svg</file>
+    <file>dark_panel-layer-up.svg</file>
+    <file>dark_panel-layer-properties.svg</file>
+    <file>dark_panel-layer-delete.svg</file>
     <file>dark_deletelayer.svg</file>
     <file>dark_duplicatelayer.svg</file>
     <file>dark_properties.svg</file>
@@ -16,6 +23,13 @@
     <file>light_arrowdown.svg</file>
     <file>light_arrowup.svg</file>
     <file>light_clip-to-layer.svg</file>
+    <file>light_panel-layer-add.svg</file>
+    <file>light_panel-layer-duplicate.svg</file>
+    <file>light_panel-layer-clip.svg</file>
+    <file>light_panel-layer-down.svg</file>
+    <file>light_panel-layer-up.svg</file>
+    <file>light_panel-layer-properties.svg</file>
+    <file>light_panel-layer-delete.svg</file>
     <file>light_deletelayer.svg</file>
     <file>light_duplicatelayer.svg</file>
     <file>light_properties.svg</file>

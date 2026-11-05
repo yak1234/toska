@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Yakub Rabiutheen
+  SPDX-License-Identifier: CC-BY-SA-4.0
+  The Layers panel's clip button, in the agent panel's icon style.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><g fill="none" stroke="#4d5967" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5v6A2.5 2.5 0 0 0 6.500 11H12M9.500 8.500 12 11l-2.500 2.500"/></g></svg>
