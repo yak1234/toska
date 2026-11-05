@@ -6,10 +6,11 @@ import re
 import time
 import threading
 import uuid
-from .qt_compat import sip, enum_value, QPainter, QRect
+from .qt_compat import sip, enum_value, QDockWidget, QMainWindow, QPainter, QRect
 from .product_name import product_name
 from .crash_diagnostics import record as record_error
 from . import panel_icons
+from .panel_tabs import DockTab
 from .panel_icons import themed
 from .panel_theme import panel_colors
 from .panel_theme import TEXT_SIZES, style_values
@@ -1496,8 +1497,7 @@ class CreativeAgentDocker(DockWidget):
         self.more_button = themed(QPushButton(''), 'more'); self.more_button.setObjectName('headerAction'); self.more_button.setFixedSize(28, 28)
         self.more_button.setAccessibleName('More'); self.more_button.setToolTip('Settings, the painting file and this chat\'s traces')
         self.more_menu = QMenu(self); self.more_menu.aboutToShow.connect(self.refresh_more_menu); self.more_button.setMenu(self.more_menu)
-        header.addWidget(self.more_button)
-        layout.addLayout(header)
+        header.addWidget(self.more_button)                    # the header belongs to the Chat tab: added there below
         self.use_canvas_button = QPushButton('Use this canvas as painting target')
         self.use_canvas_button.setObjectName('footerAction')
         self.use_canvas_button.setToolTip('Keep this conversation and plan, and work on the attached painting. Nothing paints until you Resume.')
@@ -1534,12 +1534,12 @@ class CreativeAgentDocker(DockWidget):
         self.sharpen_row.hide(); self.plan_steps.now_layout.addWidget(self.sharpen_row)
         self.sharpen_controls = []; self.canvas_reference_controls = []; self.effect_build_controls = []; self.effect_build_cards = []; self.reference_cards = {}
         top_area = QVBoxLayout(); top_area.setContentsMargins(0, 0, 0, 0); top_area.setSpacing(6); layout.addLayout(top_area)
-        self.tabs = QTabWidget(); self.tabs.setObjectName('panelTabs'); self.tabs.setDocumentMode(True); self.tabs.setUsesScrollButtons(False)
+        self.tabs = QTabWidget(); self.tabs.setObjectName('panelTabs'); self.tabs.setDocumentMode(True); self.tabs.setUsesScrollButtons(True)   # at the largest text the bar scrolls: a name is never cut
         self.tabs.tabBar().setDrawBase(False); self.tabs.tabBar().setExpanding(False)
         self.tabs.tabBar().setElideMode(Qt.TextElideMode.ElideNone)   # a tab's name is never shortened
-        self.tabs.setAccessibleName('Chat, plan and project folder')
+        self.tabs.setAccessibleName('Chat, plan, project folder, layers and brushes')
         chat_page = QWidget(); chat_page.setObjectName('creativeChat'); chat_layout = QVBoxLayout(chat_page)
-        chat_layout.setContentsMargins(0, 0, 0, 0); chat_layout.setSpacing(8)
+        chat_layout.setContentsMargins(0, 0, 0, 0); chat_layout.setSpacing(8); chat_layout.addLayout(header)
         def scrolled_page(name):
             page = QWidget(); page.setObjectName('creativeChat'); page_layout = QVBoxLayout(page)
             page_layout.setContentsMargins(0, 8, 2, 8); page_layout.setSpacing(8)
@@ -1550,7 +1550,12 @@ class CreativeAgentDocker(DockWidget):
         self.folder_scroll, folder_page = scrolled_page('folderPage')
         self.chat_tab = self.tabs.addTab(chat_page, 'Chat'); self.plan_tab = self.tabs.addTab(self.plan_scroll, 'Plan')
         self.folder_tab = self.tabs.addTab(self.folder_scroll, 'Folder')
+        # Layers and Brushes: the app's real panels, in a tab once this window's docks are known (attach_dock_tabs).
+        self.layers_page = DockTab('Layers', 'KisLayerBox'); self.brushes_page = DockTab('Brushes', 'PresetDocker')
+        self.dock_tabs = (self.layers_page, self.brushes_page); self.watched_window = None
+        for page in self.dock_tabs: self.tabs.addTab(page, page.title)
         self.show_tab(self.plan_tab, False); self.show_tab(self.folder_tab, False)
+        for page in self.dock_tabs: self.show_tab(self.tabs.indexOf(page), False)
         self.tabs.setTabToolTip(self.plan_tab, 'The plan, one step per element: skip, restore, keep or redo a step')
         self.tabs.setTabToolTip(self.folder_tab, 'The project folder: its goal image, element images and big colour masses')
         layout.addWidget(self.tabs, 1)
@@ -1966,6 +1971,38 @@ class CreativeAgentDocker(DockWidget):
         self.tabs.setTabVisible(index, shown)
         self.tabs.tabBar().setVisible(sum(self.tabs.isTabVisible(i) for i in range(self.tabs.count())) > 1)
 
+    def main_window(self):
+        """The main window this panel docks into (a floating dock's window() is the dock itself), or None."""
+        widget = self.parentWidget()
+        while widget is not None and not isinstance(widget, QMainWindow): widget = widget.parentWidget()
+        return widget
+
+    def attach_dock_tabs(self):
+        """Find this window's Layers and Brushes docks: they may be created after this panel, so this is tried again on show and
+        on every canvas change. A dock that does not exist means no tab."""
+        window = self.main_window()
+        if window is None: return
+        if self.watched_window is not window:
+            self.watched_window = window; window.installEventFilter(self)
+        for page in self.dock_tabs:
+            if page.dock is not None: continue
+            dock = window.findChild(QDockWidget, page.dock_name)
+            if dock is None: continue
+            page.attach(dock); self.show_tab(self.tabs.indexOf(page), True)
+
+    def return_dock_widgets(self):
+        """Every dock owns its own widget again: before the window goes, so nothing is torn down holding another's parts."""
+        for page in self.dock_tabs:
+            if page.dock is not None: page.give_back()
+
+    def eventFilter(self, watched, event):
+        if watched is self.watched_window and event.type() == QEvent.Type.Close: self.return_dock_widgets()
+        return super().eventFilter(watched, event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, 'dock_tabs'): self.attach_dock_tabs()
+
     def waiting_card(self):
         """(what, a button of it) for a card waiting for the artist's answer, or None. Read from the cards' own buttons, which
         go off when answered, closed or replaced, so nothing else has to report it."""
@@ -2143,7 +2180,7 @@ class CreativeAgentDocker(DockWidget):
             QListWidget#folderElements::item { padding: 4px 8px; }
             QLabel#folderGoal { background: %(raised)s; border-radius: %(r_thumb)dpx; }
             QTabWidget#panelTabs::pane { border: none; }
-            QTabWidget#panelTabs QTabBar::tab { padding: 8px 8px; margin-right: 8px; font-size: %(fs_secondary)dpx; }
+            QTabWidget#panelTabs QTabBar::tab { padding: 8px 4px; margin-right: 4px; font-size: %(fs_secondary)dpx; }
             QTabWidget::pane { border: 1px solid %(hover)s; border-radius: %(r_thumb)dpx; }
             QTabBar::tab { background: transparent; color: %(muted)s; padding: 8px; border: none; border-bottom: 2px solid transparent; font-size: %(fs_secondary)dpx; }
             QTabBar::tab:selected { color: %(text)s; border-bottom: 2px solid %(accent)s; }
@@ -3248,6 +3285,7 @@ class CreativeAgentDocker(DockWidget):
     def canvasChanged(self, canvas):
         # Krita may emit this while constructing the dock. Observe only after
         # initialization; the host owns attachment state and target pinning.
+        if hasattr(self, 'dock_tabs'): self.attach_dock_tabs()
         if hasattr(self, 'context_timer'):
             if not self.has_open_document() and self.canvas_context.get('canvas'):
                 self.canvas_context.update(state='none', canvas=None); self.render_context()
@@ -3298,6 +3336,8 @@ class CreativeAgentDocker(DockWidget):
     def tab_changed(self, index):
         QToolTip.hideText(); self.slash_menu.hide()          # nothing of another tab stays open over this one
         if hasattr(self, 'composer'): self.composer.setVisible(index == self.chat_tab)    # the message box belongs to the chat
+        page = self.tabs.widget(index)
+        if isinstance(page, DockTab): page.follow()           # a close the artist cancelled gave the widget back
         if index == self.plan_tab: self.reveal_timer.start()
         if index == self.folder_tab: self.fit_folder_elements()   # its rows' heights are known once it shows
 
