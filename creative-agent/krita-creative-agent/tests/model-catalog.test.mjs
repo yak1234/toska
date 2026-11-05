@@ -68,8 +68,8 @@ test('real SDK initialization inherits official Pi routes, exposes text and batc
     const saved=String(await readFile(join(output,'model-connections.json')));
     assert.ok(!saved.includes('custom-test-only'));
     const first=JSON.parse(saved)['custom-companion-custom'].models.find(m=>m.id==='first');
-    assert.deepEqual(first,{id:'first',name:'First',contextWindow:32000,maxTokens:4000,input:['text','image']});
-    assert.deepEqual(JSON.parse(saved)['custom-companion-custom'].models.find(m=>m.id==='second'),{id:'second',name:'second',input:['text','image']});
+    assert.deepEqual(first,{id:'first',name:'First',contextWindow:32000,maxTokens:4000,input:['text','image'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0}},'an endpoint model is saved with a zero price');
+    assert.deepEqual(JSON.parse(saved)['custom-companion-custom'].models.find(m=>m.id==='second'),{id:'second',name:'second',input:['text','image'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0}});
     await runtime.releaseLock();runtime=create();await runtime.initialize();
     assert.ok(runtime.models.getModel('custom-companion-custom','first'));assert.ok(runtime.models.getModel('custom-companion-custom','second'));
     assert.equal(runtime.models.getModel('custom-companion-custom','first').contextWindow,32000);

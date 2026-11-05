@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {describeModel, discoverEndpointModels, endpointProviderId, endpointUrl} from '../src/model-endpoint.ts';
+import {describeModel, discoverEndpointModels, endpointProviderId, endpointUrl, withPrices} from '../src/model-endpoint.ts';
 
 test('a listing entry gives only what its server reports, in each server\'s own field names', () => {
   assert.deepEqual(describeModel({id: 'plain'}), {id: 'plain', name: 'plain'});
@@ -43,4 +43,16 @@ test('discovery lists the server\'s models, falls back to a typed model id, and 
   await assert.rejects(discoverEndpointModels(endpointUrl('https://x.example/v1'), 'bad', undefined, {fetch: refused}), /answered 401/);
   const empty = async () => new Response(JSON.stringify({data: []}), {status: 200});
   await assert.rejects(discoverEndpointModels(endpointUrl('https://x.example/v1'), 'k', undefined, {fetch: empty}), /listed no models/);
+});
+
+test('a saved endpoint model without a price gets a zero price, so the cost count after a reply cannot crash', () => {
+  const saved = {baseUrl: 'https://x.example/v1', api: 'openai-completions', models: [
+    {id: 'no-price', name: 'no-price'},
+    {id: 'priced', name: 'priced', cost: {input: 1, output: 2, cacheRead: 0, cacheWrite: 0}}]};
+  const fixed = withPrices(saved);
+  assert.deepEqual(fixed.models[0].cost, {input: 0, output: 0, cacheRead: 0, cacheWrite: 0});
+  assert.deepEqual(fixed.models[1].cost, {input: 1, output: 2, cacheRead: 0, cacheWrite: 0}, 'a stated price is kept');
+  assert.equal(fixed.baseUrl, saved.baseUrl);
+  assert.equal(saved.models[0].cost, undefined, 'the saved object is not changed in place');
+  assert.deepEqual(withPrices({baseUrl: 'https://x.example/v1'}), {baseUrl: 'https://x.example/v1'}, 'a connection with no model list is left alone');
 });

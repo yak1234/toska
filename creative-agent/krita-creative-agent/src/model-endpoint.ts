@@ -70,3 +70,13 @@ export async function discoverEndpointModels(url: URL, apiKey: string | undefine
   if (!listed.length) throw new Error(`Could not list the models at ${url.origin}: ${failure}. Check the address, or type the model ID.`);
   return listed.map(model => model.input ? model : { ...model, input: ['text', 'image'] });
 }
+
+const NO_PRICE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+/** A custom endpoint reports no prices, but Pi counts the cost of every reply from model.cost and fails without it
+ * ("reading 'tiers'"). A model with no stated price is counted as free; a stated price is kept. Applied to saved
+ * connections too, so ones written before this fix load without a repair. */
+export function withPrices<T extends { models?: Array<Record<string, any>> }>(connection: T): T {
+  if (!Array.isArray(connection?.models)) return connection;
+  return { ...connection, models: connection.models.map(model => model.cost ? model : { ...model, cost: { ...NO_PRICE } }) };
+}

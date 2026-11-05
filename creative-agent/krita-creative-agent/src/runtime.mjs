@@ -16,7 +16,7 @@ import { SKILLS_DIR } from './skills.mjs';
 import { isFillNudge } from './reference-first.ts';
 import { GUARDS_CHANNEL, LOOP_GUARDS, PAINTING_WEIGHT, argumentRepairExtension } from './extensions.mjs';
 import { withArgumentRepair } from './argument-repair.ts';
-import { discoverEndpointModels, endpointProviderId, endpointUrl, isLocalEndpoint } from './model-endpoint.ts';
+import { discoverEndpointModels, endpointProviderId, endpointUrl, isLocalEndpoint, withPrices } from './model-endpoint.ts';
 
 const SIGN_IN_NAMES = { 'openai-codex': 'ChatGPT (Codex)', 'anthropic': 'Claude', 'google-gemini-cli': 'Gemini CLI', 'google-antigravity': 'Google Antigravity' };
 /** How to restore a lapsed or missing OAuth sign-in. The chat keeps its model. */
@@ -70,7 +70,7 @@ export class PaintingRuntime {
       const connectionsPath=join(this.config.output,'model-connections.json');
       try {this.modelConnections=JSON.parse(await readFile(connectionsPath,'utf8'));}
       catch(error){if(error.code!=='ENOENT')throw new Error('Saved model connections need repair before reconnecting.');}
-      for(const [provider,connection] of Object.entries(this.modelConnections ?? {}))this.models.registerProvider(provider,connection);
+      for(const [provider,connection] of Object.entries(this.modelConnections ?? {}))this.models.registerProvider(provider,withPrices(connection));
       if(this.modelConnections)await this.models.refresh({allowNetwork:false,signal:AbortSignal.timeout(15000)});
       // Pi's persisted catalog can lag newly released routes. Refresh only the
       // connected OpenRouter provider; a network failure leaves cached models usable.
@@ -189,7 +189,7 @@ export class PaintingRuntime {
       if (!key && !isLocalEndpoint(endpoint)) throw new Error('Enter the API key for this endpoint.');
       provider = p.provider || endpointProviderId(p.name, endpoint);
       const models = (await discoverEndpointModels(endpoint, key || undefined, p.model)).filter(model => !/\bbatch\b/i.test(model.id + ' ' + model.name));
-      const connection = { baseUrl: endpoint.toString(), api: 'openai-completions', ...(key ? {} : { apiKey: 'none' }), models };
+      const connection = withPrices({ baseUrl: endpoint.toString(), api: 'openai-completions', ...(key ? {} : { apiKey: 'none' }), models });
       this.models.registerProvider(provider, connection);
       if (key) await this.loginWithKey(provider, key);
       this.modelConnections ??= {};
