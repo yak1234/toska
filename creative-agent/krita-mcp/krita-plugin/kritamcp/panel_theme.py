@@ -14,6 +14,20 @@ Which theme the app shows: when the app palette is known, its exact window colou
 is the old one. The saved name decides only when there is no palette.
 """
 
+# The look (openspec panel-redesign): the one set of text sizes, corners and spaces the panel uses. Text sizes are px at the
+# default Text size setting and scale with it. A pill's corner is half its height, so each pill height has its own value.
+TEXT_SIZES = {'small': 11, 'secondary': 12, 'body': 13, 'chat': 14, 'display': 18}
+CORNERS = {'thumb': 4, 'card': 8, 'box': 12, 'dot': 3, 'remove': 9, 'pill': 14}
+SPACING = (4, 8, 12, 16)
+
+
+def style_values():
+    """The set above under the names the panel's stylesheet uses: %(fs_body)d, %(r_card)d."""
+    values = {'fs_' + name: size for name, size in TEXT_SIZES.items()}
+    values.update({'r_' + name: radius for name, radius in CORNERS.items()})
+    return values
+
+
 PANEL_KEYS = ('bg', 'surface', 'raised', 'border', 'text', 'muted', 'hover', 'accent', 'button', 'buttonText')
 
 DARK = {'bg': '#1e1f22', 'surface': '#28292d', 'raised': '#313338', 'border': '#42444b', 'text': '#e7e8eb',

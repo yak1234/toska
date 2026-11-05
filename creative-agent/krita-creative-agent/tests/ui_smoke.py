@@ -71,14 +71,14 @@ canvas = {'document_id':'open-painting','name':'DeepSeek — first color-field s
           'width':768,'height':1024,'revision':'r1','content_id':'sha256-one','captured_at':'2026-09-11T10:00:00Z','path':image_path}
 active_document[0] = types.SimpleNamespace(fileName=lambda: canvas['filename'], modified=lambda: True)
 panel.handle_event({'type':'context','selected':True,'follow_active':True,'state':'fresh','canvas':canvas})
-assert 'painting.kra' in panel.canvas_button.text()
+assert 'painting.kra' in panel.canvas_button.accessibleName()
 assert canvas['name'] not in panel.canvas_button.text() and canvas['name'] in panel.canvas_button.toolTip()
 assert module.canvas_name({'name':'Untitled study','filename':''}) == 'Untitled study'
 # A newly created Ask session is observation context, not a proposed painting target.
 panel.painting_target={'document_id':'open-painting','filename':None,'name':'Creative painting','mode':'new','bound':False}
 panel.goal={'status':'draft','brief':None,'approved_revision':None}
 panel.render_target()
-assert panel.workspace_label.text()=='Canvas · painting.kra' and not panel.return_button.isVisible()
+assert panel.workspace_label.text()=='· painting.kra' and not panel.return_button.isVisible()
 panel.goal=None; panel.painting_target={}
 panel.prompt.setPlainText('Do you see this painting?')
 QTest.keyClick(panel.prompt, Qt.Key.Key_Return)
@@ -90,7 +90,7 @@ message_id = commands[-1]['message_id']
 panel.handle_event({'type':'message_context','message_id':message_id,'status':'included','canvas':canvas})
 assert panel.last_user_item['receipt']['content_id'] == 'sha256-one'
 receipt_button=panel.last_user_item['layout'].itemAt(1).widget()
-assert receipt_button.text()=='▧  painting.kra · included' and canvas['name'] in receipt_button.toolTip()
+assert receipt_button.text()=='painting.kra · included' and canvas['name'] in receipt_button.toolTip()
 name_preview=module.ImagePreview(panel,canvas)
 details=[label.text() for label in name_preview.findChildren(QLabel) if 'Document title:' in label.text()]
 assert len(details)==1 and details[0].startswith('painting.kra') and canvas['name'] in details[0]
@@ -154,12 +154,12 @@ legacy_dialog = module.PlanDialog(panel, legacy_goal)
 assert 'scope' not in legacy_dialog.brief()['steps'][0], 'optional blank scope must not invalidate a legacy plan'
 legacy_dialog.close()
 # The open chat's AI image allowance: shown and changed in the panel in every mode, and in the plan dialog.
-assert panel.ai_images_selector.isVisible() and panel.ai_images_selector.currentData() == 0, 'a chat saved without an allowance shows none'
+assert not panel.ai_images_selector.isHidden() and panel.ai_images_selector.currentData() == 0, 'a chat saved without an allowance shows none'
 panel.ai_images_selector.setCurrentIndex(panel.ai_images_selector.findData(1))
 assert commands[-1] == {'type':'set_limits','limits':{'minutes':20,'passes':30,'ai_images':1}}, commands[-1]
 agent_goal = dict(goal, brief=None, question=None, limits={'minutes':0,'passes':0,'ai_images':3}, ai_images_used=1)
 panel.handle_event({'type':'goal','goal':agent_goal,'mode':'agent','references':[]})
-assert not panel.tabs.isTabVisible(panel.plan_tab) and panel.ai_images_selector.isVisible(), 'an Agent chat with no plan still shows it'
+assert not panel.tabs.isTabVisible(panel.plan_tab) and not panel.ai_images_selector.isHidden(), 'an Agent chat with no plan still shows it'
 assert panel.ai_images_selector.currentData() == 3 and panel.ai_images_used.text() == '1 used'
 panel.ai_images_selector.setCurrentIndex(panel.ai_images_selector.findData(-1))
 assert commands[-1]['type'] == 'set_limits' and commands[-1]['limits']['ai_images'] is None, 'no limit is sent as null'
@@ -242,7 +242,7 @@ for dark in (True,False):
         panel.resize(width,height); settle(); panel.transcript.jump_to_latest(); settle()
         assert panel.width() == width, 'panel must respect narrow size'
         assert panel.transcript.horizontalScrollBar().maximum() == 0
-        for control in (panel.prompt,panel.send_button,panel.mode_selector,panel.model,panel.canvas_button):
+        for control in (panel.prompt,panel.send_button,panel.mode_selector,panel.model_chip,panel.canvas_button):
             assert control.width() > 15
             point = control.mapTo(panel, control.rect().bottomRight())
             assert point.x() <= panel.width() and point.y() <= panel.height(), 'important control clipped: '+str(control.objectName())
@@ -274,7 +274,7 @@ unicode_selected = cursor.selectedText(); panel.transcript.append_to(unicode_rep
 assert unicode_reply['label'].textCursor().selectedText() == unicode_selected
 # Larger text must retain the composer controls inside a narrow panel.
 panel.text_size.setValue(18); panel.resize(360, 820); settle()
-for control in (panel.prompt,panel.send_button,panel.model,panel.mode_selector,panel.canvas_button):
+for control in (panel.prompt,panel.send_button,panel.model_chip,panel.mode_selector,panel.canvas_button):
     assert control.mapTo(panel, control.rect().bottomRight()).x() <= panel.width()
 panel.grab().save(str(output / 'state-large-text-light.png'))
 panel.text_size.setValue(14); panel.apply_theme(True); panel.resize(440,820)
@@ -332,7 +332,7 @@ goal['question'] = None
 panel.handle_event({'type':'goal','goal':goal,'mode':'plan','references':[], 'painting_target':{'document_id':'target-other','filename':str(root.parent/'other-study.kra'),'name':'Working painting','mode':'copy','bound':False}})
 assert panel.scope_tray.isVisible() and panel.plan_context_button.isVisible() and panel.region_group.isVisible()
 assert 'other-study.kra' in panel.workspace_label.text(), 'target identity must not be inferred from the context canvas'
-assert 'painting.kra' in panel.canvas_button.text()
+assert 'painting.kra' in panel.canvas_button.accessibleName()
 assert 'Rectangular crop' in panel.region_button.toolTip() and 'not an exact freehand mask' in panel.region_button.toolTip()
 panel.last_user_item = panel.transcript.add_message('You','Look at this part of the upper field.',message_id='region-message')
 panel.handle_event({'type':'message_context','message_id':'region-message','status':'included','canvas':canvas,'region':region})
@@ -361,7 +361,7 @@ for dark in (True,False):
             assert point.x() <= panel.width() and point.y() <= panel.height(), 'region/plan context control clipped'
         panel.grab().save(str(output/('context-%s-%s.png'%('dark' if dark else 'light',width))))
 panel.handle_event({'type':'context','selected':True,'follow_active':True,'state':'fresh','canvas':dict(canvas,document_id='switched-document',name='Other canvas'), 'region':dict(region,state='unavailable')})
-assert panel.region_button.text() == '⌗  Crop unavailable'
+assert panel.region_button.text() == 'Crop unavailable'
 assert 'other-study.kra' in panel.workspace_label.text(), 'switching context must preserve target label'
 panel.region_remove.click(); assert commands[-1] == {'type':'context','action':'clear_region'}
 panel.handle_event({'type':'context','selected':True,'follow_active':True,'state':'fresh','canvas':canvas,'region':None})

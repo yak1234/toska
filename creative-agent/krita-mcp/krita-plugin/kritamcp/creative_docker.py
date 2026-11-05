@@ -6,10 +6,13 @@ import re
 import time
 import threading
 import uuid
-from .qt_compat import sip, enum_value
+from .qt_compat import sip, enum_value, QPainter, QRect
 from .product_name import product_name
 from .crash_diagnostics import record as record_error
+from . import panel_icons
+from .panel_icons import themed
 from .panel_theme import panel_colors
+from .panel_theme import TEXT_SIZES, style_values
 from .plan_steps import PlanStepsList, plan_steps_stylesheet, thumbnail
 from .auto_approve import AutoApprove, delay_of
 from krita import DockWidget, DockWidgetFactory, DockWidgetFactoryBase, Krita, Selection
@@ -462,7 +465,7 @@ class ProtectionDialog(QDialog):
             if not automatic:
                 show = QPushButton('👁'); show.setCheckable(True); show.setAccessibleName('Show %s in red' % area['name'])
                 show.toggled.connect(lambda on, entry=area: panel.show_protection(entry, on)); row.addWidget(show)
-                remove = QPushButton('✕'); remove.setAccessibleName('Remove protection %s' % area['name'])
+                remove = themed(QPushButton(''), 'close'); remove.setAccessibleName('Remove protection %s' % area['name'])
                 remove.clicked.connect(lambda _checked=False, entry=area: (panel.remove_protection(entry), self.close())); row.addWidget(remove)
             layout.addLayout(row)
             self.rows.append({'name': area['name'], 'detail': detail, 'show': show, 'remove': remove})
@@ -533,8 +536,8 @@ class FeaturesSection(QFrame):
         layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(2)
         header = QHBoxLayout(); header.setSpacing(6)
         self.toggle = QToolButton(); self.toggle.setObjectName('featuresToggle'); self.toggle.setText('Protected')
-        self.toggle.setCheckable(True); self.toggle.setChecked(True); self.toggle.setAccessibleName('Show or hide the protected features')
-        self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon); self.toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self.toggle.setCheckable(True); self.toggle.setChecked(False); self.toggle.setAccessibleName('Show or hide the protected features')
+        self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon); self.toggle.setArrowType(Qt.ArrowType.RightArrow)
         self.toggle.toggled.connect(self.expand); header.addWidget(self.toggle)
         self.summary = QLabel(''); self.summary.setObjectName('muted'); header.addWidget(self.summary, 1)
         layout.addLayout(header)
@@ -544,7 +547,7 @@ class FeaturesSection(QFrame):
         self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True); self.scroll.setWidget(self.list); self.scroll.setMaximumHeight(132)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff); body.addWidget(self.scroll)
         self.list.setObjectName('featuresList'); self.list.setAutoFillBackground(False); self.scroll.viewport().setAutoFillBackground(False)
-        layout.addWidget(self.body)
+        layout.addWidget(self.body); self.body.hide()        # one line until the artist opens it
 
     def expand(self, on):
         self.toggle.setArrowType(Qt.ArrowType.DownArrow if on else Qt.ArrowType.RightArrow); self.body.setVisible(on)
@@ -561,7 +564,7 @@ class FeaturesSection(QFrame):
         the chat (Keep, Adjust, Discard)."""
         if self.structure_of(rows, pending) != self.structure: self.show_rows(rows, pending)
         else: self.set_flags(rows)
-        self.show()
+        self.setVisible(bool(rows or pending))                # nothing to protect yet: no row (openspec panel-redesign)
 
     def set_flags(self, rows):
         flags = {str(r['name']): bool(r['protected']) for r in rows}
@@ -601,7 +604,8 @@ class FeaturesSection(QFrame):
         listed = bool(self.rows or self.pending_rows)
         self.empty.setVisible(not listed); self.scroll.setVisible(listed)
         protected = sum(1 for r in ordered if r['protected'])
-        self.summary.setText('%d of %d' % (protected, len(ordered)) if ordered else '')
+        self.summary.setText(' · '.join(part for part in ('%d of %d' % (protected, len(ordered)) if ordered else '',
+                                                           '%d proposed' % len(self.pending_rows) if self.pending_rows else '') if part))
         self.set_locked(self.locked)
 
     def set_locked(self, locked):
@@ -878,9 +882,89 @@ class PlanDialog(QDialog):
 ASSISTANT = 'Creative Agent'                                     # the role of the agent's own messages
 
 
+def short_title(text, limit):
+    """A caption of at most `limit` characters that ends between words (a single long word is cut, with the mark)."""
+    text = text.strip()
+    if len(text) <= limit: return text
+    cut = text[:limit]; space = cut.rfind(' ')
+    return (cut[:space] if space >= limit // 2 else cut).rstrip() + '…'
+
+
+class ElidedLabel(QLabel):
+    """One line that never wraps: too long, it is cut with "…" and the whole text is its tooltip. text() is the whole text, so
+    a long message changes the height of nothing (openspec panel-redesign)."""
+    def __init__(self, text=''):
+        super().__init__(''); self.whole = ''
+        self.setTextFormat(Qt.TextFormat.PlainText); self.setWordWrap(False); self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setText(text)
+
+    def setText(self, text):
+        self.whole = str(text or ''); self.setToolTip(self.whole); self.fit()
+
+    def text(self):
+        return self.whole
+
+    def fit(self):
+        line = ' '.join(self.whole.split())
+        super().setText(self.fontMetrics().elidedText(line, Qt.TextElideMode.ElideRight, max(0, self.width())))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event); self.fit()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange: self.fit()
+
+
+class ElidedChip(QPushButton):
+    """A chip in the control row: its text is cut to the room it has, and it asks for no more than `room` points."""
+    def __init__(self, room=110):
+        super().__init__(''); self.room = room; self.whole = ''; self.setObjectName('controlChip')
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed); self.setMinimumWidth(36); self.setFixedHeight(28)
+
+    def set_whole(self, text):
+        self.whole = text or ''; self.fit(); self.updateGeometry()
+
+    def fit(self):
+        self.setText(self.fontMetrics().elidedText(self.whole, Qt.TextElideMode.ElideRight, max(8, self.width() - 12)))
+
+    def sizeHint(self):
+        return QSize(min(self.room, self.fontMetrics().horizontalAdvance(self.whole) + 14), 28)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event); self.fit()
+
+
+class ToggleSwitch(QCheckBox):
+    """A checkbox drawn as a small switch with its word beside it (the status line's Auto-approve)."""
+    TRACK = QSize(24, 14)
+
+    def sizeHint(self):
+        return QSize(self.fontMetrics().horizontalAdvance(self.text()) + self.TRACK.width() + 4, max(self.TRACK.height(), self.fontMetrics().height()))
+
+    def hitButton(self, _position):
+        return True
+
+    def paintEvent(self, _event):
+        colors = getattr(self, 'colors', None) or {'muted': '#a7aab3', 'button': '#e1e5ee', 'buttonText': '#24272d', 'raised': '#313338'}
+        painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor(colors['muted'])); text_width = self.fontMetrics().horizontalAdvance(self.text())
+        painter.drawText(QRect(0, 0, text_width, self.height()), enum_value(Qt.AlignmentFlag.AlignVCenter) | enum_value(Qt.AlignmentFlag.AlignLeft), self.text())
+        track = QRect(text_width + 4, (self.height() - self.TRACK.height()) // 2, self.TRACK.width(), self.TRACK.height())
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(colors['button'] if self.isChecked() else colors['raised'])); painter.drawRoundedRect(track, 7, 7)
+        knob = QRect(track.right() - 11 if self.isChecked() else track.left() + 2, track.top() + 2, 10, 10)
+        painter.setBrush(QColor(colors['buttonText'] if self.isChecked() else colors['muted'])); painter.drawEllipse(knob)
+        if self.hasFocus():
+            painter.setBrush(Qt.BrushStyle.NoBrush); painter.setPen(QColor(colors['muted'])); painter.drawRoundedRect(track, 7, 7)
+        painter.end()
+
+
 class ChatTranscript(QScrollArea):
     followChanged = pyqtSignal(bool)
     previewRequested = pyqtSignal(dict)
+    unreadChanged = pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
@@ -891,11 +975,14 @@ class ChatTranscript(QScrollArea):
         self.body = QWidget()
         self.rows = QVBoxLayout(self.body)
         self.rows.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
-        self.rows.setContentsMargins(2, 16, 7, 12)
-        self.rows.setSpacing(20)
+        self.rows.setContentsMargins(0, 8, 4, 8)
+        self.rows.setSpacing(16)
         self.rows.addStretch()
         self.setWidget(self.body)
         self.messages = []
+        self.pictures = []                                    # card pictures, refit to the chat (fit_pictures)
+        self.unread = 0                                       # messages added since the artist scrolled up
+        self.floating = None                                  # the Latest button, over the chat
         self.reflow_timer = QTimer(self)
         self.reflow_timer.setSingleShot(True)
         self.reflow_timer.timeout.connect(self.reflow)
@@ -913,10 +1000,45 @@ class ChatTranscript(QScrollArea):
         following = bar.maximum() - bar.value() < 30
         if following != self.follow:
             self.follow = following
+            if following: self.set_unread(0)
             self.followChanged.emit(self.follow)
+
+    def set_unread(self, count):
+        if count != self.unread:
+            self.unread = count; self.unreadChanged.emit(count)
+
+    def float_button(self, button):
+        """The Latest button floats over the chat and takes no row."""
+        self.floating = button; button.setParent(self); self.place_floating()
+
+    def place_floating(self):
+        if self.floating is None: return
+        self.floating.adjustSize()
+        self.floating.move(max(0, (self.width() - self.floating.width()) // 2), max(0, self.height() - self.floating.height() - 12))
+        self.floating.raise_()
+
+    def show_widget(self, widget):
+        """Bring a card's control into view; the chat stops or starts following from where that leaves it."""
+        self.ensureWidgetVisible(widget, 0, 60); self.track_scroll()
+
+    def add_picture(self, label, pixmap):
+        """A card's picture: it follows the chat's size, so its buttons stay reachable without scrolling past it."""
+        self.pictures.append({'label': label, 'source': pixmap}); self.fit_pictures()
+
+    def fit_pictures(self):
+        self.pictures = [p for p in self.pictures if not sip.isdeleted(p['label'])]
+        box = QSize(max(80, self.viewport().width() - 16), max(80, self.viewport().height() // 2))
+        for picture in self.pictures:
+            source = picture['source']
+            size = source.size().scaled(box.boundedTo(source.size()), Qt.AspectRatioMode.KeepAspectRatio)
+            shown = picture.get('size')
+            if shown != size:
+                picture['size'] = size
+                picture['label'].setPixmap(source.scaled(size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def jump_to_latest(self):
         self.follow = True
+        self.set_unread(0)
         self.followChanged.emit(True)
         self.scroll_end()
 
@@ -953,9 +1075,11 @@ class ChatTranscript(QScrollArea):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if hasattr(self, 'reflow_timer'): self.reflow_timer.start(0)
+        if hasattr(self, 'floating'): self.place_floating()
 
     def reflow(self):
         # Width changes reflow documents; deltas update only the current reply.
+        self.fit_pictures()
         for item in self.messages:
             item['label'].fit_height()
         self.scroll_end()
@@ -975,23 +1099,28 @@ class ChatTranscript(QScrollArea):
         # An activity row: its first line is the row; the body opens on the details, never the title again.
         body.set_rendered(self.render(details if action and details else text))
         if action and not details:
-            line = QLabel('·  ' + title[:200]); line.setObjectName('activityDisclosure'); line.setTextFormat(Qt.TextFormat.PlainText)
+            line = QLabel('·  ' + short_title(title, 200)); line.setObjectName('activityDisclosure'); line.setTextFormat(Qt.TextFormat.PlainText)
             line.setWordWrap(True); line.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             body.hide(); layout.addWidget(line)
         elif action:
-            toggle = QPushButton('›  ' + title[:90])
+            toggle = themed(QPushButton(short_title(title, 90)), 'chevron-right', size=12)
             toggle.setObjectName('activityDisclosure'); toggle.setCheckable(True)
             toggle.setAccessibleName('Expand ' + role.lower() + ' details'); toggle.setToolTip(title if len(title) > 90 else '')
             body.hide()
             toggle.toggled.connect(body.setVisible)
-            toggle.toggled.connect(lambda checked: toggle.setText(('⌄  ' if checked else '›  ') + title[:90]))
+            toggle.toggled.connect(lambda checked: themed(toggle, 'chevron-down' if checked else 'chevron-right', size=12))
             layout.addWidget(toggle)
-        elif role != ASSISTANT:                                  # the agent's replies need no name over each one
+        elif role not in (ASSISTANT, 'You'):                     # the agent's replies and the artist's bubble need no name over each one
             layout.addWidget(label)
         layout.addWidget(body)
         item = {'role': role, 'text': text, 'label': body, 'card': card, 'layout': layout, 'id': message_id, 'action': action}
         self.messages.append(item)
-        self.rows.insertWidget(self.rows.count() - 1, card)
+        holder = card
+        if role == 'You':                                     # the artist's bubble sits to the right, as in any chat
+            holder = QWidget(); indent = QHBoxLayout(holder); indent.setContentsMargins(32, 0, 0, 0); indent.addWidget(card)
+        item['holder'] = holder
+        self.rows.insertWidget(self.rows.count() - 1, holder)
+        if not self.follow: self.set_unread(self.unread + 1)
         self.reflow_timer.start(0)
         self.scroll_end()
         return item
@@ -1007,7 +1136,7 @@ class ChatTranscript(QScrollArea):
     def add_receipt(self, item, canvas):
         if item.get('receipt'): return
         name = canvas_name(canvas)
-        button = QPushButton('▧  ' + name + ' · included')
+        button = themed(QPushButton(name + ' · included'), 'image', size=12)
         button.setObjectName('receipt')
         button.setToolTip('Open the exact canvas snapshot included in this message\n' + canvas_details(canvas))
         button.setAccessibleName('Preview included canvas ' + name)
@@ -1021,7 +1150,7 @@ class ChatTranscript(QScrollArea):
         snapshot = dict(region)
         if canvas and canvas.get('revision') == region.get('revision'): snapshot['overview_path'] = canvas.get('path')
         name = region.get('name') or 'Selection bounds'
-        button = QPushButton('⌗  ' + name + ' · crop included'); button.setObjectName('receipt')
+        button = themed(QPushButton(name + ' · crop included'), 'crop', size=12); button.setObjectName('receipt')
         button.setAccessibleName('Preview included rectangular crop')
         button.setToolTip('Open the exact rectangular crop included in this message')
         button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
@@ -1035,7 +1164,7 @@ class ChatTranscript(QScrollArea):
         for index, reference in enumerate(snapshots):
             name = reference.get('name') or os.path.basename(reference.get('path', 'Reference'))
             purpose = REFERENCE_CAPTIONS.get(reference.get('purpose') or 'general', 'General')
-            button = QPushButton('▧  ' + name + ' · ' + purpose.lower()); button.setObjectName('receipt')
+            button = themed(QPushButton(name + ' · ' + purpose.lower()), 'image', size=12); button.setObjectName('receipt')
             button.setAccessibleName('Preview included reference ' + name)
             button.setToolTip('Included reference · ' + name + '\nPurpose when sent: ' + purpose)
             button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
@@ -1050,8 +1179,7 @@ class ChatTranscript(QScrollArea):
         pixmap = QPixmap(image_path) if image_path else QPixmap()
         if not pixmap.isNull():
             picture = QLabel(); picture.setObjectName('questionImage')
-            picture.setPixmap(pixmap.scaled(QSize(360, 270), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-            item['layout'].addWidget(picture)
+            item['layout'].addWidget(picture); self.add_picture(picture, pixmap)
         choices = list(options)
         if not any(choice.casefold().strip(' .') == 'you decide' for choice in choices): choices.append('You decide')
         controls = []
@@ -1077,11 +1205,13 @@ class ChatTranscript(QScrollArea):
 
     def clear(self):
         for item in self.messages:
-            self.rows.removeWidget(item['card'])
-            item['card'].hide()
-            item['card'].deleteLater()
+            self.rows.removeWidget(item['holder'])
+            item['holder'].hide()
+            item['holder'].deleteLater()
         self.messages = []
+        self.pictures = []
         self.follow = True
+        self.set_unread(0)
         self.followChanged.emit(True)
 
     def toPlainText(self):
@@ -1332,36 +1462,42 @@ class CreativeAgentDocker(DockWidget):
         self.context_timer.timeout.connect(lambda: self.context_command('inspect'))
         body = QWidget(); body.setObjectName('creativeChat')
         layout = QVBoxLayout(body)
-        layout.setContentsMargins(14, 12, 14, 10)
+        layout.setContentsMargins(12, 8, 12, 12)
         layout.setSpacing(8)
         self.setMinimumWidth(320)
-        self.setMinimumHeight(440)
-        header = QHBoxLayout(); header.setSpacing(3)
+        self.setMinimumHeight(300)                            # below what fits, the panel scrolls as a whole (body_scroll)
+        header = QHBoxLayout(); header.setSpacing(4)
         # The app's own name, once (the dock's title bar is Krita's): Toska in the fork, Krita in stock.
         self.title = QLabel(product_name()); self.title.setObjectName('chatTitle')
-        header.addWidget(self.title, 1)
-        self.end_button = QPushButton('＋'); self.end_button.setObjectName('headerAction')
+        header.addWidget(self.title)
+        self.workspace_label = QLabel('· Your painting, in conversation'); self.workspace_label.setObjectName('headerTarget')
+        self.workspace_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        header.addWidget(self.workspace_label, 1)
+        self.return_button = QPushButton('Return to painting'); self.return_button.setObjectName('footerAction')
+        self.return_button.setAccessibleName('Return to the painting target')
+        self.return_button.clicked.connect(lambda: self.return_to_painting())
+        self.return_button.hide(); header.addWidget(self.return_button)
+        self.end_button = themed(QPushButton(''), 'plus'); self.end_button.setObjectName('headerAction'); self.end_button.setFixedSize(28, 28)
         self.end_button.setAccessibleName('New chat')
         self.end_button.setToolTip('New chat · your painting stays open')
         self.end_button.clicked.connect(lambda: self.send({'type': 'end'}) if self.study_active else self.new_chat())
         header.addWidget(self.end_button)
-        self.history_button = QPushButton('◷'); self.history_button.setObjectName('headerAction')
+        self.history_button = themed(QPushButton(''), 'clock'); self.history_button.setObjectName('headerAction'); self.history_button.setFixedSize(28, 28)
         self.history_button.setAccessibleName('Conversation history'); self.history_button.setToolTip('Conversation history')
         self.history_button.clicked.connect(self.show_history); header.addWidget(self.history_button)
-        self.options_button = QPushButton('···'); self.options_button.setObjectName('headerAction')
+        # What used to be the footer lives behind More: these widgets stay as the state the menu shows and presses.
+        self.footer_host = QWidget(); self.footer_host.hide()
+        footer = QHBoxLayout(self.footer_host); footer.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.footer_host)
+        self.options_button = QPushButton('Settings'); self.options_button.setObjectName('headerAction')
         self.options_button.setAccessibleName('Settings'); self.options_button.setToolTip('Painting settings and connections')
         self.options_button.clicked.connect(lambda: self.show_settings())
-        header.addWidget(self.options_button)
+        footer.addWidget(self.options_button)
+        self.more_button = themed(QPushButton(''), 'more'); self.more_button.setObjectName('headerAction'); self.more_button.setFixedSize(28, 28)
+        self.more_button.setAccessibleName('More'); self.more_button.setToolTip('Settings, the painting file and this chat\'s traces')
+        self.more_menu = QMenu(self); self.more_menu.aboutToShow.connect(self.refresh_more_menu); self.more_button.setMenu(self.more_menu)
+        header.addWidget(self.more_button)
         layout.addLayout(header)
-        self.workspace_label = QLabel('Your painting, in conversation'); self.workspace_label.setObjectName('muted')
-        self.workspace_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        workspace_row = QHBoxLayout(); workspace_row.setSpacing(6)
-        workspace_row.addWidget(self.workspace_label, 1)
-        self.return_button = QPushButton('Return to painting'); self.return_button.setObjectName('footerAction')
-        self.return_button.setAccessibleName('Return to the painting target')
-        self.return_button.clicked.connect(lambda: self.return_to_painting())
-        self.return_button.hide(); workspace_row.addWidget(self.return_button)
-        layout.addLayout(workspace_row)
         self.use_canvas_button = QPushButton('Use this canvas as painting target')
         self.use_canvas_button.setObjectName('footerAction')
         self.use_canvas_button.setToolTip('Keep this conversation and plan, and work on the attached painting. Nothing paints until you Resume.')
@@ -1400,9 +1536,10 @@ class CreativeAgentDocker(DockWidget):
         top_area = QVBoxLayout(); top_area.setContentsMargins(0, 0, 0, 0); top_area.setSpacing(6); layout.addLayout(top_area)
         self.tabs = QTabWidget(); self.tabs.setObjectName('panelTabs'); self.tabs.setDocumentMode(True); self.tabs.setUsesScrollButtons(False)
         self.tabs.tabBar().setDrawBase(False); self.tabs.tabBar().setExpanding(False)
+        self.tabs.tabBar().setElideMode(Qt.TextElideMode.ElideNone)   # a tab's name is never shortened
         self.tabs.setAccessibleName('Chat, plan and project folder')
         chat_page = QWidget(); chat_page.setObjectName('creativeChat'); chat_layout = QVBoxLayout(chat_page)
-        chat_layout.setContentsMargins(0, 6, 0, 0); chat_layout.setSpacing(8)
+        chat_layout.setContentsMargins(0, 0, 0, 0); chat_layout.setSpacing(8)
         def scrolled_page(name):
             page = QWidget(); page.setObjectName('creativeChat'); page_layout = QVBoxLayout(page)
             page_layout.setContentsMargins(0, 8, 2, 8); page_layout.setSpacing(8)
@@ -1413,7 +1550,7 @@ class CreativeAgentDocker(DockWidget):
         self.folder_scroll, folder_page = scrolled_page('folderPage')
         self.chat_tab = self.tabs.addTab(chat_page, 'Chat'); self.plan_tab = self.tabs.addTab(self.plan_scroll, 'Plan')
         self.folder_tab = self.tabs.addTab(self.folder_scroll, 'Folder')
-        self.tabs.setTabVisible(self.plan_tab, False); self.tabs.setTabVisible(self.folder_tab, False)
+        self.show_tab(self.plan_tab, False); self.show_tab(self.folder_tab, False)
         self.tabs.setTabToolTip(self.plan_tab, 'The plan, one step per element: skip, restore, keep or redo a step')
         self.tabs.setTabToolTip(self.folder_tab, 'The project folder: its goal image, element images and big colour masses')
         layout.addWidget(self.tabs, 1)
@@ -1421,6 +1558,7 @@ class CreativeAgentDocker(DockWidget):
         self.reveal_timer = QTimer(self); self.reveal_timer.setSingleShot(True); self.reveal_timer.setInterval(0)
         self.reveal_timer.timeout.connect(self.reveal_current_step)
         self.tabs.currentChanged.connect(self.tab_changed)
+        outer = layout                                        # the panel's own column: the tabs, then what every tab keeps
         layout = chat_layout                                  # what follows goes into the Chat tab unless placed elsewhere
 
         self.model = ModelComboBox(); self.model.setMinimumWidth(70)
@@ -1553,15 +1691,16 @@ class CreativeAgentDocker(DockWidget):
         self.starter_buttons = {}
         for label, mode, prompt in [('Discuss this painting', 'ask', 'What do you notice about this painting?'),
                                      ('Plan from a reference', 'plan', ''), ('Start a painting', 'autopilot', '')]:
-            button = QPushButton(label + '  ↗'); button.setObjectName('emptyAction')
+            button = QPushButton(label); button.setObjectName('emptyAction')
             button.clicked.connect(lambda _checked=False, m=mode, p=prompt: self.choose_starter(m, p)); empty.addWidget(button)
             self.starter_buttons[mode] = button
         self.transcript.rows.insertWidget(0, self.empty_state)
-        jump_row = QHBoxLayout(); jump_row.addStretch()
-        self.jump_button = QPushButton('↓  Latest'); self.jump_button.setObjectName('jumpLatest')
-        self.jump_button.clicked.connect(self.transcript.jump_to_latest); self.jump_button.hide(); jump_row.addWidget(self.jump_button); jump_row.addStretch()
+        self.jump_button = themed(QPushButton('Latest'), 'down', 'text', 14); self.jump_button.setObjectName('jumpLatest')
+        self.jump_button.setAccessibleName('Jump to the latest message')
+        self.jump_button.clicked.connect(self.transcript.jump_to_latest); self.jump_button.hide()
+        self.transcript.float_button(self.jump_button)
         self.transcript.followChanged.connect(lambda following: self.jump_button.setVisible(not following))
-        layout.addLayout(jump_row)
+        self.transcript.unreadChanged.connect(lambda count: (self.jump_button.setText('%d new' % count if count else 'Latest'), self.transcript.place_floating()))
         # Project folder: the folder the agent works from, its goal image and element images (the artist renames a guess in place).
         self.folder_card = QFrame(); self.folder_card.setObjectName('planBar')
         folder_layout = QVBoxLayout(self.folder_card); folder_layout.setContentsMargins(10, 9, 10, 10); folder_layout.setSpacing(6)
@@ -1635,49 +1774,55 @@ class CreativeAgentDocker(DockWidget):
         # Protected: the painting's features, each with a box the artist ticks to protect it (our Krita only).
         self.feature_changing = False
         self.features_section = FeaturesSection(self.toggle_feature); self.features_section.hide(); layout.addWidget(self.features_section)
-        activity = QHBoxLayout(); activity.setSpacing(6)
-        self.activity_dot = QLabel(''); self.activity_dot.setObjectName('activityDot'); activity.addWidget(self.activity_dot)
-        self.status = QLabel('Connecting…'); self.status.setWordWrap(True); self.status.setObjectName('muted')
-        self.status.setAccessibleDescription('Current activity'); self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        # What needs an answer, on every tab and at every scroll position (update_waiting).
+        self.waiting_line = QFrame(); self.waiting_line.setObjectName('waitingLine')
+        waiting = QHBoxLayout(self.waiting_line); waiting.setContentsMargins(8, 2, 4, 2); waiting.setSpacing(8)
+        self.waiting_text = ElidedLabel(''); self.waiting_text.setObjectName('waitingText'); waiting.addWidget(self.waiting_text, 1)
+        self.waiting_show = QPushButton('Show'); self.waiting_show.setObjectName('waitingShow'); self.waiting_show.setAccessibleName('Show the card waiting for you')
+        self.waiting_show.clicked.connect(self.show_waiting); waiting.addWidget(self.waiting_show)
+        self.waiting_line.hide()
+        self.status_row = QWidget(); activity = QHBoxLayout(self.status_row); activity.setContentsMargins(4, 0, 4, 0); activity.setSpacing(8)
+        self.activity_dot = QLabel(''); self.activity_dot.setObjectName('activityDot'); self.activity_dot.setFixedSize(6, 6); self.activity_dot.hide()
+        activity.addWidget(self.activity_dot)
+        self.status = ElidedLabel('Connecting…'); self.status.setObjectName('statusText')
+        self.status.setAccessibleDescription('Current activity')
         activity.addWidget(self.status, 1)
         self.recovery_button = QPushButton('Retry'); self.recovery_button.setObjectName('footerAction'); self.recovery_button.hide()
         self.recovery_action = None
         self.recovery_button.clicked.connect(lambda: self.recovery_action() if self.recovery_action else None)
         activity.addWidget(self.recovery_button)
         # Shown only while the companion keeps the screen awake for a painting run (Settings: Screen).
-        self.awake_indicator = QLabel('☕ Screen awake'); self.awake_indicator.setObjectName('muted')
+        self.awake_indicator = QLabel('Screen awake'); self.awake_indicator.setObjectName('muted')
         self.awake_indicator.setAccessibleName('Keeping the screen awake while painting')
         self.awake_indicator.setToolTip('Keeping the screen awake while this run paints: %s can only paint while its window is active. '
                                         'It stops when the run pauses or ends. Turn it off in Settings: Screen.' % product_name())
         self.awake_indicator.hide(); activity.addWidget(self.awake_indicator)
-        self.elapsed = QLabel(''); self.elapsed.setObjectName('muted'); self.elapsed.setAccessibleDescription('Activity elapsed time'); activity.addWidget(self.elapsed)
+        self.elapsed = QLabel(''); self.elapsed.setObjectName('statusTime'); self.elapsed.setAccessibleDescription('Activity elapsed time'); activity.addWidget(self.elapsed)
         # Auto-approve's quick switch, always on screen (the artist switches it on while recording); the delay is in Settings.
-        self.auto_toggle = QCheckBox('Auto-approve'); self.auto_toggle.setAccessibleName('Auto-approve')
-        self.auto_toggle.setToolTip('Cards that wait for you take their default answer after a countdown (Settings: Auto-approve sets the delay). '
+        self.auto_toggle = ToggleSwitch('Auto'); self.auto_toggle.setObjectName('autoToggle'); self.auto_toggle.setAccessibleName('Auto-approve')
+        self.auto_toggle.setToolTip('Auto-approve: cards that wait for you take their default answer after a countdown (Settings: Auto-approve sets the delay). '
                                     'Undo, Redo, Stop, typing or any button stops it. Start painting is never pressed for you.')
         self.auto_toggle.toggled.connect(self.toggle_auto_approve); activity.addWidget(self.auto_toggle)
-        top_area.addLayout(activity)
         self.composer = QFrame(); self.composer.setObjectName('composer')
-        compose = QVBoxLayout(self.composer); compose.setContentsMargins(10, 9, 10, 8); compose.setSpacing(7)
-        self.canvas_row = QWidget(); canvas_layout = QHBoxLayout(self.canvas_row); canvas_layout.setContentsMargins(0, 0, 0, 0); canvas_layout.setSpacing(3)
-        self.canvas_button = QPushButton('＋  Add current canvas'); self.canvas_button.setObjectName('contextChip')
-        self.canvas_button.setMinimumWidth(0); self.canvas_button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.canvas_button.setAccessibleName('Canvas context'); self.canvas_button.setIconSize(QSize(26, 26))
-        self.canvas_button.clicked.connect(self.canvas_clicked); canvas_layout.addWidget(self.canvas_button, 1)
-        self.canvas_refresh = QPushButton('↻'); self.canvas_refresh.setObjectName('contextAction'); self.canvas_refresh.setAccessibleName('Refresh canvas snapshot')
+        compose = QVBoxLayout(self.composer); compose.setContentsMargins(8, 8, 8, 8); compose.setSpacing(4)
+        self.canvas_button = themed(QPushButton(''), 'image'); self.canvas_button.setObjectName('contextAction'); self.canvas_button.setFixedSize(28, 28)
+        self.canvas_button.setAccessibleName('Canvas context')
+        self.canvas_button.clicked.connect(self.canvas_clicked)
+        # Refresh and detach are in the + menu, which presses these.
+        canvas_layout = footer
+        self.canvas_refresh = themed(QPushButton(''), 'refresh'); self.canvas_refresh.setObjectName('contextAction'); self.canvas_refresh.setAccessibleName('Refresh canvas snapshot')
         self.canvas_refresh.setToolTip('Refresh canvas snapshot'); self.canvas_refresh.clicked.connect(lambda: self.context_command('refresh')); canvas_layout.addWidget(self.canvas_refresh)
-        self.canvas_remove = QPushButton('×'); self.canvas_remove.setObjectName('contextAction'); self.canvas_remove.setAccessibleName('Detach canvas')
+        self.canvas_remove = themed(QPushButton(''), 'close'); self.canvas_remove.setObjectName('contextAction'); self.canvas_remove.setAccessibleName('Detach canvas')
         self.canvas_remove.setToolTip('Exclude canvas from upcoming messages'); self.canvas_remove.clicked.connect(lambda: self.context_command('detach')); canvas_layout.addWidget(self.canvas_remove)
-        compose.addWidget(self.canvas_row)
         self.context_hint = QLabel('The open canvas is included by default.'); self.context_hint.setObjectName('contextHint')
-        self.context_hint.setWordWrap(True); compose.addWidget(self.context_hint)
+        self.context_hint.setWordWrap(True); self.context_hint.hide(); compose.addWidget(self.context_hint)   # a line only for an error; else the chip's tooltip
         self.scope_tray = QWidget(); scope_layout = QHBoxLayout(self.scope_tray); scope_layout.setContentsMargins(0, 0, 0, 0); scope_layout.setSpacing(5)
         self.region_group = QWidget(); region_layout = QHBoxLayout(self.region_group); region_layout.setContentsMargins(0, 0, 0, 0); region_layout.setSpacing(1)
-        self.region_button = QPushButton('⌗  Selection bounds'); self.region_button.setObjectName('contextChip')
+        self.region_button = themed(QPushButton('Selection bounds'), 'crop', size=12); self.region_button.setObjectName('contextChip')
         self.region_button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed); self.region_button.setMinimumWidth(0)
         self.region_button.setAccessibleName('Preview attached rectangular selection crop'); self.region_button.clicked.connect(self.preview_region)
         region_layout.addWidget(self.region_button, 1)
-        self.region_remove = QPushButton('×'); self.region_remove.setObjectName('contextAction'); self.region_remove.setAccessibleName('Remove region attachment')
+        self.region_remove = themed(QPushButton(''), 'close', size=12); self.region_remove.setObjectName('contextAction'); self.region_remove.setFixedSize(24, 24); self.region_remove.setAccessibleName('Remove region attachment')
         self.region_remove.clicked.connect(lambda: self.send({'type': 'context', 'action': 'clear_region'})); region_layout.addWidget(self.region_remove)
         scope_layout.addWidget(self.region_group, 1)
         self.plan_context_button = QPushButton('Plan'); self.plan_context_button.setObjectName('contextChip')
@@ -1716,13 +1861,13 @@ class CreativeAgentDocker(DockWidget):
         self.slash_menu.itemActivated.connect(self.choose_skill); self.slash_menu.itemClicked.connect(self.choose_skill)
         compose.addWidget(self.slash_menu); self.slash_menu.hide()
         self.prompt = ChatInput(); self.prompt.setAccessibleName('Message Creative Agent'); self.prompt.slash_menu = self.slash_menu
-        self.prompt.setPlaceholderText('Ask about your painting…'); self.prompt.setFixedHeight(62)
+        self.prompt.setPlaceholderText('Ask about your painting…')
         self.prompt.textChanged.connect(self.resize_composer); self.prompt.textChanged.connect(self.update_slash_menu); self.prompt.submitted.connect(self.submit)
         self.prompt.textChanged.connect(lambda: self.auto_approve.cancel() if self.prompt.toPlainText().strip() else None)   # typing: the artist's turn
         self.prompt.filesAttached.connect(self.attach_paths); self.prompt.imageAttached.connect(self.attach_pasted_image)
         compose.addWidget(self.prompt)
-        buttons = QHBoxLayout(); buttons.setSpacing(3)
-        self.reference_button = QPushButton('＋'); self.reference_button.setObjectName('contextAction')
+        buttons = QHBoxLayout(); buttons.setSpacing(2)
+        self.reference_button = themed(QPushButton(''), 'plus'); self.reference_button.setObjectName('contextAction'); self.reference_button.setFixedSize(28, 28)
         self.reference_button.setAccessibleName('Attach context'); self.reference_button.setToolTip('Attach canvas or reference image')
         self.attach_menu = QMenu(self)
         self.attach_menu.addAction('Current canvas', lambda: self.context_command('attach'))
@@ -1736,44 +1881,75 @@ class CreativeAgentDocker(DockWidget):
         self.pin_canvas_action = self.attach_menu.addAction('Keep this canvas attached')
         self.pin_canvas_action.setCheckable(True); self.pin_canvas_action.triggered.connect(self.toggle_canvas_pin)
         self.document_menu = self.attach_menu.addMenu('Choose an open canvas')
+        self.refresh_canvas_action = self.attach_menu.addAction('Refresh canvas snapshot', self.canvas_refresh.click)
+        self.detach_canvas_action = self.attach_menu.addAction('Detach canvas', self.canvas_remove.click)
+        self.attach_menu.addSeparator()
+        self.paint_only_action = self.attach_menu.addAction('Paint only here', self.paint_only.button.click)
+        self.paint_only_action.setToolTip(self.paint_only.button.toolTip())
+        self.find_it_action = self.attach_menu.addAction('Find it for me', self.paint_only.find_button.click)
+        self.find_it_action.setToolTip(self.paint_only.find_button.toolTip())
+        self.protected_action = self.attach_menu.addAction('Protected areas…', lambda: self.protect_button.click())
+        self.attach_menu.setToolTipsVisible(True)
+        self.attach_menu.aboutToShow.connect(self.refresh_attach_menu)
         self.reference_button.setMenu(self.attach_menu); buttons.addWidget(self.reference_button)
         self.mode_selector = QComboBox(); self.mode_selector.setAccessibleName('Chat mode')
         self.mode_selector.addItem('Ask', 'ask'); self.mode_selector.addItem('Plan', 'plan'); self.mode_selector.addItem('Agent', 'agent'); self.mode_selector.addItem('Autopilot (experimental)', 'autopilot')
         self.mode_selector.setToolTip('Ask and Plan inspect your canvas. Agent paints one move at a time for you to keep, undo or refine. Autopilot (experimental) paints unattended until the review passes, for testing and long runs.')
         self.mode_selector.currentIndexChanged.connect(self.change_mode); buttons.addWidget(self.mode_selector)
+        self.mode_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon); self.mode_selector.setMinimumContentsLength(4)
+        self.mode_selector.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed); self.mode_selector.setMinimumWidth(56); self.mode_selector.view().setMinimumWidth(190)
+        # The model chip opens the row with the provider, the model and the chat's AI images.
+        self.model_chip = ElidedChip(); self.model_chip.setCheckable(True); self.model_chip.setAccessibleName('Model and provider')
+        buttons.addWidget(self.model_chip)
         self.ai_images_selector = QComboBox(); self.ai_images_selector.setAccessibleName('AI images for this chat')
         for value, text in AI_IMAGE_CHOICES: self.ai_images_selector.addItem(text, value)
         self.ai_images_selector.setToolTip('How many AI-generated images the painter may use in this chat. 0 paints everything by hand.')
-        self.ai_images_selector.currentIndexChanged.connect(self.change_ai_images); buttons.addWidget(self.ai_images_selector)
-        self.ai_images_used = QLabel(''); self.ai_images_used.setAccessibleName('AI images used'); buttons.addWidget(self.ai_images_used)
+        self.ai_images_selector.currentIndexChanged.connect(self.change_ai_images)
+        self.ai_images_used = QLabel(''); self.ai_images_used.setAccessibleName('AI images used')
         # Protected areas: what the agent must never change. The panel changes them here, in Krita's own process.
         self.protection = ProtectionCraft(); self.features = FeatureCraft(); self.protection_controls = []; self.protection_editing = None; self.protection_shown = None
         self.shapes_model_controls = []    # Download / Not now for the element-shapes model (shapes_model_needed)
-        self.protect_button = QPushButton('🛡'); self.protect_button.setObjectName('contextAction')
+        buttons.addStretch(1)
+        buttons.addWidget(self.canvas_button)
+        self.protect_button = themed(QPushButton(''), 'shield'); self.protect_button.setObjectName('contextAction'); self.protect_button.setFixedSize(28, 28)
         self.protect_button.setAccessibleName('Protected areas'); self.protect_button.setToolTip('Protected areas: what the agent must never change')
         self.protect_button.clicked.connect(lambda: self.open_protection()); buttons.addWidget(self.protect_button)
-        buttons.addStretch(1)
-        self.stop_button = QPushButton('■'); self.stop_button.setObjectName('stopAction')
+        self.attach_chip = themed(QPushButton(''), 'attach', size=14); self.attach_chip.setObjectName('controlChip'); self.attach_chip.setCheckable(True)
+        self.attach_chip.setFixedHeight(28); self.attach_chip.setToolTip('Show or hide what is attached to your next message')
+        self.attach_chip.toggled.connect(self.show_attachments); self.attach_chip.hide(); buttons.addWidget(self.attach_chip)
+        self.stop_button = themed(QPushButton(''), 'stop', 'buttonText', 12); self.stop_button.setObjectName('stopAction'); self.stop_button.setFixedSize(28, 28)
         self.stop_button.setAccessibleName('Stop generating and pause agent'); self.stop_button.setToolTip('Stop · in-progress paint settles safely')
         self.stop_button.clicked.connect(self.request_stop); buttons.addWidget(self.stop_button)
-        self.send_button = QPushButton('↑'); self.send_button.setObjectName('sendMessage'); self.send_button.setAccessibleName('Send message')
+        self.send_button = themed(QPushButton(''), 'send', 'buttonText', 14); self.send_button.setObjectName('sendMessage'); self.send_button.setFixedSize(28, 28); self.send_button.setAccessibleName('Send message')
         self.send_button.clicked.connect(self.submit); buttons.addWidget(self.send_button)
-        model_row = QHBoxLayout(); model_row.setSpacing(6)
-        model_row.addWidget(self.provider_filter, 2); model_row.addWidget(self.model, 3)
-        compose.addLayout(model_row); compose.addLayout(buttons); layout.addWidget(self.composer)
-        saved = QHBoxLayout(); saved.setSpacing(4)
+        self.model_row = QWidget(); model_column = QVBoxLayout(self.model_row); model_column.setContentsMargins(0, 0, 0, 0); model_column.setSpacing(4)
+        model_row = QHBoxLayout(); model_row.setSpacing(4)
+        model_row.addWidget(self.provider_filter, 2); model_row.addWidget(self.model, 3); model_column.addLayout(model_row)
+        images_row = QHBoxLayout(); images_row.setSpacing(4)
+        images_row.addWidget(self.ai_images_selector); images_row.addWidget(self.ai_images_used); images_row.addStretch(1); model_column.addLayout(images_row)
+        self.model_row.hide(); compose.addWidget(self.model_row)
+        self.model_chip.toggled.connect(self.model_row.setVisible)
+        self.model.modelChosen.connect(lambda: self.model_chip.setChecked(False))
+        self.model.currentTextChanged.connect(lambda *_: self.render_model_chip())
+        compose.addLayout(buttons); self.control_row = buttons
+        outer.addWidget(self.waiting_line); outer.addWidget(self.status_row); outer.addWidget(self.composer)
+        saved = footer; self.trace_url = None
         self.save_status = QLabel('Ask · read only'); self.save_status.setObjectName('muted')
         self.save_status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed); saved.addWidget(self.save_status, 1)
         # This chat's Langfuse session (every chat is traced until New chat).
         self.trace_link = QLabel(''); self.trace_link.setObjectName('muted'); self.trace_link.setOpenExternalLinks(True)
         self.trace_link.setToolTip('Open this chat\'s traces in Langfuse'); self.trace_link.hide(); saved.addWidget(self.trace_link)
         self.folder_button = QPushButton('Show file'); self.folder_button.setObjectName('footerAction')
-        self.folder_button.clicked.connect(self.open_output); saved.addWidget(self.folder_button); layout.addLayout(saved)
-        self.start_button = QPushButton('Connect assistant'); self.start_button.clicked.connect(self.start_companion); layout.addWidget(self.start_button)
+        self.folder_button.clicked.connect(self.open_output); saved.addWidget(self.folder_button)
+        self.start_button = QPushButton('Connect assistant'); self.start_button.clicked.connect(self.start_companion); outer.addWidget(self.start_button)
         self.preview = QLabel(); self.preview.hide()
         self.refresh_button = self.canvas_refresh
         self.clock = QTimer(self); self.clock.setInterval(1000); self.clock.timeout.connect(self.update_elapsed); self.clock.start()
-        self.setWidget(body)
+        # Below the height where everything fits, the panel scrolls as a whole, so nothing is ever out of reach.
+        self.body_scroll = QScrollArea(); self.body_scroll.setObjectName('panelBody'); self.body_scroll.setWidgetResizable(True)
+        self.body_scroll.setFrameShape(QFrame.Shape.NoFrame); self.body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.body_scroll.setWidget(body)
+        self.setWidget(self.body_scroll)
         # QDockWidget caches transient control widths as a window minimum. The
         # content layout already constrains its controls; let docking stay narrow.
         self.layout().setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
@@ -1781,8 +1957,79 @@ class CreativeAgentDocker(DockWidget):
         self.shortcuts = []
         for key, callback in [('Ctrl+Alt+Shift+L', lambda: self.prompt.setFocus()), ('Ctrl+Alt+Shift+N', self.end_button.click), ('Escape', self.pause_if_busy)]:
             shortcut = QShortcut(QKeySequence(key), self); shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut); shortcut.activated.connect(callback); self.shortcuts.append(shortcut)
+        self.resize_composer()
         self.update_controls()
         self.render_context()
+
+    def show_tab(self, index, shown):
+        """Show or hide a tab; the bar shows only while there is a choice."""
+        self.tabs.setTabVisible(index, shown)
+        self.tabs.tabBar().setVisible(sum(self.tabs.isTabVisible(i) for i in range(self.tabs.count())) > 1)
+
+    def waiting_card(self):
+        """(what, a button of it) for a card waiting for the artist's answer, or None. Read from the cards' own buttons, which
+        go off when answered, closed or replaced, so nothing else has to report it."""
+        for what, controls in (('canvas reference', self.canvas_reference_controls), ('a question', self.question_controls),
+                               ('a close-up', self.closeup_controls), ('the goal image', self.sharpen_controls),
+                               ('a custom effect', self.effect_build_controls), ('a protected area', self.protection_controls),
+                               ('the shapes model', self.shapes_model_controls)):
+            for button in controls:
+                if not sip.isdeleted(button) and button.isEnabled(): return what, button
+        return None
+
+    def update_waiting(self):
+        card = self.waiting_card()
+        if card: self.waiting_text.setText('Waiting for you: ' + card[0])
+        self.waiting_line.setVisible(bool(card))
+
+    def show_waiting(self):
+        card = self.waiting_card()
+        if not card: return
+        self.tabs.setCurrentIndex(self.chat_tab)
+        self.transcript.show_widget(card[1])
+
+    def render_model_chip(self):
+        whole = self.model.currentText()
+        self.model_chip.set_whole(whole.rsplit('/', 1)[-1] if whole else 'Choose a model')
+        self.model_chip.setToolTip(('Model: %s\n' % whole if whole else '') + 'Model, provider and AI images')
+        self.model_chip.setEnabled(self.model.isEnabled() or self.provider_filter.isEnabled())
+
+    def fit_control_row(self):
+        """The control row never passes the panel's edge: when it cannot fit, the shield and then the canvas chip step out. Both
+        stay in the + menu."""
+        room = self.width() - 42                              # the panel's and the message box's margins
+        kept = [self.reference_button, self.mode_selector, self.send_button]
+        if self.attach_chip.isVisibleTo(self.composer): kept.append(self.attach_chip)
+        if self.stop_button.isVisibleTo(self.composer): kept.append(self.stop_button)
+        wanted = lambda widget: max(widget.sizeHint().width(), widget.minimumWidth())
+        used = sum(wanted(widget) for widget in kept) + self.model_chip.minimumWidth() + 2 * (len(kept) + 2)
+        for widget in (self.canvas_button, self.protect_button):
+            shown = used + wanted(widget) + 2 <= room
+            widget.setVisible(shown)
+            if shown: used += wanted(widget) + 2
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'attach_chip'): self.fit_control_row()
+
+    def refresh_attach_menu(self):
+        self.paint_only_action.setEnabled(self.paint_only.button.isEnabled())
+        self.find_it_action.setEnabled(self.paint_only.find_button.isEnabled())
+        self.protected_action.setEnabled(self.protect_button.isEnabled())
+        self.refresh_canvas_action.setEnabled(self.canvas_refresh.isEnabled()); self.detach_canvas_action.setEnabled(self.canvas_remove.isEnabled())
+
+    def refresh_more_menu(self):
+        """What was the footer: the painting's state, its file and the chat's traces, plus Settings."""
+        menu = self.more_menu; menu.clear()
+        menu.addAction('Settings…', self.options_button.click)
+        menu.addSeparator()
+        state = menu.addAction(self.save_status.text()); state.setEnabled(False)
+        shown = menu.addAction(self.folder_button.text(), self.folder_button.click); shown.setEnabled(self.folder_button.isEnabled())
+        if self.trace_url:
+            menu.addAction('Open traces', lambda: QDesktopServices.openUrl(QUrl(self.trace_url)))
+
+    def show_attachments(self, shown):
+        self.attachments.setVisible(shown and bool(self.attach_chip.property('count')))
 
     def set_text_size(self, value):
         self.text_scale = value / 14
@@ -1811,6 +2058,9 @@ class CreativeAgentDocker(DockWidget):
             c, dark = panel_colors('dark' if dark else 'light')
         self.theme_colors = c
         self.plan_steps.set_colors(c, dark)
+        panel_icons.set_colors(c); panel_icons.retint(self)
+        self.auto_toggle.colors = dict(c); self.auto_toggle.update()
+        c.update(style_values())
         c['chevron'] = os.path.join(os.path.dirname(__file__), 'icons', 'chevron-dark.svg' if dark else 'chevron-light.svg').replace('\\', '\\\\').replace('"', '\\"')
         palette = QPalette(self.palette())
         for role, color in [(QPalette.ColorRole.Window, c['bg']), (QPalette.ColorRole.Base, c['surface']), (QPalette.ColorRole.Button, c['raised']),
@@ -1819,85 +2069,95 @@ class CreativeAgentDocker(DockWidget):
         self.setPalette(palette)
         stylesheet = '''
             QWidget#creativeChat, QWidget#conversationBody, QWidget#settingsBody, QDialog { background: %(bg)s; color: %(text)s; }
-            QLabel { color: %(text)s; background: transparent; font-size: 13px; }
-            QLabel#chatTitle { font-size: 15px; font-weight: 600; }
-            QLabel#emptyTitle { font-size: 25px; font-weight: 500; }
-            QLabel#muted, QLabel#contextHint { color: %(muted)s; font-size: 11px; }
-            QLabel#messageRole { color: %(muted)s; font-size: 11px; font-weight: 500; }
-            QLabel#planSummary { font-size: 12px; }
-            QLabel#autoApprove { font-size: 12px; font-weight: 600; }
-            QLabel#activityDot { color: %(accent)s; font-size: 12px; }
-            QFrame#userMessage { background: %(raised)s; border: none; border-radius: 10px; }
+            QLabel { color: %(text)s; background: transparent; font-size: %(fs_body)dpx; }
+            QLabel#chatTitle { font-size: %(fs_body)dpx; font-weight: 600; }
+            QLabel#headerTarget { color: %(muted)s; font-size: %(fs_body)dpx; }
+            QLabel#emptyTitle { font-size: %(fs_display)dpx; font-weight: 500; }
+            QLabel#muted, QLabel#contextHint { color: %(muted)s; font-size: %(fs_small)dpx; }
+            QLabel#statusText { color: %(text)s; font-size: %(fs_secondary)dpx; }
+            QLabel#statusTime { color: %(muted)s; font-size: %(fs_secondary)dpx; }
+            QLabel#messageRole { color: %(muted)s; font-size: %(fs_small)dpx; font-weight: 500; }
+            QLabel#planSummary { font-size: %(fs_secondary)dpx; }
+            QLabel#autoApprove { font-size: %(fs_secondary)dpx; font-weight: 600; }
+            QLabel#activityDot { background: %(accent)s; border-radius: %(r_dot)dpx; }
+            QFrame#userMessage { background: %(raised)s; border: none; border-radius: %(r_box)dpx; }
             QFrame#assistantMessage, QFrame#actionMessage { background: transparent; border: none; }
             QFrame#questionMessage { background: transparent; border: none; }
-            QFrame#composer { background: %(surface)s; border: 1px solid %(border)s; border-radius: 12px; }
-            QFrame#composer:focus-within { border-color: %(accent)s; }
-            QFrame#planBar { background: %(surface)s; border: 1px solid %(border)s; border-radius: 9px; }
-            QPlainTextEdit, QTextBrowser, QLineEdit, QTableWidget { color: %(text)s; selection-background-color: %(accent)s; selection-color: %(bg)s; font-size: 14px; }
+            QFrame#composer { background: %(surface)s; border: 1px solid %(hover)s; border-radius: %(r_box)dpx; }
+            QFrame#composer QFrame#referenceTile { background: transparent; border: none; }
+            QFrame#planBar { background: %(surface)s; border: 1px solid %(hover)s; border-radius: %(r_card)dpx; }
+            QFrame#waitingLine { background: %(raised)s; border: none; border-radius: %(r_card)dpx; }
+            QLabel#waitingText { font-size: %(fs_secondary)dpx; }
+            QPushButton#waitingShow { background: transparent; color: %(accent)s; font-weight: 600; font-size: %(fs_secondary)dpx; padding: 2px 8px; min-height: 0; }
+            QPushButton#waitingShow:hover { background: %(hover)s; }
+            QPlainTextEdit, QTextBrowser, QLineEdit, QTableWidget { color: %(text)s; selection-background-color: %(accent)s; selection-color: %(bg)s; font-size: %(fs_chat)dpx; }
             QPlainTextEdit, QTextBrowser { border: none; background: transparent; }
-            QDialog QPlainTextEdit { background: %(surface)s; border: 1px solid %(border)s; border-radius: 6px; padding: 6px; }
+            QDialog QPlainTextEdit { background: %(surface)s; border: 1px solid %(border)s; border-radius: %(r_thumb)dpx; padding: 6px; }
             QDialog QComboBox { background: %(surface)s; border: 1px solid %(border)s; min-height: 24px; }
             QToolButton { background: %(surface)s; color: %(text)s; border: none; }
-            QLineEdit, QSpinBox, QTableWidget { color: %(text)s; background: %(surface)s; border: 1px solid %(border)s; border-radius: 5px; padding: 5px; }
-            QPushButton { color: %(text)s; background: %(raised)s; border: 1px solid transparent; border-radius: 6px; padding: 5px 8px; min-height: 20px; font-size: 11px; }
+            QLineEdit, QSpinBox, QTableWidget { color: %(text)s; background: %(surface)s; border: 1px solid %(border)s; border-radius: %(r_thumb)dpx; padding: 4px; }
+            QPushButton { color: %(text)s; background: %(raised)s; border: 1px solid transparent; border-radius: %(r_card)dpx; padding: 4px 8px; min-height: 20px; font-size: %(fs_secondary)dpx; }
             QPushButton:hover { background: %(hover)s; }
             QPushButton:focus { border-color: %(accent)s; }
             QPushButton:disabled { color: %(muted)s; background: transparent; }
-            QPushButton#headerAction { background: transparent; padding: 1px 4px; min-width: 22px; font-size: 20px; }
+            QPushButton#headerAction, QPushButton#contextAction { background: transparent; padding: 0; min-height: 0; border-radius: %(r_card)dpx; }
             QPushButton#headerAction:hover, QPushButton#contextAction:hover { background: %(raised)s; }
-            QPushButton#emptyAction { background: transparent; border: 1px solid %(border)s; text-align: left; padding: 10px; font-size: 12px; }
+            QPushButton#headerAction::menu-indicator, QPushButton#contextAction::menu-indicator { image: none; width: 0; }
+            QPushButton#emptyAction { background: transparent; border: 1px solid %(hover)s; text-align: left; padding: 8px 12px; font-size: %(fs_secondary)dpx; }
             QPushButton#emptyAction:hover { background: %(raised)s; }
-            QPushButton#contextChip { background: %(raised)s; text-align: left; font-size: 11px; min-height: 26px; padding: 3px 7px; }
-            QPushButton#contextAction { background: transparent; padding: 2px 4px; font-size: 17px; min-width: 16px; }
-            QPushButton#paintOnlyChip { background: %(raised)s; border: 1px solid %(accent)s; text-align: left; font-size: 11px; font-weight: 600; min-height: 26px; padding: 3px 7px; }
-            QPushButton#contextAction::menu-indicator { image: none; width: 0; }
-            QPushButton#sendMessage, QPushButton#stopAction { background: %(button)s; color: %(buttonText)s; font-size: 18px; font-weight: 500; min-width: 17px; min-height: 24px; padding: 2px 5px; border-radius: 7px; }
-            QPushButton#sendMessage:disabled { background: %(raised)s; color: %(muted)s; }
-            QPushButton#stopAction { font-size: 12px; }
+            QPushButton#contextChip { background: %(raised)s; text-align: left; font-size: %(fs_secondary)dpx; min-height: 24px; padding: 2px 8px; }
+            QPushButton#controlChip { background: transparent; color: %(muted)s; font-size: %(fs_secondary)dpx; min-height: 0; padding: 0 4px; text-align: left; }
+            QPushButton#controlChip:hover, QPushButton#controlChip:checked { background: %(raised)s; color: %(text)s; }
+            QPushButton#paintOnlyChip { background: %(raised)s; border: 1px solid %(accent)s; text-align: left; font-size: %(fs_secondary)dpx; font-weight: 600; min-height: 24px; padding: 2px 8px; }
+            QPushButton#sendMessage, QPushButton#stopAction { background: %(button)s; padding: 0; min-height: 0; border-radius: %(r_pill)dpx; }
+            QPushButton#sendMessage:disabled { background: %(raised)s; }
+            QPushButton#jumpLatest { background: %(raised)s; border: 1px solid %(hover)s; border-radius: %(r_pill)dpx; padding: 0 12px; min-height: 26px; }
             QPushButton#primaryAction { background: %(button)s; color: %(buttonText)s; }
-            QPushButton#footerAction { background: transparent; color: %(muted)s; font-size: 10px; padding: 0 2px; min-height: 17px; }
-            QPushButton#activityDisclosure { background: transparent; color: %(muted)s; text-align: left; padding: 0; font-size: 11px; border: none; }
+            QPushButton#footerAction { background: transparent; color: %(muted)s; font-size: %(fs_small)dpx; padding: 0 4px; min-height: 16px; }
+            QPushButton#activityDisclosure { background: transparent; color: %(muted)s; text-align: left; padding: 0; font-size: %(fs_secondary)dpx; border: none; }
             QPushButton#activityDisclosure:focus { color: %(text)s; }
-            QLabel#activityDisclosure { color: %(muted)s; font-size: 11px; }
-            QPushButton#referencePurpose { background: transparent; color: %(muted)s; padding: 0; min-height: 17px; font-size: 10px; }
-            QPushButton#referenceRemove { background: %(raised)s; color: %(text)s; padding: 0; min-height: 12px; border-radius: 6px; font-size: 12px; }
-            QPushButton#receipt { background: transparent; color: %(muted)s; text-align: left; padding: 0; font-size: 10px; }
-            QPushButton#questionChoice { text-align: left; background: %(surface)s; border: 1px solid %(border)s; padding: 8px 10px; font-size: 12px; }
+            QLabel#activityDisclosure { color: %(muted)s; font-size: %(fs_secondary)dpx; }
+            QPushButton#referencePurpose { background: transparent; color: %(muted)s; padding: 0; min-height: 16px; font-size: %(fs_small)dpx; }
+            QPushButton#referenceRemove { background: %(raised)s; padding: 0; min-height: 0; border-radius: %(r_remove)dpx; }
+            QPushButton#receipt { background: transparent; color: %(muted)s; text-align: left; padding: 0; font-size: %(fs_small)dpx; }
+            QPushButton#questionChoice { text-align: left; background: %(surface)s; border: 1px solid %(hover)s; padding: 8px 12px; font-size: %(fs_secondary)dpx; }
             QPushButton#questionChoice:hover { background: %(raised)s; }
-            QComboBox { color: %(text)s; background: transparent; border: 1px solid transparent; border-radius: 5px; padding: 4px 20px 4px 5px; min-height: 22px; font-size: 11px; }
-            QComboBox:hover { background: %(raised)s; border-color: %(border)s; }
+            QComboBox { color: %(text)s; background: transparent; border: 1px solid transparent; border-radius: %(r_card)dpx; padding: 4px 16px 4px 4px; min-height: 20px; font-size: %(fs_secondary)dpx; }
+            QComboBox:hover { background: %(raised)s; }
             QComboBox:focus { background: %(surface)s; border-color: %(accent)s; }
-            QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; border: none; width: 18px; }
-            QComboBox::down-arrow { image: url("%(chevron)s"); width: 12px; height: 8px; }
+            QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; border: none; width: 14px; }
+            QComboBox::down-arrow { image: url("%(chevron)s"); width: 10px; height: 7px; }
             QComboBox QAbstractItemView, QMenu { background: %(surface)s; color: %(text)s; border: 1px solid %(border)s; selection-background-color: %(raised)s; }
-            QMenu::item { padding: 7px 16px; }
+            QMenu::item { padding: 8px 16px; }
+            QMenu::item:disabled { color: %(muted)s; }
             QScrollArea { border: none; background: transparent; }
             QScrollBar:vertical { background: transparent; width: 6px; margin: 0; }
-            QScrollBar::handle:vertical { background: %(border)s; min-height: 28px; border-radius: 3px; }
+            QScrollBar::handle:vertical { background: %(border)s; min-height: 28px; border-radius: %(r_dot)dpx; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
             QGroupBox { border: none; padding-top: 20px; color: %(text)s; }
             QGroupBox::title { color: %(muted)s; }
             QListWidget { background: %(surface)s; color: %(text)s; border: none; }
-            QListWidget::item { padding: 12px; border-bottom: 1px solid %(border)s; }
+            QListWidget::item { padding: 12px; border-bottom: 1px solid %(hover)s; }
             QListWidget::item:selected { background: %(raised)s; }
-            QListWidget#folderElements::item { padding: 5px 6px; }
-            QLabel#folderGoal { background: %(raised)s; border-radius: 4px; }
-            QTabWidget#panelTabs::pane { border: none; border-top: 1px solid %(border)s; }
-            QTabWidget#panelTabs QTabBar::tab { padding: 7px 12px; font-size: 12px; }
-            QTabWidget::pane { border: 1px solid %(border)s; border-radius: 5px; }
-            QTabBar::tab { background: %(bg)s; color: %(muted)s; padding: 9px 10px; border: none; font-size: 11px; }
-            QTabBar::tab:selected { color: %(text)s; background: %(surface)s; border-bottom: 2px solid %(accent)s; }
-            QTabBar::tab:hover { background: %(raised)s; }
-            QCheckBox { color: %(text)s; font-size: 12px; }
+            QListWidget#folderElements::item { padding: 4px 8px; }
+            QLabel#folderGoal { background: %(raised)s; border-radius: %(r_thumb)dpx; }
+            QTabWidget#panelTabs::pane { border: none; }
+            QTabWidget#panelTabs QTabBar::tab { padding: 8px 8px; margin-right: 8px; font-size: %(fs_secondary)dpx; }
+            QTabWidget::pane { border: 1px solid %(hover)s; border-radius: %(r_thumb)dpx; }
+            QTabBar::tab { background: transparent; color: %(muted)s; padding: 8px; border: none; border-bottom: 2px solid transparent; font-size: %(fs_secondary)dpx; }
+            QTabBar::tab:selected { color: %(text)s; border-bottom: 2px solid %(accent)s; }
+            QTabBar::tab:hover { color: %(text)s; }
+            QCheckBox { color: %(text)s; font-size: %(fs_secondary)dpx; }
+            QCheckBox#autoToggle { color: %(muted)s; font-size: %(fs_secondary)dpx; }
             QWidget#featuresList { background: transparent; }
-            QToolButton#featuresToggle { background: transparent; color: %(text)s; font-size: 12px; font-weight: 500; padding: 0; }
-            QHeaderView::section { background: %(raised)s; color: %(text)s; border: none; padding: 7px; font-size: 11px; }
+            QToolButton#featuresToggle { background: transparent; color: %(text)s; font-size: %(fs_secondary)dpx; font-weight: 500; padding: 0; }
+            QHeaderView::section { background: %(raised)s; color: %(text)s; border: none; padding: 8px; font-size: %(fs_small)dpx; }
             QTableCornerButton::section { background: %(raised)s; border: none; }
         ''' % c + plan_steps_stylesheet(c, dark)
         stylesheet = re.sub(r'font-size: (\d+)px', lambda match: 'font-size: %dpx' % round(int(match.group(1)) * self.text_scale), stylesheet)
         self.setStyleSheet(stylesheet)
-        self.transcript.body_text_size = round(14 * self.text_scale)
+        self.transcript.body_text_size = round(TEXT_SIZES['chat'] * self.text_scale)
         for item in self.transcript.messages:
             item['label'].set_rendered(self.transcript.render(item['text']))
         if hasattr(self, 'folder_elements'): self.fit_folder_elements()   # the rows' heights follow the font size
@@ -1995,7 +2255,7 @@ class CreativeAgentDocker(DockWidget):
             document = Krita.instance().activeDocument()
             selection = document.selection() if document else None
             if selection is None or selection.width() <= 0 or selection.height() <= 0:
-                self.status.setText('Select an area on the canvas first, then use ＋ → Selected area.'); return
+                self.status.setText('Select an area on the canvas first, then use + > Selected area.'); return
             x = max(0, selection.x()); y = max(0, selection.y())
             right = min(document.width(), selection.x() + selection.width())
             bottom = min(document.height(), selection.y() + selection.height())
@@ -2030,7 +2290,7 @@ class CreativeAgentDocker(DockWidget):
             else: self.lesson_dialog.close()
         if region:
             unavailable = region.get('state') in ('unavailable', 'error')
-            self.region_button.setText('⌗  Crop unavailable' if unavailable else '⌗  Region crop')
+            self.region_button.setText('Crop unavailable' if unavailable else 'Region crop')
             bounds = region.get('bounds') or region.get('region')
             description = 'Rectangular crop; includes the bounding box, not an exact freehand mask. Attaching it does not authorize painting.'
             if bounds: description += '\nx %s, y %s · %s × %s px' % tuple(bounds)
@@ -2048,28 +2308,34 @@ class CreativeAgentDocker(DockWidget):
         self.use_canvas_button.setVisible(bool(self.study_active and self.canvas_context.get('selected') and different and not goal.get('passes')))
         self.use_canvas_button.setEnabled(not self.busy)
         ready_plan = bool(goal.get('brief') and (goal.get('status') in ('ready', 'active', 'reviewing', 'paused', 'complete', 'limited') or goal.get('approved_revision') is not None))
-        self.return_button.setVisible(bool(target.get('filename') or target.get('bound')))
+        elsewhere = not canvas.get('document_id') or canvas['document_id'] != target.get('document_id') or target.get('missing')
+        self.return_button.setVisible(bool((target.get('filename') or target.get('bound')) and elsewhere))
         self.return_button.setEnabled(not self.busy)
         self.return_button.setText('Locate painting' if target.get('missing') else 'Return to painting')
         self.return_button.setToolTip('Open or focus this painting. The conversation stays paused.')
         if target and (target.get('bound') or ready_plan):
             name = os.path.basename(target.get('filename') or '') or target.get('name') or 'New painting'
-            prefix = 'Painting target · ' if target.get('filename') or target.get('bound') else 'Target on start · '
-            room = max(60, self.width() - self.return_button.sizeHint().width() - 34 - self.workspace_label.fontMetrics().horizontalAdvance(prefix))
+            prefix = '· '
+            room = max(60, self.header_room() - self.workspace_label.fontMetrics().horizontalAdvance(prefix))
             self.workspace_label.setText(prefix + self.workspace_label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, room))   # the name, not the prefix, is cut
-            details = target.get('filename') or name
+            details = ('Painting target: ' if target.get('filename') or target.get('bound') else 'Target on start: ') + (target.get('filename') or name)
             if not target.get('bound'): details += '\nThe conversation is not currently painting. Start Agent explicitly to work on this target.'
             if target.get('document_id') and canvas.get('document_id') != target['document_id']:
                 details += '\nThe attached canvas is different from this painting target.'
             self.workspace_label.setToolTip(details)
         elif canvas and self.canvas_context.get('selected'):
             name = canvas_name(canvas)
-            button_width = self.return_button.sizeHint().width() if target.get('filename') or target.get('bound') else 0
-            self.workspace_label.setText(self.fontMetrics().elidedText('Canvas · ' + name, Qt.TextElideMode.ElideMiddle, max(100, self.width() - button_width - 34)))
+            self.workspace_label.setText('· ' + self.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, max(60, self.header_room() - 10)))
             self.workspace_label.setToolTip(canvas_details(canvas) + '\nObservation context. No painting target has been started.')
         else:
-            self.workspace_label.setText('No painting target started')
+            self.workspace_label.setText('· no painting yet')
             self.workspace_label.setToolTip('Attach context or describe a painting. Ask and Plan do not change artwork.')
+
+    def header_room(self):
+        """The points the painting's name has in the header, beside the title and the buttons."""
+        used = 24 + self.title.sizeHint().width() + 3 * 32
+        if self.return_button.isVisibleTo(self): used += self.return_button.sizeHint().width() + 4
+        return self.width() - used
 
     def return_to_painting(self, restored=False):
         """Focus the recorded artwork without saving, closing, binding or starting Agent."""
@@ -2134,24 +2400,27 @@ class CreativeAgentDocker(DockWidget):
         selected = context.get('selected', True)
         name = canvas_name(canvas)
         if selected and canvas:
-            prefix = 'Canvas · '
-            self.canvas_button.setText(prefix + self.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, max(80, self.width() - 190)))
             self.canvas_button.setAccessibleName('Canvas context ' + name)
             pixmap = QPixmap(canvas.get('path', ''))
-            self.canvas_button.setIcon(QIcon(pixmap) if not pixmap.isNull() else QIcon())
+            if pixmap.isNull(): themed(self.canvas_button, 'image', 'text')
+            else:
+                self.canvas_button.setProperty('panelIcon', None); self.canvas_button.setIcon(QIcon(pixmap)); self.canvas_button.setIconSize(QSize(22, 22))
             self.canvas_button.setToolTip('Preview selected canvas\n' + canvas_details(canvas) + ('\nFollows the active canvas' if context.get('follow_active', True) else '\nPinned as observation context'))
             hints = {'fresh': 'Snapshot ready · latest canvas captured when you send', 'stale': 'Canvas selected · next message captures the latest view',
                      'error': context.get('error') or 'Canvas capture failed. Use refresh to retry.'}
             self.context_hint.setText(hints.get(state, 'Canvas selected · includes unsaved changes' if canvas.get('modified') else 'Canvas selected for the next message'))
 
         else:
-            self.canvas_button.setIcon(QIcon())
-            self.canvas_button.setText('＋  Add current canvas')
+            themed(self.canvas_button, 'image')
             self.canvas_button.setAccessibleName('Add current canvas')
             self.canvas_button.setToolTip('Attach the active %s document as visual context' % product_name())
             self.context_hint.setText('Canvas not included' if not selected else context.get('error') or 'No open canvas · attach a reference or start a painting')
         self.canvas_refresh.setVisible(selected and bool(canvas))
         self.canvas_remove.setVisible(selected and bool(canvas))
+        self.refresh_canvas_action.setVisible(selected and bool(canvas)); self.detach_canvas_action.setVisible(selected and bool(canvas))
+        # The hint is the chip's tooltip; an error alone takes a line, until it clears.
+        self.canvas_button.setToolTip(self.canvas_button.toolTip() + '\n' + self.context_hint.text())
+        self.context_hint.setVisible(bool(state == 'error' or context.get('error')))
         self.pin_canvas_action.blockSignals(True); self.pin_canvas_action.setChecked(not context.get('follow_active', True)); self.pin_canvas_action.blockSignals(False)
         self.pin_canvas_action.setEnabled(selected and bool(canvas))
         self.document_menu.clear()
@@ -2542,8 +2811,9 @@ class CreativeAgentDocker(DockWidget):
         self.slash_menu.hide(); self.prompt.setFocus()
 
     def resize_composer(self):
-        height = int(self.prompt.document().size().height() * self.prompt.fontMetrics().lineSpacing()) + 10
-        self.prompt.setFixedHeight(max(66, min(120, height)))
+        spacing = self.prompt.fontMetrics().lineSpacing()
+        height = int(self.prompt.document().size().height() * spacing) + 10
+        self.prompt.setFixedHeight(max(2 * spacing + 10, min(120, height)))    # two lines at rest, growing to 120
 
     def flush_stream(self):
         if self.streaming_text:
@@ -2608,7 +2878,7 @@ class CreativeAgentDocker(DockWidget):
         tip = (['Other images (listed, not attached): ' + ', '.join(o['name'] for o in others)] if others else []) \
             + (['Skipped:'] + ['%s: %s' % (s['name'], s['reason']) for s in skipped] if skipped else [])
         self.folder_footer.setToolTip(self.text_tip(tip) if tip else '')
-        self.folder_card.show(); self.tabs.setTabVisible(self.folder_tab, True)
+        self.folder_card.show(); self.show_tab(self.folder_tab, True)
 
     def show_folder_study(self, event):
         """The study's state on the Folder tab: the study line and each row's mark and tooltip, in place."""
@@ -2644,13 +2914,12 @@ class CreativeAgentDocker(DockWidget):
         """A card in the chat with a picture (optional; clickable when `on_picture` is given), notes always shown under it,
         and one button per (label, value): answered once, then disabled."""
         self.flush_stream(); self.reply_open = False; self.empty_state.hide()
-        item = self.transcript.add_message(title, text, True); self.last_card_layout = item['layout']
+        item = self.transcript.add_message(title, text); self.last_card_layout = item['layout']   # its caption says what it is; the message shows whole
         pixmap = QPixmap(image_path) if image_path else QPixmap()
         if not pixmap.isNull():
             picture = PictureButton() if on_picture else QLabel(); picture.setObjectName('questionImage')
             if on_picture: picture.clicked.connect(on_picture)
-            picture.setPixmap(pixmap.scaled(QSize(400, 300), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-            item['layout'].addWidget(picture)
+            item['layout'].addWidget(picture); self.transcript.add_picture(picture, pixmap)
         for note in notes:
             if not note.strip(): continue
             line = QLabel(note.strip()); line.setObjectName('muted'); line.setWordWrap(True); line.setTextFormat(Qt.TextFormat.PlainText)
@@ -2759,7 +3028,7 @@ class CreativeAgentDocker(DockWidget):
             picture.setToolTip(name + '\n' + dict(REFERENCE_PURPOSES).get(ref.get('purpose') or 'general', 'Overall direction'))
             picture.setAccessibleName('Preview and edit reference ' + name)
             picture.clicked.connect(lambda _checked=False, entry=ref: self.edit_reference(entry)); image_layout.addWidget(picture, 0, 0)
-            remove = QPushButton('×'); remove.setObjectName('referenceRemove'); remove.setFixedSize(18, 18)
+            remove = themed(QPushButton(''), 'close', 'text', 10); remove.setObjectName('referenceRemove'); remove.setFixedSize(18, 18)
             remove.setAccessibleName('Remove reference ' + name); remove.setToolTip('Remove reference')
             remove.setEnabled(not self.busy)
             remove.clicked.connect(lambda _checked=False, entry=ref: self.remove_reference(entry)); image_layout.addWidget(remove, 0, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
@@ -2773,7 +3042,12 @@ class CreativeAgentDocker(DockWidget):
             purpose.clicked.connect(lambda _checked=False, entry=ref: self.edit_reference(entry)); column.addWidget(purpose)
             self.attachment_row.addWidget(tile)
         self.attachment_row.addStretch()
-        self.attachments.setVisible(bool(references))
+        # One chip, whatever the count; it opens the tiles above the message box.
+        count = len(references[:4]); self.attach_chip.setProperty('count', count)
+        self.attach_chip.setText(str(count) if count else ''); self.attach_chip.setAccessibleName('%d attached' % count)
+        self.attach_chip.setVisible(bool(count))
+        if not count: self.attach_chip.setChecked(False)
+        self.show_attachments(self.attach_chip.isChecked()); self.fit_control_row()
 
     def mass_map_label(self, reference, width, height=6, bar=None):
         """The reference's big masses (found by the companion) as a flat bar of their colours, its tooltip the artist's
@@ -2945,7 +3219,7 @@ class CreativeAgentDocker(DockWidget):
         self.transcript.clear()
         self.current_reply = None; self.reply_open = False
         self.folder_card.hide(); self.folder_guesses = {}; self.folder_elements.clear(); self.clear_folder_masses(); self.folder_study.clear(); self.folder_shown = None
-        self.plan_steps.show_steps([]); self.tabs.setTabVisible(self.plan_tab, False); self.tabs.setTabVisible(self.folder_tab, False)
+        self.plan_steps.show_steps([]); self.show_tab(self.plan_tab, False); self.show_tab(self.folder_tab, False)
         self.tabs.setCurrentIndex(self.chat_tab)
         self.auto_approve.forget()
         self.goal = None; self.plan_bar.hide(); self.move_bar.hide(); self.current_move = None; self.question_id = None; self.question_controls = []; self.closeup_question_id = None; self.closeup_controls = []
@@ -2958,7 +3232,7 @@ class CreativeAgentDocker(DockWidget):
         self.chat_mode = 'ask'; self.mode_selector.blockSignals(True); self.mode_selector.setCurrentIndex(0); self.mode_selector.blockSignals(False)
         self.mode_user_chosen = False; self.mode_auto = False; self.refresh_document_state()
         self.saved_path = None; self.saved_at = None; self.painting_target = {}; self.save_status.setText('Ask · no canvas changes')
-        self.trace_link.hide(); self.trace_link.setText('')
+        self.trace_link.hide(); self.trace_link.setText(''); self.trace_url = None
         self.study_id = None
         self.render_scope_tray(); self.render_target()
         self.prompt.setPlaceholderText('Ask about your painting…')
@@ -3023,6 +3297,7 @@ class CreativeAgentDocker(DockWidget):
 
     def tab_changed(self, index):
         QToolTip.hideText(); self.slash_menu.hide()          # nothing of another tab stays open over this one
+        if hasattr(self, 'composer'): self.composer.setVisible(index == self.chat_tab)    # the message box belongs to the chat
         if index == self.plan_tab: self.reveal_timer.start()
         if index == self.folder_tab: self.fit_folder_elements()   # its rows' heights are known once it shows
 
@@ -3187,7 +3462,7 @@ class CreativeAgentDocker(DockWidget):
         elif kind == 'tracing':
             url = event.get('url', '')
             if url.startswith('https://') or url.startswith('http://'):
-                self.trace_link.setText('<a href="%s">Trace</a>' % html.escape(url, quote=True)); self.trace_link.show()
+                self.trace_link.setText('<a href="%s">Trace</a>' % html.escape(url, quote=True)); self.trace_link.show(); self.trace_url = url
         elif kind == 'context':
             self.canvas_context = {key: value for key, value in event.items() if key != 'type'}
             self.render_context(); self.update_controls(); self.refresh_document_state()
@@ -3318,7 +3593,7 @@ class CreativeAgentDocker(DockWidget):
             self.folder_goal_choice.setEnabled(not self.busy and self.folder_goal_choice.count() > 0)
             if not self.busy: stop_requested.clear()      # the stopped run has ended
             self.run_started = time.monotonic() if self.busy else None
-            self.activity_dot.setText('●' if self.busy else '')
+            self.activity_dot.setVisible(self.busy)
             self.update_controls(); self.update_elapsed()
             self.return_button.setEnabled(not self.busy)
             if not self.busy and self.settings_unsent: self.change_execution_settings()   # a quick switch made while painting
@@ -3392,7 +3667,7 @@ class CreativeAgentDocker(DockWidget):
             step_rows = (event.get('plan_steps') or []) if brief else []
             goal_reference = self.folder_goal_reference()
             self.plan_steps.show_steps(step_rows, self.busy, root=getattr(self, 'folder_root', ''), goal_image=self.picture_path(goal_reference))
-            self.tabs.setTabVisible(self.plan_tab, bool(brief))
+            self.show_tab(self.plan_tab, bool(brief))
             self.tabs.setTabText(self.plan_tab, 'Plan · %d' % len(brief['steps']) if brief and brief.get('steps') else 'Plan')
             current_step = self.plan_steps.current_index()
             if current_step is not None and current_step != self.revealed_step: self.reveal_timer.start()   # only when another step paints
@@ -4038,6 +4313,7 @@ class CreativeAgentDocker(DockWidget):
         self.ai_images_selector.setEnabled(running and bool(self.goal) and not self.busy)
         self.ai_images_selector.setToolTip('Pause to change AI images for this chat.' if self.busy else
                                            'How many AI-generated images the painter may use in this chat. 0 paints everything by hand.')
+        self.render_model_chip(); self.update_waiting()
         self.protect_button.setEnabled(not self.busy and self.protection_editing is None)
         self.protect_button.setToolTip('Pause to change protection' if self.busy else 'Protected areas: what the agent must never change')
         self.features_section.set_locked(self.feature_wait_reason() is not None)
@@ -4056,6 +4332,7 @@ class CreativeAgentDocker(DockWidget):
         self.send_button.setToolTip('Send direction · current brush action settles first' if self.busy else 'Send message · Enter')
         self.send_button.setEnabled(running and bool((self.accepted_model if self.study_active else None) or self.model.currentData()) and not self.pending_model_change and (not self.busy or self.study_active))
         self.stop_button.setEnabled(self.busy); self.stop_button.setVisible(self.busy)
+        self.fit_control_row()
         self.reference_button.setEnabled(running and not self.busy)
         self.plan_button.setEnabled(bool(self.goal))
         self.end_button.setEnabled(running and not self.busy)

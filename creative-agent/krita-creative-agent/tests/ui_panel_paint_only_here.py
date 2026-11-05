@@ -181,7 +181,7 @@ class PaintOnlyHere(unittest.TestCase):
         self.doc.selected = selected(0, 0, 10, 10); self.bar.button.click()
         self.bar.clear_button.click(); app.processEvents()
         self.assertIsNone(self.doc.feature(SYSTEM))
-        self.assertFalse(self.bar.chip.isVisible()); self.assertTrue(self.bar.button.isVisible())
+        self.assertFalse(self.bar.chip.isVisible()); self.assertFalse(self.bar.clear_button.isVisible())
         self.assertEqual(self.sent('paint_only_here')[-1], {'type': 'paint_only_here', 'action': 'clear'})
         self.assertEqual(self.doc.undo_steps, [], 'setting and clearing are no undo steps')
 
@@ -309,7 +309,8 @@ class PaintOnlyHere(unittest.TestCase):
     # ----- Find it for me ----------------------------------------------------------------------------------------------
     def test_find_it_for_me_names_the_part_and_loads_the_outline_as_the_selection(self):
         self.chat()
-        self.assertTrue(self.bar.find_button.isVisible()); self.assertEqual(self.bar.find_button.accessibleName(), 'Find it for me')
+        self.assertEqual(self.bar.find_button.accessibleName(), 'Find it for me')
+        self.assertIs(next(a for a in self.panel.attach_menu.actions() if a.text() == 'Find it for me').isEnabled(), True, 'in the + menu')
         self.bar.find_button.click(); app.processEvents()
         self.assertTrue(self.bar.find_row.isVisible())
         self.assertIn('Name what to find ("the sky") and press Find', self.bar.hint.text())

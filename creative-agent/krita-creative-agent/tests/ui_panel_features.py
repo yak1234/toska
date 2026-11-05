@@ -124,11 +124,11 @@ class ProtectedSection(unittest.TestCase):
         self.assertIn('2 of 4', self.section.summary.text())
         self.assertEqual(self.section.rows[0]['check'].accessibleName(), 'Protect Buildings')
 
-    def test_a_painting_without_features_says_how_to_add_one(self):
+    def test_a_painting_without_features_takes_no_row(self):
+        # openspec panel-redesign: a control takes a row only while it is in use. The shield still says how to add one.
         self.open()
-        self.assertTrue(self.section.isVisible())
+        self.assertFalse(self.section.isVisible())
         self.assertEqual(self.section.rows, [])
-        self.assertTrue(self.section.empty.isVisible())
         self.assertEqual(self.section.empty.text(), 'No features yet: select an area and use the shield to protect it')
 
     def test_areas_the_agent_proposed_are_listed_while_they_wait(self):
@@ -137,6 +137,9 @@ class ProtectedSection(unittest.TestCase):
         moon = {'id': 'm', 'name': 'Moon', 'state': 'pending', 'by': 'agent', 'bounds': [0, 0, 10, 10]}
         self.panel.protection.areas.append(moon)
         self.panel.handle_event({'type': 'protection_proposed', 'area': moon}); app.processEvents()   # listed at once, not at the next poll
+        self.assertTrue(self.section.isVisible()); self.assertFalse(self.section.body.isVisible(), 'one line until opened')
+        self.assertEqual(self.section.summary.text(), '1 proposed')
+        self.section.toggle.click()
         self.assertFalse(self.section.empty.isVisible())
         self.assertEqual([(r['name'], r['kind'].text()) for r in self.section.pending_rows], [('Moon', 'proposed, waiting for you')])
         self.assertTrue(self.section.pending_rows[0]['widget'].isVisible())
@@ -145,7 +148,7 @@ class ProtectedSection(unittest.TestCase):
         self.panel.protection.areas.append({'id': 'locked-layers', 'name': 'Locked layers', 'state': 'active', 'by': 'automatic', 'count': 1})
         self.panel.answer_protection(moon, 'discard'); app.processEvents()
         self.assertEqual(self.section.pending_rows, [])
-        self.assertTrue(self.section.empty.isVisible())
+        self.assertFalse(self.section.isVisible(), 'answered, with nothing else: no row')
         # Features and proposals together: both listed.
         doc.list.append(Feature('Sky'))
         self.panel.protection.areas.append(dict(moon, id='m2'))
@@ -369,10 +372,11 @@ class ProtectedSection(unittest.TestCase):
 
     def test_the_section_collapses(self):
         self.open(Feature('Sky'))
-        self.section.toggle.click()
-        self.assertFalse(self.section.body.isVisible())
+        self.assertFalse(self.section.body.isVisible(), 'one line at rest')
         self.section.toggle.click()
         self.assertTrue(self.section.body.isVisible())
+        self.section.toggle.click()
+        self.assertFalse(self.section.body.isVisible())
 
 
 class Sel:

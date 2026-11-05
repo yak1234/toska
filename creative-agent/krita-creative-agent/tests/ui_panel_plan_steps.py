@@ -1,7 +1,7 @@
 """Run: uv run -q --with pyqt5 python tests/ui_panel_plan_steps.py (and --with pyqt6). A UI script like ui_panel_folder: it
 stubs krita for the whole process. Plan step controls (plan-step-controls, mockup B: plain-word buttons, no ticks): the
 plan bar lists the steps from the goal event's plan_steps; Skip / Restore before painting (a skipped step greyed and struck
-through), "✓ Good enough → next step" on the step that paints, "✓ Met" and "↺ Redo" (with what to change) after it
+through), "Good enough → next step" on the step that paints, "Met" and "Redo" (with what to change) after it
 finishes. Each sends a plan_step command with an id. Both themes keep the coloured buttons readable at the panel's narrow
 width. With PLAN_STEPS_SCREENSHOTS=<folder> it also saves the plan list in Toska Night and Toska Day there.
 No dialog opens and no profile is touched (Qt's test mode for standard paths)."""
@@ -66,8 +66,8 @@ class PlanStepsRules(unittest.TestCase):
     def test_each_state_offers_its_plain_word_buttons(self):
         self.assertEqual([a for a, *_ in plan_steps.step_actions('open')], ['skip'])
         self.assertEqual([a for a, *_ in plan_steps.step_actions('skipped')], ['restore'])
-        self.assertEqual([(a, label) for a, label, *_ in plan_steps.step_actions('painting')], [('good_enough', '✓ Good enough → next step')])
-        self.assertEqual([(a, label) for a, label, *_ in plan_steps.step_actions('finished')], [('met', '✓ Met'), ('redo', '↺ Redo')])
+        self.assertEqual([(a, label) for a, label, *_ in plan_steps.step_actions('painting')], [('good_enough', 'Good enough → next step')])
+        self.assertEqual([(a, label) for a, label, *_ in plan_steps.step_actions('finished')], [('met', 'Met'), ('redo', 'Redo')])
         for state in ('finishing', 'met', 'good_enough', 'done'):
             self.assertEqual(plan_steps.step_actions(state), [], state)
 
@@ -140,7 +140,7 @@ class PanelPlanSteps(unittest.TestCase):
     def test_good_enough_while_a_step_paints(self):
         self.goal(steps('painting', 'open', 'skipped', 'open', 'open'), status='active', busy=True)
         good = self.buttons(0)
-        self.assertEqual([b.text() for b in good], ['✓ Good enough → next step'])
+        self.assertEqual([b.text() for b in good], ['Good enough → next step'])
         self.assertEqual(good[0].objectName(), 'stepMet')
         self.assertTrue(good[0].isEnabled())
         self.assertIn('next step', good[0].accessibleName())
@@ -156,7 +156,7 @@ class PanelPlanSteps(unittest.TestCase):
         self.assertTrue(self.panel.move_bar.isVisible())
         self.goal(steps('finished', 'open', 'open', 'open', 'open', redone={0: 1}), status='move_ready')
         met, redo = self.buttons(0)
-        self.assertEqual((met.text(), met.objectName(), redo.text(), redo.objectName()), ('✓ Met', 'stepMet', '↺ Redo', 'stepRedo'))
+        self.assertEqual((met.text(), met.objectName(), redo.text(), redo.objectName()), ('Met', 'stepMet', 'Redo', 'stepRedo'))
         self.assertIn('redone 1', self.panel.plan_steps.rows[0]['status'].text())
         redo.click()
         self.assertEqual(self.commands, [], 'Redo first asks what to change')
@@ -164,7 +164,7 @@ class PanelPlanSteps(unittest.TestCase):
         self.assertTrue(editor.isVisible())
         field = editor.findChild(QLineEdit); field.setText('keep the sky darker')
         self.assertEqual(field.accessibleName(), 'What to change in step 1 (optional)')
-        confirm = next(b for b in editor.findChildren(QPushButton) if b.text() == '↺ Redo step')
+        confirm = next(b for b in editor.findChildren(QPushButton) if b.text() == 'Redo step')
         confirm.click()
         self.assertEqual({k: v for k, v in self.commands[-1].items() if k != 'id'},
                          {'type': 'plan_step', 'action': 'redo', 'step_key': KEYS[0], 'text': 'keep the sky darker'})
@@ -189,7 +189,7 @@ class PanelPlanSteps(unittest.TestCase):
         for status in ('limited', 'paused', 'move_ready'):
             self.goal(steps('finished', 'open', 'open', 'open', 'open'), status=status, moves=[move])
             self.assertTrue(self.panel.move_bar.isVisible(), status)
-            self.assertEqual([b.text() for b in self.buttons(0)], ['✓ Met', '↺ Redo'], status)
+            self.assertEqual([b.text() for b in self.buttons(0)], ['Met', 'Redo'], status)
         self.goal(steps('met', 'painting', 'open', 'open', 'open'), status='active', busy=True, moves=[dict(move, status='kept')])
         self.assertFalse(self.panel.move_bar.isVisible(), 'kept: the card goes')
 
@@ -330,7 +330,7 @@ class PanelNowPainting(unittest.TestCase):
         self.assertIn('step 5 of 13', text.lower()); self.assertIn('Kremlin towers', text)
         self.assertIn('04-kremlin-towers.png', text); self.assertNotIn('assets/', text, 'the file name, not its folder')
         self.assertIn('batch 3', text)
-        good = next(b for b in now.findChildren(QPushButton) if b.text().startswith('✓ Good enough'))
+        good = next(b for b in now.findChildren(QPushButton) if b.text().startswith('Good enough'))
         self.assertTrue(self.shown(good), 'Good enough is on screen whatever the list shows')
         stop = next(b for b in now.findChildren(QPushButton) if b.text() == 'Stop')
         self.assertTrue(stop.isEnabled()); self.assertTrue(stop.accessibleName())
@@ -343,7 +343,7 @@ class PanelNowPainting(unittest.TestCase):
         rows = painting_step_five(); rows[4]['state'] = 'finished'
         self.paint(rows, status='move_ready', busy=False)
         now = self.panel.plan_steps.now
-        self.assertEqual(sorted(b.text() for b in now.findChildren(QPushButton) if b.isVisible()), ['↺ Redo', '✓ Met'])
+        self.assertEqual(sorted(b.text() for b in now.findChildren(QPushButton) if b.isVisible()), ['Met', 'Redo'])
 
     def test_the_header_agrees_with_the_steps(self):
         self.paint()

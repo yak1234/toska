@@ -25,6 +25,7 @@ import os
 import uuid
 import weakref
 
+from .panel_icons import themed
 from .qt_compat import (pyqtSignal, Qt, QEvent, QSize, QRect, QColor, QPainter, QImageReader, QPixmap, QToolTip, QFrame, QWidget, QLabel, QPushButton,
                         QLineEdit, QVBoxLayout, QHBoxLayout, QSizePolicy)
 
@@ -32,11 +33,12 @@ from .qt_compat import (pyqtSignal, Qt, QEvent, QSize, QRect, QColor, QPainter, 
 ACTIONS = {
     'open': [('skip', 'Skip', 'stepNeutral', 'Leave this step out: it is not painted. Restore brings it back.')],
     'skipped': [('restore', 'Restore', 'stepNeutral', 'Paint this step again when its turn comes.')],
-    'painting': [('good_enough', '✓ Good enough → next step', 'stepMet',
+    'painting': [('good_enough', 'Good enough → next step', 'stepMet',
                   'The batch in progress finishes, then nothing more is painted for this step and the next step starts.')],
-    'finished': [('met', '✓ Met', 'stepMet', "Keep this step's move and go on to the next step."),
-                 ('redo', '↺ Redo', 'stepRedo', "Undo this step's move and paint it again; you can say what to change.")],
+    'finished': [('met', 'Met', 'stepMet', "Keep this step's move and go on to the next step."),
+                 ('redo', 'Redo', 'stepRedo', "Undo this step's move and paint it again; you can say what to change.")],
 }
+ACTION_ICONS = {'good_enough': 'check', 'met': 'check', 'redo': 'redo'}
 SPOKEN = {'skip': 'Skip', 'restore': 'Restore', 'good_enough': 'Good enough, go to the next step after', 'met': 'Met:', 'redo': 'Redo'}
 # (text, object name) shown on the step's second line
 STATUS = {'painting': ('Painting', 'stepPainting'), 'finishing': ('Finishing the batch in progress…', 'stepPainting'),
@@ -336,7 +338,7 @@ class PlanStepsList:
 
     def set_expanded(self, on):
         self.expanded = bool(on)
-        self.fold.setText(('▾  ' if self.expanded else '▸  ') + getattr(self, 'fold_words', ''))
+        themed(self.fold, 'chevron-down' if self.expanded else 'chevron-right', size=12); self.fold.setText(getattr(self, 'fold_words', ''))
         self.done_box.setVisible(self.expanded and self.fold.isVisibleTo(self.widget))
 
     def card_body(self, entry, total):
@@ -402,6 +404,7 @@ class PlanStepsList:
     def add_buttons(self, row, line, state, number, title):
         for action, text, style, tip in step_actions(state):
             button = QPushButton(text); button.setObjectName(style); button.setToolTip(tip)
+            if action in ACTION_ICONS: themed(button, ACTION_ICONS[action], 'text', 14)
             button.setAccessibleName('%s step %d: %s' % (SPOKEN[action], number, title))
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             button.clicked.connect(lambda _=False, a=action, r=row: self.press(r, a))
@@ -445,7 +448,7 @@ class PlanStepsList:
         field.setAccessibleName('What to change in step %d (optional)' % number); layout.addWidget(field)
         buttons = QHBoxLayout(); buttons.setSpacing(5); buttons.addStretch(1)
         cancel = QPushButton('Cancel'); cancel.setObjectName('stepNeutral'); cancel.setAccessibleName('Cancel the redo of step %d' % number)
-        confirm = QPushButton('↺ Redo step'); confirm.setObjectName('stepRedo'); confirm.setAccessibleName('Redo step %d now' % number)
+        confirm = themed(QPushButton('Redo step'), 'redo', 'text', 14); confirm.setObjectName('stepRedo'); confirm.setAccessibleName('Redo step %d now' % number)
         confirm.setToolTip("Undo this step's move and paint it again, with what you typed.")
         cancel.clicked.connect(lambda: (editor.hide(), field.clear()))
         confirm.clicked.connect(lambda: self.send_command(row, 'redo', field.text()))

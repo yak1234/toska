@@ -124,7 +124,7 @@ class PanelCanvasReference(unittest.TestCase):
         pictures = [l for l in self.panel.findChildren(QLabel) if l.objectName() == 'questionImage' and l.isVisible()]
         self.assertTrue(pictures and not pictures[-1].pixmap().isNull(), 'the side-by-side picture')
         shown = '\n'.join(self.texts())
-        self.assertIn('18% of the canvas', shown)
+        self.assertIn('18% of the canvas', self.panel.transcript.toPlainText())
         self.assertIn('Your canvas was sent to ChatGPT', shown, 'the upload notice is always visible, not folded away')
 
     def test_auto_approve_never_answers_it(self):

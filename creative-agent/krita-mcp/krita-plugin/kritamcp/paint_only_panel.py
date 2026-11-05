@@ -30,6 +30,7 @@ import uuid
 from krita import Krita
 
 from .creative_document_identity import document_id
+from .panel_icons import themed
 from .paint_only_here import AREAS, selection_bounds, wants_area, write_mask
 from .qt_compat import QEvent, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, Qt, QTimer, QVBoxLayout, QWidget
 
@@ -69,13 +70,13 @@ class PaintOnlyBar(QWidget):
         self.cards = []                                   # Use my selection buttons waiting for a selection
         column = QVBoxLayout(self); column.setContentsMargins(0, 0, 0, 0); column.setSpacing(3)
         row = QHBoxLayout(); row.setContentsMargins(0, 0, 0, 0); row.setSpacing(1)
-        self.button = QPushButton('◌  Paint only here'); self.button.setObjectName('contextChip')
+        self.button = QPushButton('Paint only here'); self.button.setObjectName('contextChip')
         self.button.setAccessibleName('Paint only here')
         self.button.setToolTip('Select an area in Krita (Freehand, Magnetic or any selection tool), then press this: the agent paints '
                                'only inside it until you clear it.')
         self.button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed); self.button.setMinimumWidth(0)
         self.button.clicked.connect(self.press); row.addWidget(self.button, 1)
-        self.find_button = QPushButton('✦  Find it for me'); self.find_button.setObjectName('contextChip')
+        self.find_button = QPushButton('Find it for me'); self.find_button.setObjectName('contextChip')
         self.find_button.setAccessibleName('Find it for me')
         self.find_button.setToolTip('Name a part of your painting ("the sky"): the shapes model outlines it as a selection you can '
                                     'adjust, then press Paint only here.')
@@ -86,7 +87,7 @@ class PaintOnlyBar(QWidget):
         self.chip.setToolTip('Krita keeps the agent out of the rest of the painting. Select another area and press Paint only here '
                              'to replace it; ✕ to paint everywhere again.')
         self.chip.clicked.connect(self.press); row.addWidget(self.chip, 1)
-        self.clear_button = QPushButton('✕'); self.clear_button.setObjectName('contextAction')
+        self.clear_button = themed(QPushButton(''), 'close'); self.clear_button.setObjectName('contextAction')
         self.clear_button.setAccessibleName('Paint everywhere again'); self.clear_button.setToolTip('Clear the area: paint everywhere again')
         self.clear_button.clicked.connect(self.clear); row.addWidget(self.clear_button)
         column.addLayout(row)
@@ -96,13 +97,14 @@ class PaintOnlyBar(QWidget):
         self.find_field.returnPressed.connect(self.find_named); find.addWidget(self.find_field, 1)
         self.find_go = QPushButton('Find'); self.find_go.setObjectName('contextAction'); self.find_go.clicked.connect(self.find_named)
         find.addWidget(self.find_go)
-        self.find_cancel = QPushButton('✕'); self.find_cancel.setObjectName('contextAction'); self.find_cancel.setAccessibleName('Cancel Find it for me')
+        self.find_cancel = themed(QPushButton(''), 'close'); self.find_cancel.setObjectName('contextAction'); self.find_cancel.setAccessibleName('Cancel Find it for me')
         self.find_cancel.clicked.connect(self.close_find); find.addWidget(self.find_cancel)
         column.addWidget(self.find_row); self.find_row.hide()
         self.finding = None                               # the request id of a find in flight
         self.proposal = None                              # a card's outline waiting for Use this (the artist had a selection)
         self.hint = QLabel(''); self.hint.setObjectName('contextHint'); self.hint.setWordWrap(True); column.addWidget(self.hint)
         self.chip.hide(); self.clear_button.hide(); self.hint.hide()
+        self.button.hide(); self.find_button.hide()       # in the panel's + menu: a row only while an area is active
         self.timer = QTimer(self); self.timer.setInterval(700); self.timer.timeout.connect(self.watch_selection)
 
     # ----- the document --------------------------------------------------------------------------------------------------
@@ -190,10 +192,10 @@ class PaintOnlyBar(QWidget):
     def show_area(self, name):
         """The chip for an area (None: the artist's selection, unnamed)."""
         self.chip.setText(CHIP % (name or 'your selection')); self.chip.setAccessibleName(self.chip.text())
-        self.chip.show(); self.clear_button.show(); self.button.hide(); self.hint.hide()
+        self.chip.show(); self.clear_button.show(); self.hint.hide()
 
     def hide_area(self):
-        self.chip.hide(); self.clear_button.hide(); self.button.show()
+        self.chip.hide(); self.clear_button.hide()
 
     # ----- Find it for me ------------------------------------------------------------------------------------------------
     def open_find(self):
