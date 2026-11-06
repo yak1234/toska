@@ -405,6 +405,19 @@ class NativePolicyTests(unittest.TestCase):
                 'mode':'resume','name':'Existing','output_dir':str(destination),'painting_path':str(painting)}})
             self.assertEqual(result['session_id'],identifier); self.assertEqual(saves,[])
 
+    def test_a_chat_resumes_on_a_panorama_of_any_size(self):
+        # The artist's istanbul.kra, 12000 x 4000: reviving its chat said "Use a working canvas up to 8192 pixels per side".
+        h = Harness(); h._creative_session = None
+        with tempfile.TemporaryDirectory() as folder:
+            identifier=str(uuid.uuid4()); destination=pathlib.Path(folder)/identifier; destination.mkdir()
+            painting=pathlib.Path(folder)/'panorama.kra'; painting.touch()
+            h.doc.fileName=lambda: str(painting); h.doc.width=lambda: 12000; h.doc.height=lambda: 4000
+            result=h.cmd_creative({'operation':'begin','session_id':identifier,'params':{
+                'mode':'resume','name':'Panorama','output_dir':str(destination),'painting_path':str(painting)}})
+            self.assertEqual(result['session_id'],identifier)
+            h._creative_region([9000,100,3000,500],12000,4000)   # past 8192, inside this canvas
+            with self.assertRaises(ValueError): h._creative_region([9000,100,3001,500],12000,4000)
+
     def test_current_mode_uses_same_saved_or_unsaved_document(self):
         for saved in (False, True):
             h=Harness(); h._creative_session=None; original=h.doc

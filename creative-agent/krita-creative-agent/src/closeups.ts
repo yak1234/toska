@@ -50,8 +50,8 @@ const ASPECT_TOLERANCE = 0.03;             // as the reference tools: the canvas
 const EDGE = 1;                            // close-up pixels a mapped corner may fall outside it
 const STRETCH = 0.03;                      // the mapped source's proportions may differ from the target's this much
 // What the transfer path reads (reference-tool.mjs): a reference of at most REFERENCE_BYTES, decoded at most REFERENCE_PIXELS
-// (reference-limits.ts, the plugin's decode_reference), rects of at most 8192 a side (the schemas). A close-up past these is not used.
-export const TRANSFER_BYTES = REFERENCE_BYTES, TRANSFER_PIXELS = REFERENCE_PIXELS, TRANSFER_SIDE = 8192;
+// (reference-limits.ts, the plugin's decode_reference). A close-up past these is not used. Rects have no fixed limit: a canvas can be any size.
+export const TRANSFER_BYTES = REFERENCE_BYTES, TRANSFER_PIXELS = REFERENCE_PIXELS;
 // Recipe sizes in source pixels, with their schema ranges: they follow the source into the close-up.
 const SOURCE_SIZES: Record<string, [number, number]> = { spacing: [0.75, EDGE_SPACING_MAX], length: [2, SURFACE_LENGTH_MAX] };
 const SURFACE_SPACING: [number, number] = [1, SURFACE_SPACING_MAX];
@@ -267,7 +267,7 @@ export function chatCloseups(host: CloseupHost) {
       const fits = current()
         .filter(r => r.goal_id === target.id && usable(r) && r.confirmed !== 'no' && readable(r))
         .map(r => ({ record: r, mapped: mapSource(r, source, area) }))
-        .filter((f): f is { record: CloseupRecord; mapped: Rect } => !!f.mapped && f.mapped[2] <= TRANSFER_SIDE && f.mapped[3] <= TRANSFER_SIDE
+        .filter((f): f is { record: CloseupRecord; mapped: Rect } => !!f.mapped
           && f.mapped[2] / source[2] >= MIN_SHARPER)                // sharper where this source is, not only at the centre
         .sort((a, b) => b.mapped[2] - a.mapped[2]);
       const best = fits[0];

@@ -247,7 +247,7 @@ test('focal regions and source-pixel sizes follow the source into the close-up',
   assert.equal(outside, null, 'a focal region that cannot fit: the goal is sampled');
 }, { answers: { woman: PLACED } }));
 
-test('a close-up the transfer cannot read (over 64 MB, over 26 million pixels, a source past 8192) is not used', () => chat(async ({ closeups, host }) => {
+test('a close-up the transfer cannot read (over 64 MB, over 26 million pixels) is not used', () => chat(async ({ closeups, host }) => {
   await closeups.refresh(); closeups.answer('woman', CLOSEUP_ANSWERS[0]);
   const recipe = { reference_id: 'goal', source: [350, 640, 100, 80], target: [0, 0, 400, 320] };
   host.study.closeups.woman.bytes = 65 * 1024 * 1024;

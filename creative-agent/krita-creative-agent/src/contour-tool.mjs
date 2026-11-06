@@ -6,7 +6,7 @@ import {Value} from 'typebox/value';
 
 /** @template {import('typebox').TProperties} T @param {T} properties */
 const object=properties=>Type.Object(properties,{additionalProperties:false});
-const point=Type.Array(Type.Number({minimum:0,maximum:8192}),{minItems:2,maxItems:2});
+const point=Type.Array(Type.Number({minimum:0}),{minItems:2,maxItems:2});
 export const contourSchema=object({
   name:Type.String({minLength:1,maxLength:120}),
   preset:Type.String({minLength:1,maxLength:200}),

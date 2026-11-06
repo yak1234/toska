@@ -128,6 +128,9 @@ def merge_pass_record_error(result, error):
             'error': result['error'] + ' (' + note + ')' if result.get('error') else note}
 
 
+MAX_NEW_CANVAS_SIDE = 100000   # only a guard against a mistyped size; an open painting of any size can be worked on
+
+
 class CanvasNotSettled(RuntimeError):
     """The canvas made no progress for canvas_settle.SETTLE_SECONDS: the GUI thread stops waiting (nothing is rolled back under a running stroke)."""
 
@@ -1032,8 +1035,8 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         if p['mode'] not in ('resume', 'current') and os.path.exists(painting_path):
             raise ValueError('That painting file already exists. Choose another filename.')
         if p['mode'] == 'new':
-            width = numeric(p.get('width', 768), 'width', 128, 8192)
-            height = numeric(p.get('height', 1024), 'height', 128, 8192)
+            width = numeric(p.get('width', 768), 'width', 128, MAX_NEW_CANVAS_SIDE)
+            height = numeric(p.get('height', 1024), 'height', 128, MAX_NEW_CANVAS_SIDE)
             if int(width) != width or int(height) != height:
                 raise ValueError('Canvas dimensions must be integers')
             color(p.get('background', '#ece3d4'))
@@ -1049,15 +1052,11 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             source = self.get_active_document()
             if source is None:
                 raise ValueError('Open a document to make a working copy')
-            if max(source.width(), source.height()) > 8192:
-                raise ValueError('Use a working canvas up to 8192 pixels per side')
             created = self.cmd_duplicate_document({'name': name})
         else:
             source = self.get_active_document()
             if source is None or os.path.realpath(source.fileName()) != painting_path:
                 raise ValueError('Open this saved painting in Krita before resuming its conversation.')
-            if max(source.width(), source.height()) > 8192:
-                raise ValueError('Use a working canvas up to 8192 pixels per side')
             editable = p.get('editable_layers', [])
             if not isinstance(editable, list) or any(not isinstance(item, str) for item in editable):
                 raise ValueError('Invalid saved layer list')

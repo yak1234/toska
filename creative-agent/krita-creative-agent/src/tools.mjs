@@ -43,9 +43,9 @@ export function effectFolders(runtime) {
 /** @template {import('typebox').TProperties} T @param {T} properties */
 const object = properties => Type.Object(properties, { additionalProperties: false });
 const unit = Type.Number({ minimum: 0.01, maximum: 1 });
-const coordinate = Type.Number({ minimum: 0, maximum: 8192 });
+const coordinate = Type.Number({ minimum: 0 });
 // Stroke points may lie up to one brush size off the canvas (the plugin checks that), so a stroke runs edge to edge.
-const strokeCoordinate = Type.Number({ minimum: -10000, maximum: 18192 });
+const strokeCoordinate = Type.Number({ minimum: -10000 });
 const hex = Type.String({ pattern: '^#[0-9a-fA-F]{6}$' });
 const rect = Type.Array(Type.Integer({ minimum: 0, maximum: 100000 }), { minItems: 4, maxItems: 4 });
 const point = Type.Array(Type.Number({ minimum: -100000, maximum: 100000 }), { minItems: 2, maxItems: 2 });
@@ -165,7 +165,7 @@ export async function resultContent(runtime, result, {compactLayers=false,focusL
 // are as in select, checked by the plugin, so the schema stays short (the tool list is sent every turn).
 const looseSteps = Type.Array(Type.Record(Type.String(), Type.Unknown()), { minItems: 1, maxItems: 16, description: 'Selection steps, as in select.' });
 const toolLimit = { selection: Type.Optional(Type.String({ maxLength: 2000, description: 'A saved selection, or (our Krita) feature names and expressions such as "Sky - Moon", that limit the call.' })), area: Type.Optional(looseSteps),
-  region: Type.Optional(Type.Array(Type.Integer({ minimum: 0, maximum: 8192 }), { minItems: 4, maxItems: 4, description: 'Stage region [x,y,w,h] to stay inside.' })) };
+  region: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }), { minItems: 4, maxItems: 4, description: 'Stage region [x,y,w,h] to stay inside.' })) };
 const toolLayer = { blend_mode: Type.Optional(Type.String({ maxLength: 40 })), opacity: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })),
   clip_to: Type.Optional(Type.String()), clip_base: Type.Optional(Type.Boolean()) };
 const whole = (low, high) => Type.Optional(Type.Integer({ minimum: low, maximum: high }));
@@ -226,10 +226,10 @@ export function paintingTools(runtime) {
   /** @type {import('@earendil-works/pi-coding-agent').ToolDefinition<any, any>[]} */
   const tools = [
     tool('observe_canvas', 'Looking at the painting',
-      'See the current canvas image, document dimensions and layer IDs. Canvas coordinates use width/height, not the resized preview. Inspect before deciding on a change. Optional region [x,y,width,height] returns actual-resolution material detail up to the view size on its long side (1568 px unless the Canvas view size setting or the model\'s measured size sets another); a larger region comes back shrunk, and scale in the result says by how much (1 = actual pixels).', object({region:Type.Optional(Type.Array(Type.Integer({minimum:0,maximum:8192}),{minItems:4,maxItems:4}))}), 'observe'),
+      'See the current canvas image, document dimensions and layer IDs. Canvas coordinates use width/height, not the resized preview. Inspect before deciding on a change. Optional region [x,y,width,height] returns actual-resolution material detail up to the view size on its long side (1568 px unless the Canvas view size setting or the model\'s measured size sets another); a larger region comes back shrunk, and scale in the result says by how much (1 = actual pixels).', object({region:Type.Optional(Type.Array(Type.Integer({minimum:0}),{minItems:4,maxItems:4}))}), 'observe'),
     tool('sample_canvas_colors','Sampling canvas colors',
       'Sample the exact visible canvas colors at up to 16 document-pixel points. Use destination colors for texture and corrections; sampling does not paint. Returns colors, alpha and the sampled revision.',
-      object({points:Type.Array(Type.Array(Type.Integer({minimum:0,maximum:8191}),{minItems:2,maxItems:2}),{minItems:1,maxItems:16})}),'sample_colors'),
+      object({points:Type.Array(Type.Array(Type.Integer({minimum:0}),{minItems:2,maxItems:2}),{minItems:1,maxItems:16})}),'sample_colors'),
     {...tool('list_brushes', 'Choosing a brush',
       'Find installed brush presets, each with a card saying what one stroke of it actually paints (null if never probed). Use an exact returned name for painting. A filter matches names only.',
       object({ filter: Type.Optional(Type.String({ maxLength: 80 })) }), 'list_brushes'),
@@ -244,7 +244,7 @@ export function paintingTools(runtime) {
       'Paint up to 256 continuous native cubic brush curves on a NEW named layer. Each segment is [c1x,c1y,c2x,c2y,endx,endy]. The full pass is validated before painting. Automatically updates the study’s single layered painting.kra file and returns its canvas IMAGE. Assess that image before the next pass. Brush width matters for coverage and overlap. A stroke’s optional pressure, tilt, rotation, speed and time_ms lists drive the preset’s pen dynamics; the result says "applied" for each, or "ignored" when this Krita cannot paint it.',
       object({ name: Type.String({ minLength: 1, maxLength: 120 }), preset: Type.String({ minLength: 1 }),
         strokes: Type.Array(stroke, { minItems: 1, maxItems: 256 }),
-        region:Type.Optional(Type.Array(Type.Integer({minimum:0,maximum:8192}),{minItems:4,maxItems:4})),
+        region:Type.Optional(Type.Array(Type.Integer({minimum:0}),{minItems:4,maxItems:4})),
         selection: Type.Optional(Type.String({ maxLength: 2000, description: 'Limit the pass to a saved selection or (our Krita) feature names and expressions such as "Sky - Moon" instead of a region; protected features are kept out either way.' })),
         layer_opacity: Type.Optional(Type.Number({ minimum: 0, maximum: 1 })), panel,
         blend_mode: Type.Optional(Type.String({ maxLength: 40, description: 'Paint on a new layer in this blend mode: overlay or soft_light for texture, multiply for shadow, add or screen for light.' })),
@@ -363,7 +363,7 @@ export function paintingTools(runtime) {
     tool('letter', 'Lettering',
       'Letter a comic panel: a caption box or a speech, thought or shout balloon with its text, as editable vector shapes on the page\u2019s Lettering layer. at [x, y] is the top-left in page pixels inside the panel; width is the box width (default about 40% of the panel); tail_to [x, y] points a speech or thought balloon at the speaker. Captions go at a panel\u2019s top-left, balloons above the speaker, read left to right and top to bottom. One call per caption or balloon, so each can be undone alone. Letter after the panel art.',
       object({ panel: Type.String({ pattern: '^P[0-9]{1,2}$' }), kind: Type.Union(['caption','speech','thought','shout'].map(k => Type.Literal(k))),
-        text: Type.String({ minLength: 1, maxLength: 400 }), at: point, width: Type.Optional(Type.Number({ minimum: 60, maximum: 8192 })),
+        text: Type.String({ minLength: 1, maxLength: 400 }), at: point, width: Type.Optional(Type.Number({ minimum: 60 })),
         tail_to: Type.Optional(point), font: Type.Optional(Type.String({ maxLength: 120 })), size: Type.Optional(Type.Number({ minimum: 8, maximum: 200 })),
         fill: Type.Optional(hex), ink: Type.Optional(hex), name: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })) }), 'letter'),
     tool('krita_capabilities', 'Checking Krita\u2019s tools',

@@ -5,11 +5,11 @@ import { Value } from 'typebox/value';
 const range = (min,max) => Type.Array(Type.Number({minimum:min,maximum:max}),{minItems:2,maxItems:2});
 export const recipeSchema = Type.Object({
   name:Type.String({minLength:1,maxLength:100}),preset:Type.String({minLength:1}),
-  region:Type.Array(Type.Integer({minimum:0,maximum:8192}),{minItems:4,maxItems:4}),
+  region:Type.Array(Type.Integer({minimum:0}),{minItems:4,maxItems:4}),
   palette:Type.Array(Type.String({pattern:'^#[0-9a-fA-F]{6}$'}),{minItems:1,maxItems:32}),
   stroke_count:Type.Integer({minimum:1,maximum:20000}),
   size:range(1,10000),opacity:range(.01,1),
-  length:Type.Optional(range(1,8192)),
+  length:Type.Optional(Type.Array(Type.Number({minimum:1}),{minItems:2,maxItems:2})),
   direction:Type.Union(['horizontal','vertical','diagonal','random'].map(v=>Type.Literal(v))),
   irregularity:Type.Number({minimum:0,maximum:1}),seed:Type.Integer({minimum:0,maximum:4294967295}),
   flow:Type.Optional(Type.Number({minimum:.01,maximum:1})),

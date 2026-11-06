@@ -5,7 +5,7 @@ import {Type} from 'typebox';
 import {Value} from 'typebox/value';
 /** @template {import('typebox').TProperties} T @param {T} p */
 const object=p=>Type.Object(p,{additionalProperties:false});
-const rect=()=>Type.Array(Type.Integer({minimum:0,maximum:8192}),{minItems:4,maxItems:4,description:'[x,y,width,height], in source pixels for source/focal regions and canvas pixels for target.'});
+const rect=()=>Type.Array(Type.Integer({minimum:0}),{minItems:4,maxItems:4,description:'[x,y,width,height], in source pixels for source/focal regions and canvas pixels for target.'});
 // 2: transfer patches fade out toward the sides that meet existing paint.
 export const REFERENCE_GENERATOR_VERSION=2;
 // A patch painted to a hard rectangle leaves that rectangle as a seam: a traced repair's check
