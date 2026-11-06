@@ -1,6 +1,6 @@
 # Agent panel redesign: the chat comes first
 
-Status: APPROVED by the artist on 2026-11-05, from the mockup ("these are all good"). Nothing is built.
+Status: BUILT and installed locally 2026-11-06; the artist approved the look and said it works. Not published. Open items: tasks.md.
 Mockup: https://claude.ai/artifact/AMuvZMrp2dVKUe7eBJTZSd
 
 Layout decisions below are Claude's calls, explained to the artist, who directs Toska but is not a painter. They may be

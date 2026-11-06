@@ -1,5 +1,11 @@
 # Tasks: Layers and Brushes tabs
 
+Stopped here 2026-11-06, the artist: "It's good ... let's just call it a day." Built, installed locally, look approved, not
+published. Next, in order: the stray tick above the top layer's eye; confirm by hand the eye button (the artist said generally that
+it works; synthetic clicks did not toggle it), right-click, Window > Dockers, the … menu, the toolbar's popup; task 2.5, the
+new-install layout; a full agent/ci.sh, then publish with the artist's approval. Agent brushes stay in All: the artist declined
+hiding them.
+
 Starts after `panel-redesign` lands. Panel tests run with `uv run -q --with pyqt5 python tests/<file>` and again under PyQt6.
 C++ builds only via `agent/build-macos.sh`, C++ tests only via `agent/run-tests.sh`. Write each test first and see it fail.
 
@@ -88,4 +94,4 @@ columns), selecting signals as before, and `TestPresetSessionStorage` passes wit
 - [ ] 6.2 Live in Toska, on a copy, after the artist has finished the current painting: the full list in the proposal's
       Measures, plus one short agent chat while on the Layers tab. State exactly what was run.
 - [ ] 6.3 Pictures of both tabs next to the mockup, sent to the artist.
-- [ ] 6.4 The artist approves the look against the mockup.
+- [x] 6.4 The artist approves the look against the mockup.

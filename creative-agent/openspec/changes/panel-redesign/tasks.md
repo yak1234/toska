@@ -6,8 +6,9 @@ see it fail.
 
 Land every task, then install once and ask for one restart. Never install while Toska is running: check first.
 
-Built 2026-11-05, offscreen only: nothing installed, nothing run in Toska yet. Open: 1.1-1.3, 6.3's live cause, 6.4's
-live check, 8.2-8.4.
+Built 2026-11-05 and installed in Toska 2026-11-06 (commits 419bc608 onward, local only). The artist approved the look and
+said it works. Open: 1.1-1.3 (the black band was never answered), 6.3's cause, 6.4's Dark and Light themes, 8.2, 8.3 (no agent
+chat was run on it).
 
 ## 1. Find out about the black band and the clipping
 
@@ -76,4 +77,4 @@ live check, 8.2-8.4.
 - [ ] 8.2 Before and after pictures of the panel at the same size, sent to the artist.
 - [ ] 8.3 Live in Toska, on a copy, after the artist has finished the current painting: one short agent chat with a move,
       a reference card and a small window. State exactly what was run.
-- [ ] 8.4 The artist approves the look against the mockup.
+- [x] 8.4 The artist approves the look against the mockup.

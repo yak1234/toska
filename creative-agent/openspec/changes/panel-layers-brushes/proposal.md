@@ -1,7 +1,6 @@
 # Layers and Brushes as tabs in the agent panel
 
-Status: the look is APPROVED by the artist on 2026-11-05, from the mockup ("these are all good"). Nothing is built, and how
-the tabs hold Krita's real panels is not proven yet (task 1).
+Status: BUILT and installed locally 2026-11-06; the artist approved the look and said it works. Not published. Open items: top of tasks.md.
 Mockup: https://claude.ai/artifact/AMuvZMrp2dVKUe7eBJTZSd (boards "Layers tab" and "Brushes tab")
 
 Comes after `panel-redesign`, which provides the look, the status line and the "Waiting for you" line.
