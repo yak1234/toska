@@ -1368,7 +1368,7 @@ void NodeDelegate::drawSelectedButton(QPainter *p, const QStyleOptionViewItem &o
     buttonOption.state.setFlag((d->view->selectionModel()->isRowSelected(index.row(), index.parent())
                                     ? QStyle::State_On
                                     : QStyle::State_Off));
-    style->drawPrimitive(QStyle::PE_IndicatorCheckBox, &buttonOption, p);
+    style->drawPrimitive(QStyle::PE_IndicatorCheckBox, &buttonOption, p, option.widget);   // without the widget the macOS style draws it at the top left of the view
 }
 
 boost::optional<KisBaseNode::Property>

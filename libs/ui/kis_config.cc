@@ -3010,7 +3010,7 @@ void KisConfig::setUseInlineLayerInfoText(bool value)
 
 bool KisConfig::useLayerSelectionCheckbox(bool defaultValue) const
 {
-    return defaultValue ? false : m_cfg.readEntry("useLayerSelectionCheckbox", true);
+    return defaultValue ? false : m_cfg.readEntry("useLayerSelectionCheckbox", false);
 }
 
 void KisConfig::setUseLayerSelectionCheckbox(bool value)

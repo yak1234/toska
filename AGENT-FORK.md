@@ -1534,5 +1534,5 @@ Our own work, not a port. Upstream (Krita) files edited:
 - `plugins/dockers/layerdocker/LayerBox.cpp/.h`: smaller icons from the new set; the slider says only the value; thumbnails follow the list's visibility through an event filter instead of the dock's show and hide events, because the agent panel's Layers tab holds this widget while the dock is hidden.
 - `plugins/dockers/layerdocker/NodeDelegate.cpp/.h`: rounded row band instead of the style's flat selection, no grid line, rounded thumbnails with no frame, hidden layers dimmed, off badges only on hover (`shouldDrawBadge`; hit areas unchanged).
 - `plugins/dockers/layerdocker/NodeView.cpp`: `WA_Hover` on the viewport, so a row knows the pointer is on it.
-- `libs/ui/kis_config.cc`: defaults only: `layerThumbnailSize` 32 (was 20), `layerInfoTextStyle` Balanced (was None). Saved values are kept.
+- `libs/ui/kis_config.cc`: defaults only: `layerThumbnailSize` 32 (was 20), `layerInfoTextStyle` Balanced (was None), `useLayerSelectionCheckbox` off (was on). Saved values are kept.
 - `krita/pics/layerbox/layerbox-icons.qrc`, new `krita/pics/layerbox/{dark,light}_panel-layer-*.svg`: our own icons.
