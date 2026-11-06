@@ -18,6 +18,7 @@
 #include <KisTag.h>
 
 class KisTagModel;
+class QMenu;
 
 #include <KoResource.h>
 
@@ -63,6 +64,9 @@ private:
     /// \brief updates icon file when loading and changing themes
     ///
     void loadIcon();
+
+    /// Krita Agent: the menu of tag actions, for a chooser that shows them elsewhere (KisTagChooserWidget::tagMenu()).
+    QMenu *menu() const;
 
 Q_SIGNALS:
     ///

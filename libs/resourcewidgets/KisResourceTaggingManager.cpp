@@ -49,6 +49,16 @@ public:
 
     QString resourceType;
 
+    bool barShown {false};
+    bool externalBar {false};
+
+    void applyVisibility()
+    {
+        const bool visible = barShown && !externalBar;
+        tagFilter->setVisible(visible);
+        tagChooser->setVisible(visible);
+    }
+
 };
 
 
@@ -84,12 +94,20 @@ KisResourceTaggingManager::~KisResourceTaggingManager()
 
 void KisResourceTaggingManager::showTaggingBar(bool show)
 {
-    show ? d->tagFilter->show() : d->tagFilter->hide();
-    show ? d->tagChooser->show() : d->tagChooser->hide();
+    d->barShown = show;
+    d->applyVisibility();
 
     KConfigGroup group =  KSharedConfig::openConfig()->group("SelectedTags");
     QString tag = group.readEntry<QString>(d->resourceType, "All");
     d->tagChooser->setCurrentItem(tag);
+}
+
+void KisResourceTaggingManager::setExternalTagBar(bool external)
+{
+    d->externalBar = external;
+    d->applyVisibility();
+    // Whatever was typed in the bar being hidden must not go on filtering unseen.
+    d->tagFilter->clear();
 }
 
 void KisResourceTaggingManager::tagChooserIndexChanged(const KisTagSP tag)
@@ -111,7 +129,7 @@ void KisResourceTaggingManager::contextMenuRequested(KoResourceSP resource, QPoi
 {
     // No visible tag chooser usually means no intended tag interaction,
     // context menu makes no sense then either
-    if (!resource || !d->tagChooser->isVisible())
+    if (!resource || (!d->externalBar && !d->tagChooser->isVisible()))
         return;
 
     KisResourceItemChooserContextMenu menu(resource, d->tagChooser->currentlySelectedTag(), d->tagChooser);

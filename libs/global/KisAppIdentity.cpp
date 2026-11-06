@@ -134,6 +134,14 @@ QString KisAppIdentity::crashLogLocation()
     return logLocation();
 }
 
+QString KisAppIdentity::cacheLocation()
+{
+    if (s_identity->folder.isEmpty()) {
+        return QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    }
+    return inFolder(QStandardPaths::GenericCacheLocation);
+}
+
 QString KisAppIdentity::autosaveLocation()
 {
     if (s_identity->folder.isEmpty()) {

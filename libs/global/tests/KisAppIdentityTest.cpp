@@ -55,6 +55,7 @@ void KisAppIdentityTest::testStockLocationsAreUpstreams()
     QCOMPARE(QCoreApplication::organizationName(), QString());
     QCOMPARE(KisAppIdentity::configLocation(), generic(QStandardPaths::GenericConfigLocation));
     QCOMPARE(KisAppIdentity::configFileName(QStringLiteral("kritarc")), QStringLiteral("kritarc"));
+    QCOMPARE(KisAppIdentity::cacheLocation(), generic(QStandardPaths::CacheLocation));
     QCOMPARE(KisAppIdentity::logLocation(), generic(QStandardPaths::GenericDataLocation));
     // Upstream writes kritacrash.log to the config folder, krita.log to the data folder
     QCOMPARE(KisAppIdentity::crashLogLocation(), generic(QStandardPaths::GenericConfigLocation));
@@ -69,7 +70,9 @@ void KisAppIdentityTest::testOwnLocationsAreUnderTheFolder()
     KisAppIdentity::setSettingsFolderForTesting(testFolder);
     // Before initialize() the paths are already right (computed, not cached)
     QCOMPARE(KisAppIdentity::configLocation(), generic(QStandardPaths::GenericConfigLocation) + "/" + testFolder);
+    QCOMPARE(KisAppIdentity::cacheLocation(), generic(QStandardPaths::GenericCacheLocation) + "/" + testFolder);
     KisAppIdentity::initialize();
+    QCOMPARE(KisAppIdentity::cacheLocation(), generic(QStandardPaths::GenericCacheLocation) + "/" + testFolder);
 
     QCOMPARE(QCoreApplication::organizationName(), testFolder);
     QCOMPARE(KConfig::mainConfigName(), testFolder + QStringLiteral("/kritarc"));

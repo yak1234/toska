@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Yakub Rabiutheen
+  SPDX-License-Identifier: CC-BY-SA-4.0
+  Show strokes: one painted stroke. Drawn for this fork, for the brush chooser.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#2a3442" stroke-width="1.6" stroke-linecap="round"><path d="M2 10c2.5-5 4 3 6.5 0S12 5 14 7"/></svg>

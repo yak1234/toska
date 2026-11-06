@@ -63,6 +63,10 @@ KRITAGLOBAL_EXPORT QString crashLogLocation();
 /// its own identity never recovers or deletes stock Krita's autosaves, nor stock Krita its.
 KRITAGLOBAL_EXPORT QString autosaveLocation();
 
+/// Where caches that can be rebuilt go (the brush stroke previews): the settings folder under GenericCacheLocation; for stock
+/// Krita, CacheLocation, as upstream's caches. Nothing is created until it is needed.
+KRITAGLOBAL_EXPORT QString cacheLocation();
+
 /// For tests only: run as if configured with this settings folder (empty: stock Krita). Forgets the paths cached by
 /// initialize(); call initialize() again to cache and create them.
 KRITAGLOBAL_EXPORT void setSettingsFolderForTesting(const QString &folder);

@@ -22,6 +22,8 @@ public:
     ~KisTagFilterWidget() override;
 
     bool isFilterByTagChecked();
+    /// Krita Agent: the checkbox's setting, for a chooser with its own bar.
+    void setFilterByTagChecked(bool checked);
 
 public Q_SLOTS:
     void clear();

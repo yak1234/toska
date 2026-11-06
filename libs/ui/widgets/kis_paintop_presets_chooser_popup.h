@@ -1,6 +1,7 @@
 /* This file is part of the KDE project
  * SPDX-FileCopyrightText: 2010 Sven Langkamp <sven.langkamp@gmail.com>
  * SPDX-FileCopyrightText: 2011 Srikanth Tiyyagura <srikanth.tulasiram@gmail.com>
+ * SPDX-FileCopyrightText: 2026 Yakub Rabiutheen <yakub.rabiutheen@gmail.com>
  *
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
@@ -35,10 +36,21 @@ Q_SIGNALS:
 private Q_SLOTS:
     void slotThumbnailMode();
     void slotDetailMode();
+    void slotStrokeMode();
     void slotUpdateMenu();
+    void slotUpdateMoreMenu();
+    void slotSearchTextChanged(const QString &text);
     void paintEvent(QPaintEvent *) override;
-   
+
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+    void changeEvent(QEvent *event) override;
+
 private:
+    void setViewMode(int mode);
+    void setBarVisible(bool visible);
+    void applyStyle();
+    void loadIcons();
 
     struct Private;
     Private * const m_d;

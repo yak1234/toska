@@ -63,6 +63,12 @@ public:
     ///
     void showTaggingBar(bool show);
     ///
+    /// \brief Krita Agent: the chooser's owner shows its own tag bar, which works through these two hidden widgets.
+    /// They keep doing everything but being seen, and the resource context menu stays available.
+    /// Off by default: every other chooser is as upstream.
+    ///
+    void setExternalTagBar(bool external);
+    ///
     /// \brief contextMenuRequested method to get the context menu
     /// \param currentResource current selected resource
     /// \param pos position of the mouse cursor where the context menu should be created

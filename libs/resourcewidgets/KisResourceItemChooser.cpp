@@ -96,6 +96,7 @@ public:
     bool isResponsive = false;
     bool showViewModeBtn = true;
     bool showStoragePopupBtn = true;
+    bool externalTagBar = false;
 
     // Horizontal Layout Widgets
     QSplitter* horzSplitter {0};
@@ -326,6 +327,35 @@ void KisResourceItemChooser::setListViewMode(ListViewMode newViewMode)
 KisTagFilterResourceProxyModel *KisResourceItemChooser::tagFilterModel() const
 {
     return d->tagFilterProxyModel;
+}
+
+void KisResourceItemChooser::setExternalTagBar(bool external)
+{
+    d->externalTagBar = external;
+    d->tagManager->setExternalTagBar(external);
+    const bool vertical = d->layout == Layout::NotSet || d->layout == Layout::Vertical;
+    d->viewModeButton->setVisible(!external && vertical && d->showViewModeBtn);
+    d->storagePopupButton->setVisible(!external && d->showStoragePopupBtn);
+}
+
+KisTagChooserWidget *KisResourceItemChooser::tagChooserWidget() const
+{
+    return d->tagManager->tagChooserWidget();
+}
+
+bool KisResourceItemChooser::filterInTag() const
+{
+    return d->tagManager->tagFilterWidget()->isFilterByTagChecked();
+}
+
+void KisResourceItemChooser::setFilterInTag(bool filter)
+{
+    d->tagManager->tagFilterWidget()->setFilterByTagChecked(filter);
+}
+
+KisPopupButton *KisResourceItemChooser::storageButton() const
+{
+    return d->storagePopupButton;
 }
 
 void KisResourceItemChooser::slotButtonClicked(int button)
@@ -735,10 +765,9 @@ void KisResourceItemChooser::applyVerticalLayout()
     thisLayout->addWidget(d->tagManager->tagFilterWidget(), 2, 0, 1, 3);
     thisLayout->addWidget(d->importExportBtns, 3, 0, 1, 3);
 
-    d->viewModeButton->setVisible(d->showViewModeBtn);
-    d->storagePopupButton->setVisible(d->showStoragePopupBtn);
+    d->viewModeButton->setVisible(d->showViewModeBtn && !d->externalTagBar);
+    d->storagePopupButton->setVisible(d->showStoragePopupBtn && !d->externalTagBar);
 
-    d->viewModeButton->setVisible(d->showViewModeBtn);
     d->layout = Layout::Vertical;
 }
 

@@ -93,6 +93,11 @@ bool KisTagFilterWidget::isFilterByTagChecked()
 }
 
 
+void KisTagFilterWidget::setFilterByTagChecked(bool checked)
+{
+    d->filterByTagCheckbox->setChecked(checked);
+}
+
 void KisTagFilterWidget::onTextChanged(const QString& lineEditText)
 {
     Q_EMIT filterTextChanged(lineEditText);

@@ -1,5 +1,6 @@
 /*
   *  SPDX-FileCopyrightText: 2017 Scott Petrovic <scottpetrovic@gmail.com>
+  *  SPDX-FileCopyrightText: 2026 Tenzin Rangdol <tenzindraws@gmail.com>
   *
   *  SPDX-License-Identifier: GPL-2.0-or-later
   */
@@ -56,6 +57,19 @@ public:
      */
     void setCurrentPreset(KisPaintOpPresetSP preset);
     void requestUpdateStroke();
+
+    /// Paint now, unless a stroke is still running (then as requestUpdateStroke()).
+    void requestUpdateStrokeImmediate();
+
+    /**
+     * For the stroke preview cache (ported from Krita-Revamp): the view is never shown, and each stroke ends in
+     * sigPreviewImageReady(), with its coverage mask, instead of the scene. One worker thread. Call after setup().
+     */
+    void setCachePreviewMode(bool enabled);
+
+Q_SIGNALS:
+    /// In cache mode: the stroke of the preset with this resource id is done. \p mask is Format_Grayscale8.
+    void sigPreviewImageReady(int presetId, const QImage &mask);
 
 private Q_SLOTS:
     void updateStroke();
@@ -116,6 +130,11 @@ private:
     bool m_previewGenerationInProgress {false};
     KisSignalCompressor m_updateCompressor;
 
+    bool m_cachePreviewMode {false};
+    int m_previewPresetId {-1};
+    /// In cache mode, the stripes as they were before the stroke (null without stripes).
+    QImage m_cacheReference;
+
     /// the range of brush sizes that will control zooming in/out
     const float m_minBrushVal {10.0};
     const float m_maxBrushVal {100.0};
@@ -134,6 +153,11 @@ private:
      * striped backgrounds for smudging brushes, and text if there is no preview
      */
     void paintBackground();
+
+    /// The same for cache mode: white paint, on nothing or on the stripes.
+    void paintCacheBackground();
+
+    void paintStripedBackground();
 
     /**
      * @brief creates and performs the actual stroke that goes on top of the background

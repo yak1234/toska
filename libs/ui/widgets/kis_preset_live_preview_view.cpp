@@ -1,6 +1,7 @@
 
 /*
  *  SPDX-FileCopyrightText: 2017 Scott Petrovic <scottpetrovic@gmail.com>
+ *  SPDX-FileCopyrightText: 2026 Tenzin Rangdol <tenzindraws@gmail.com>
  *
  *  SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -17,7 +18,11 @@
 #include <kis_brush.h>
 #include <KisGlobalResourcesInterface.h>
 #include "kis_transaction.h"
+#include <kis_image_config.h>
 #include <KoCanvasResourceProvider.h>
+#include <KoCompositeOpRegistry.h>
+
+#include "KisBrushStrokePreviewCache.h"
 
 KisPresetLivePreviewView::KisPresetLivePreviewView(QWidget *parent)
     : QGraphicsView(parent),
@@ -73,6 +78,23 @@ void KisPresetLivePreviewView::requestUpdateStroke()
     m_updateCompressor.start();
 }
 
+void KisPresetLivePreviewView::requestUpdateStrokeImmediate()
+{
+    if (m_previewGenerationInProgress) {
+        m_updateCompressor.start();
+        return;
+    }
+    updateStroke();
+}
+
+void KisPresetLivePreviewView::setCachePreviewMode(bool enabled)
+{
+    m_cachePreviewMode = enabled;
+    if (m_image) {
+        m_image->setWorkingThreadsLimit(enabled ? 1 : KisImageConfig(true).maxNumberOfThreads());
+    }
+}
+
 void KisPresetLivePreviewView::updateStroke()
 {
     // do not paint a stroke if we are any of these engines (they have some issue currently)
@@ -97,6 +119,15 @@ void KisPresetLivePreviewView::slotPreviewGenerationCompleted()
 {
     m_previewGenerationInProgress = false;
 
+    if (m_cachePreviewMode) {
+        const QImage painted = m_layer->paintDevice()->convertToQImage(0, m_image->bounds());
+        const QImage mask = m_cacheReference.isNull()
+            ? KisBrushStrokePreviewCache::maskFromStroke(painted)
+            : KisBrushStrokePreviewCache::maskFromDifference(m_cacheReference, painted);
+        Q_EMIT sigPreviewImageReady(m_previewPresetId, mask);
+        return;
+    }
+
     QImage m_temp_image;
     m_temp_image = m_layer->paintDevice()->convertToQImage(0, m_image->bounds());
 
@@ -108,8 +139,51 @@ void KisPresetLivePreviewView::slotPreviewGenerationCompleted()
     }
 }
 
+void KisPresetLivePreviewView::paintStripedBackground()
+{
+    int grayStrips = 20;
+    for (int i=0; i < grayStrips; i++ ) {
+
+        float sectionPercent = 1.0 / (float)grayStrips;
+        bool isAlternating = i % 2;
+        KoColor fillColor(m_layer->paintDevice()->colorSpace());
+
+        if (isAlternating) {
+            fillColor.fromQColor(QColor(80,80,80));
+        } else {
+            fillColor.fromQColor(QColor(140,140,140));
+        }
+
+
+        const QRect fillRect(m_layer->image()->width()*sectionPercent*i,
+                             0,
+                             m_layer->image()->width()*(sectionPercent*i +sectionPercent),
+                             m_layer->image()->height());
+
+        KisTransaction t(m_layer->paintDevice());
+        m_layer->paintDevice()->fill(fillRect, fillColor);
+        t.end();
+    }
+}
+
+void KisPresetLivePreviewView::paintCacheBackground()
+{
+    m_layer->paintDevice()->clear();
+    m_cacheReference = QImage();
+    if (KisBrushStrokePreviewCache::needsStripedBackground(m_currentPreset->paintOp().id())) {
+        paintStripedBackground();
+        m_cacheReference = m_layer->paintDevice()->convertToQImage(0, m_image->bounds());
+    }
+    m_paintColor = KoColor(Qt::white, m_colorSpace);
+}
+
 void KisPresetLivePreviewView::paintBackground()
 {
+    if (m_cachePreviewMode) {
+        paintCacheBackground();
+        return;
+    }
+
     // clean up "no preview" text object if it exists. we will add it later if we need it
     if (m_noPreviewText) {
         this->scene()->removeItem(m_noPreviewText);
@@ -125,29 +199,7 @@ void KisPresetLivePreviewView::paintBackground()
         // paint the whole background with alternating stripes
         // filter engine may or may not show things depending on the filter...but it is better than nothing
 
-        int grayStrips = 20;
-        for (int i=0; i < grayStrips; i++ ) {
-
-            float sectionPercent = 1.0 / (float)grayStrips;
-            bool isAlternating = i % 2;
-            KoColor fillColor(m_layer->paintDevice()->colorSpace());
-
-            if (isAlternating) {
-                fillColor.fromQColor(QColor(80,80,80));
-            } else {
-                fillColor.fromQColor(QColor(140,140,140));
-            }
-
-
-            const QRect fillRect(m_layer->image()->width()*sectionPercent*i,
-                                 0,
-                                 m_layer->image()->width()*(sectionPercent*i +sectionPercent),
-                                 m_layer->image()->height());
-
-            KisTransaction t(m_layer->paintDevice());
-            m_layer->paintDevice()->fill(fillRect, fillColor);
-            t.end();
-        }
+        paintStripedBackground();
 
         m_paintColor = KoColor(Qt::white, m_colorSpace);
 
@@ -230,6 +282,13 @@ void KisPresetLivePreviewView::setupAndPaintStroke()
     KisPaintOpPresetSP proxy_preset = m_currentPreset->clone().dynamicCast<KisPaintOpPreset>();
     KisPaintOpSettingsSP settings = proxy_preset->settings();
     settings->setPaintOpSize(previewSize);
+
+    if (m_cachePreviewMode) {
+        // The mask is all that is kept, so every preset paints plain: an eraser or a blending mode would show nothing on
+        // an empty surface.
+        settings->setEraserMode(false);
+        settings->setPaintOpCompositeOp(COMPOSITE_OVER);
+    }
 
     int maxTextureSize = 200;
     int textureOffsetX = settings->getInt("Texture/Pattern/MaximumOffsetX")*2;
@@ -371,6 +430,7 @@ void KisPresetLivePreviewView::setupAndPaintStroke()
     m_image->endStroke(strokeId);
 
     m_previewGenerationInProgress = true;
+    m_previewPresetId = m_currentPreset->resourceId();
 
     NotificationStroke *notificationStroke = new NotificationStroke();
     connect(notificationStroke, SIGNAL(timeout()), SLOT(slotPreviewGenerationCompleted()));
@@ -389,7 +449,7 @@ void KisPresetLivePreviewView::setupAndPaintStroke()
 void KisPresetLivePreviewView::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
-    if (event->type() == QEvent::PaletteChange) {
+    if (event->type() == QEvent::PaletteChange && !m_cachePreviewMode) {
         if (m_currentPreset) {
             requestUpdateStroke();
         }

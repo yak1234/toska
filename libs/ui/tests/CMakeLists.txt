@@ -259,3 +259,18 @@ kis_add_test(TestPresetSessionStorage.cpp
     TEST_NAME TestPresetSessionStorage
     LINK_LIBRARIES kritaui kritatestsdk
     )
+
+# Krita Agent: stroke previews ported from Krita-Revamp (panel-layers-brushes task 4): reused from disk, invalidated by a
+# preset change, paused while anything is busy, nothing written outside the cache folder; run in a temporary home.
+kis_add_test(TestBrushStrokePreviewCache.cpp
+    TEST_NAME TestBrushStrokePreviewCache
+    LINK_LIBRARIES kritaui kritatestsdk
+    )
+
+# Krita Agent: the brush chooser's bar (panel-layers-brushes task 5): chips, search, view switch, the ... menu, sizes, and
+# pattern and gradient choosers unchanged; run in a temporary home.
+kis_add_test(TestPresetChooserPopup.cpp
+    TEST_NAME TestPresetChooserPopup
+    LINK_LIBRARIES kritaui kritatestsdk Qt${QT_MAJOR_VERSION}::Svg
+    )
+target_compile_definitions(TestPresetChooserPopup PRIVATE TOSKA_PICS_DIR="${CMAKE_SOURCE_DIR}/krita/pics")

@@ -893,7 +893,7 @@ Not ported on purpose: Revamp's `layer_kit` plugin; its selection sync (selectin
 ## Ported from Krita-Revamp (task 3.1, brush batch: preset persistence)
 
 Source: Krita-Revamp (branch revamp-5.2.14, GPL-3.0; author "10zindraws" / "Tenzin Rangdol"). Commits b908ad5 and the sliderChanged part
-of 681ef9f; their SPDX lines stay in `KisPaintOpPresetSessionStorage.*`. The smoothing slider (6b) and stroke previews (3) are parked.
+of 681ef9f; their SPDX lines stay in `KisPaintOpPresetSessionStorage.*`. The smoothing slider (6b) is parked; stroke previews (3) came later (panel-layers-brushes).
 
 - A brush tweak (any setting) is stored as settings XML in `presetTweaksrc` (the build's own settings folder, through
   `KisAppIdentity::configFileName`) under `Preset_<resourceId>_<md5>`; loaded when the preset is selected (preset dirty); cleared by
@@ -928,6 +928,62 @@ Upstream files edited: `libs/resources/KisResourceLocator.h/.cpp` (public `loadS
 
 Live look: tweak a brush size/spacing, quit, reopen: the tweak and the dirty mark are back; Reload clears it; Save clears it. Run an
 Agent-mode chat after tweaking: strokes use the saved brush and `presetTweaksrc` is unchanged.
+
+## Ported from Krita-Revamp (panel-layers-brushes 4 and 5: stroke previews, Brushes chooser)
+
+Source: Krita-Revamp (branch revamp-5.2.14, GPL-3.0; author "10zindraws" / "Tenzin Rangdol"). Final form of 26851a8, a9698ce, 2971f6c, e3cd494,
+ec4b087 and the preview parts of 681ef9f; their SPDX lines stay in the files. The first form was not ported. Not taken: 1f0e361 (`KisResourceModel` /
+`KisTagResourceModel` name refresh: on master the names come from the model's roles, and the chooser repaints on its signals, so no edit was needed; the
+live check should rename a preset under a tag), c202fef (`kis_resources_snapshot.cpp`: the generator has its own resources, so the artist's eraser
+state never reaches it), f142e6d (`KisColorfulBrush`: only the mask is kept), the colorsmudge edit in 26851a8, and the `kis_paintop_box.cc` wiring.
+
+Changed from Revamp's form:
+- **Idle only.** One hidden `KisPresetLivePreviewView`, whose throw-away image has one worker thread, one preview at a time (Revamp: up to three at
+  start-up, whatever else ran). Before each preview `KisBrushStrokePreviewGenerator::systemIsBusy()` must have been false for 3 s: an agent works
+  (`KisAgentHooks::agentWorkOpen()`, the state behind `Document.agentActive()`) or any open document's image is not idle (strokes, updates, a lock; this
+  also covers the plugin's flows outside a move and the artist's own strokes). It asks every 500 ms while busy, and never while nothing is queued. What
+  can overlap a pass that starts during a preview is the rest of that preview, on one thread (median 15 ms, slowest engine 91 ms, 137 default presets
+  in about 3.3 s).
+- **On demand.** Nothing is painted until a chooser in Strokes view is shown.
+- **Its own resources.** A private `KoCanvasResourceProvider`, so no window is needed and the artist's colour, pattern and gradient do not show.
+- **Keys, not ids.** A file is `<id>_<md5>.png`, or `<id>_<md5>_<settings hash>.png` with tweaks in memory: a changed preset simply has no preview yet (the
+  old one stands in), and Reload is back to the saved state at once. Files sit in `KisAppIdentity::cacheLocation()/brush_stroke_previews/v1` (a new function:
+  the settings folder under GenericCacheLocation). Raise `v1` when the picture changes.
+- **No "Loading..." or "No Preview" text.** Until painted, and when there is nothing to show, the cell shows the preset's thumbnail. Of the 137 default presets 9 do:
+  Basic-1, Shapes Fill, Clone Tool (engines upstream's preview leaves out), and WaterC Basic Lines-Dry, Basic Lines-Wet, Spread, Spread-Pattern, Spread WideArea and Blender
+  Pixelize (they leave almost nothing on an empty surface: fewer than 120 clearly painted pixels after the lift below; a brush that spreads what is on the canvas has nothing to spread here).
+
+Theme decision: **one neutral set, tinted when drawn**, not one set per theme. Decided from a contact sheet of all 137 default presets on #141b25 and #efe8dc,
+which `TOSKA_PREVIEW_SHEET=<folder> agent/run-tests.sh TestBrushStrokePreviewCache testContactSheet` writes again. The strokes read on both, and two sets would
+double the painting for no difference. The sheet found two things changed since: low-flow presets were close to invisible on either theme, so a faint mask is
+lifted (at most three times; a preview says what a brush does, not how strong it is), and Revamp's grey stripes for smudge, deform and filter engines
+looked out of place, so their mask is what the stroke changed on the stripes. Distort and Filter presets therefore show as a row of short ticks.
+
+The chooser (`KisPaintOpPresetsChooserPopup`, so the docker, the toolbar popup and the panel tab alike): search and the view switch; tag chips and the … menu (tags
+that do not fit, Manage Tags, Filter in Tag, Storages..., Icon Size); a two-column stroke grid, selected brush outlined in the theme's Highlight, lightened or
+darkened until it has 3.2:1 on the cell. Krita's tag bar stays alive and hidden as the owner of the tag logic, so choosing, remembering and restoring the tag, the
+right-click tag menu and the tag actions are upstream's code. Below 200 px height (a short dock) the popup gives the bar up and upstream's strip layout returns.
+The bar is opt-in (`KisResourceItemChooser::setExternalTagBar`, default off): patterns and gradients do not call it (`TestPresetChooserPopup`). The preset
+editor's chooser keeps the stock bar and gains Strokes in its menu. Thumbnails and details are restyled in `KisPresetDelegate`, so also in the editor and in libkis's
+`PresetChooser`. Strokes is the new default of `presetChooserViewMode`; a stored choice is kept, but an artist who never changed it gets Strokes. Icons: `krita/pics/misc-{dark,light}/{dark,light}_brushes-*.svg`
+(as in Krita, `dark_` are the dark icons, for light themes).
+
+Measured, `AgentStrokeJobsBenchmark strokePreviews` (256 strokes on 6000x4500, 5 runs, machine under load from other builds): no previews waiting 276 ms; 137 waiting, gated as shipped 277 ms, 0 painted;
+gate forced open 276 ms, 98 painted meanwhile; none waiting again 279 ms. That pass is short and uses one preset: a longer pass is the live check.
+The benchmark is an app bundle here: `agent/run-tests.sh AgentStrokeJobsBenchmark.app/Contents/MacOS/AgentStrokeJobsBenchmark strokePreviews`.
+
+Upstream files edited:
+- `libs/ui/widgets/kis_preset_live_preview_view.cpp/.h`: cache mode, `sigPreviewImageReady`, `requestUpdateStrokeImmediate`, the stripes in a function of their own.
+- `libs/ui/widgets/kis_preset_chooser.cpp/.h`: STROKE mode, the delegate, the grid. `libs/ui/widgets/kis_paintop_presets_chooser_popup.cpp/.h`: the bar.
+  `libs/ui/widgets/kis_paintop_presets_editor.cpp`: Strokes in its menu.
+- `libs/ui/kis_config.cc` (default view mode), `libs/ui/CMakeLists.txt`, `libs/ui/tests/CMakeLists.txt`.
+- `libs/resourcewidgets/KisResourceItemChooser.cpp/.h`, `KisResourceTaggingManager.cpp/.h`, `KisTagChooserWidget.cpp/.h`, `KisTagFilterWidget.cpp/.h`,
+  `KisTagToolButton.cpp/.h`: the opt-in bar and accessors; nothing changes for a chooser that does not ask.
+- `krita/pics/misc-dark/misc-dark-icons.qrc`, `krita/pics/misc-light/misc-light-icons.qrc`.
+Our own, edited: `libs/global/KisAppIdentity.cpp/.h` and its test, `libs/libkis/tests/AgentStrokeJobsBenchmark.cpp`, `agent/ci-tests.txt`.
+New: `libs/ui/widgets/KisBrushStrokePreviewCache.*`, `KisBrushStrokePreviewGenerator.*` (Revamp's SPDX and ours), `KisPresetTagChips.*`, `libs/ui/tests/TestBrushStrokePreviewCache.*`, `TestPresetChooserPopup.*`.
+
+Risks for the live check: the menus and the Storages popup inside the toolbar's popup frame; the search field's focus there; offscreen pictures use one font and no retina scale; Strokes in the narrow preset editor; a preset engine that crashes on the hidden surface would do so unasked, where the live preview only ran for the selected brush.
 
 ## New-install defaults (krita-fork 3.3)
 

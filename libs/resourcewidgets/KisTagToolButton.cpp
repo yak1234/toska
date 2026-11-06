@@ -143,6 +143,11 @@ void KisTagToolButton::loadIcon()
     d->tagToolButton->setIcon(koIcon("bookmarks"));
 }
 
+QMenu *KisTagToolButton::menu() const
+{
+    return d->tagToolButton->menu();
+}
+
 void KisTagToolButton::onTagUndeleteClicked()
 {
     Q_EMIT undeletionOfTagRequested(d->undeleteCandidate);

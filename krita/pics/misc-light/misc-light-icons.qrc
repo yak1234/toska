@@ -52,6 +52,11 @@
         <file>light_pathsegment-curve.svg</file>
         <file>light_pathsegment-line.svg</file>
         <file>light_curve-preset-u.svg</file>
+        <file>light_brushes-details.svg</file>
+        <file>light_brushes-more.svg</file>
+        <file>light_brushes-search.svg</file>
+        <file>light_brushes-strokes.svg</file>
+        <file>light_brushes-thumbnails.svg</file>
         <file>light_curve-preset-s.svg</file>
         <file>light_curve-preset-s-reverse.svg</file>
         <file>light_curve-preset-linear.svg</file>

@@ -31,6 +31,7 @@ class QToolButton;
 class QSortFilterProxyModel;
 class KisResourceItemListView;
 class KisTagFilterResourceProxyModel;
+class KisTagChooserWidget;
 
 #include "kritaresourcewidgets_export.h"
 
@@ -71,6 +72,15 @@ public:
     void showTaggingBar(bool show);
 
     KisTagFilterResourceProxyModel *tagFilterModel() const;
+
+    /// Krita Agent: the caller shows its own tag bar (the brush chooser's chips and search) instead of the tag combobox, the
+    /// filter box and the view and storage buttons, which stay as the owners of the logic behind it. Default false, as upstream.
+    void setExternalTagBar(bool external);
+    KisTagChooserWidget *tagChooserWidget() const;
+    /// The "Filter in Tag" setting of the filter box, and the storage button, for such a bar.
+    bool filterInTag() const;
+    void setFilterInTag(bool filter);
+    KisPopupButton *storageButton() const;
 
     /// Show the button for changing the view mode.
     /// Default is false.

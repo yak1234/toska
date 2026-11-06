@@ -8,6 +8,7 @@
 #ifndef KISTAGCHOOSERWIDGET_H
 #define KISTAGCHOOSERWIDGET_H
 
+#include <QMenu>
 #include <QWidget>
 #include <QMessageBox>
 #include "kritaresourcewidgets_export.h"
@@ -53,6 +54,12 @@ public:
 
     /// \brief update icon files on loading and theme change
     void updateIcons();
+
+    /// Krita Agent: the tags shown in the combobox, for a chooser with its own view of them (the brush chooser's chips).
+    KisTagModel *model() const;
+
+    /// Krita Agent: the menu of the Tag button (new, rename, delete, undelete), to show from another place.
+    QMenu *tagMenu() const;
 
 Q_SIGNALS:
 

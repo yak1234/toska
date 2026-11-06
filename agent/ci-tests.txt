@@ -20,6 +20,8 @@ TestDocumentAgentCraft
 TestFilterMaskBake
 TestStrokeJobs
 TestPresetSessionStorage
+TestBrushStrokePreviewCache
+TestPresetChooserPopup
 TestNodeAgentTools
 KisFeatureListTest
 KisFeatureImageCommandTest

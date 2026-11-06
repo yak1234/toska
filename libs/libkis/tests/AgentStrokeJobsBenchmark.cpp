@@ -14,6 +14,7 @@
 #include <testui.h>
 #include <KisTemporaryHomeUiTest.h>
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QScopedPointer>
@@ -28,6 +29,7 @@
 #include <StrokeJob.h>
 
 #include <KisDocument.h>
+#include <widgets/KisBrushStrokePreviewCache.h>
 #include <KisGlobalResourcesInterface.h>
 #include <KisPart.h>
 #include <KisResourceTypes.h>
@@ -41,6 +43,8 @@ class AgentStrokeJobsBenchmark : public QObject
     Q_OBJECT
 private Q_SLOTS:
     void benchmark();
+    /// panel-layers-brushes 4.6: the same paint pass with stroke previews waiting (run by name, a few minutes).
+    void strokePreviews();
 };
 
 namespace {
@@ -173,6 +177,57 @@ void AgentStrokeJobsBenchmark::benchmark()
         report(QString("%1, 1400 strokes in random colours as 1 job: median %2 ms (min %3), call %4 ms, longest event-loop gap %5 ms")
                    .arg(shown).arg(totals[1], 0, 'f', 0).arg(totals[0], 0, 'f', 0).arg(last.callMs, 0, 'f', 1).arg(last.longestGapMs));
     }
+    doc.reset();
+    KisPart::instance()->removeDocument(kisdoc.data(), false);
+}
+
+void AgentStrokeJobsBenchmark::strokePreviews()
+{
+    QScopedPointer<KisDocument> kisdoc(KisPart::instance()->createDocument());
+    KisImageSP image = new KisImage(0, 6000, 4500, KoColorSpaceRegistry::instance()->rgb8(), "bench");
+    image->addNode(new KisPaintLayer(image, "base", OPACITY_OPAQUE_U8));
+    kisdoc->setCurrentImage(image);
+    KisPart::instance()->addDocument(kisdoc.data(), false);
+    QScopedPointer<Document> doc(new Document(kisdoc.data(), false));
+    image->waitForDone();
+    const QVariantList strokes = probeStrokes(256, 6000, 4500, 40);
+    const QString shown("b) Basic-5 Size Opacity");
+    const QString preset = presetName(shown);
+    QVERIFY(!preset.isEmpty());
+
+    const auto measure = [&] (const QString &what, KisBrushStrokePreviewCache *cache) {
+        QVector<double> totals;
+        const int before = cache ? cache->generatedCount() : 0;
+        for (int i = 0; i < 5; i++) totals << paint(doc.data(), image, strokes, preset, 1).totalMs;
+        std::sort(totals.begin(), totals.end());
+        report(QString("%1: median %2 ms (min %3, max %4), previews painted meanwhile %5, still waiting %6")
+                   .arg(what).arg(totals[2], 0, 'f', 0).arg(totals[0], 0, 'f', 0).arg(totals[4], 0, 'f', 0)
+                   .arg(cache ? cache->generatedCount() - before : 0).arg(cache ? cache->pendingCount() : 0));
+    };
+
+    measure("no previews waiting", nullptr);
+
+    const QString folder = QDir::homePath() + "/benchmark-previews";
+    {
+        // What ships: the generator's own probe holds it back while the pass runs.
+        KisBrushStrokePreviewCache gated(folder + "/gated");
+        gated.setTimingForTesting(0, 0);
+        gated.requestAll();
+        measure("previews waiting, generator gated (as shipped)", &gated);
+        gated.shutdown();
+    }
+    {
+        // The upper bound of what the gate prevents: the same generator with nothing holding it back.
+        KisBrushStrokePreviewCache free(folder + "/free");
+        free.setBusyProbeForTesting([] () { return false; });
+        free.setTimingForTesting(0, 0);
+        free.requestAll();
+        measure("previews generating, gate forced open", &free);
+        free.shutdown();
+    }
+
+    measure("no previews waiting, again", nullptr);
+    QDir(folder).removeRecursively();
     doc.reset();
     KisPart::instance()->removeDocument(kisdoc.data(), false);
 }

@@ -52,23 +52,32 @@ Live on 2026-11-05, in the installed Toska, on a copy of istanbul.kra, driving t
 
 ## 4. Stroke previews
 
-- [ ] 4.1 Port the final form from `revamp-5.2.14` per `krita-fork/revamp-survey.md`, feature 3 (commits there; redo the
+- [x] 4.1 Port the final form from `revamp-5.2.14` per `krita-fork/revamp-survey.md`, feature 3 (commits there; redo the
       `KisResourceModel` and `KisTagResourceModel` parts by hand). Keep SPDX lines; record it in `AGENT-FORK.md`.
-- [ ] 4.2 Generate only when idle; pause while `Document.agentActive()`.
-- [ ] 4.3 Cache path through `KisAppIdentity`; `agent/check-identity.sh` passes.
-- [ ] 4.4 Make previews read on both Toska themes (paint in a neutral colour and tint, or keep one set per theme). Decide
+- [x] 4.2 Generate only when idle; pause while `Document.agentActive()`.
+- [x] 4.3 Cache path through `KisAppIdentity`; `agent/check-identity.sh` passes.
+- [x] 4.4 Make previews read on both Toska themes (paint in a neutral colour and tint, or keep one set per theme). Decide
       from a real picture.
-- [ ] 4.5 New `TestBrushStrokePreviewCache` in `libs/ui/tests`, listed in `agent/ci-tests.txt`: reuse, invalidation on a
+- [x] 4.5 New `TestBrushStrokePreviewCache` in `libs/ui/tests`, listed in `agent/ci-tests.txt`: reuse, invalidation on a
       preset change, nothing written outside the cache folder. It cleans up after itself.
-- [ ] 4.6 `AgentStrokeJobsBenchmark`, idle against generating. Record both numbers here.
-- [ ] 4.7 Tick the stroke previews part of `krita-fork` task 3.1.
+- [x] 4.6 `AgentStrokeJobsBenchmark`, idle against generating. Record both numbers here.
+- [x] 4.7 Tick the stroke previews part of `krita-fork` task 3.1.
+
+Results, offscreen in tests on 6 November (AGENT-FORK.md has the details). 4.1: not ported on purpose: 1f0e361's model edits (not needed on master; a rename under a
+tag is to be checked live), c202fef, f142e6d. 4.4: one neutral set, tinted when drawn, decided from a contact sheet of all 137 default presets on both themes. 4.6: 256 strokes on
+6000x4500, medians: no previews waiting 276 ms; waiting and gated 277 ms (0 painted); gate forced open 276 ms (98 painted meanwhile); none waiting again 279 ms.
+A longer pass, and the look in the app, are for 6.2. The tests were written with the code, not seen failing first, except: the grid test failed on real wrapping bugs, and
+removing the agent gate on purpose made `testPausedWhileAgentWorks` fail.
 
 ## 5. Brushes restyle (fork C++)
 
-- [ ] 5.1 `KisPaintOpPresetsChooserPopup`: search, tag chips, view switch; tag management and icon size in ….
-- [ ] 5.2 Chips only in the brush chooser. Pattern and gradient choosers are unchanged (test it).
-- [ ] 5.3 Two-column stroke grid, selected brush in ember; thumbnails and details restyled to match.
+- [x] 5.1 `KisPaintOpPresetsChooserPopup`: search, tag chips, view switch; tag management and icon size in ….
+- [x] 5.2 Chips only in the brush chooser. Pattern and gradient choosers are unchanged (test it).
+- [x] 5.3 Two-column stroke grid, selected brush in ember; thumbnails and details restyled to match.
 - [ ] 5.4 The toolbar's brush popup still works and fits. Brush tweaks still survive a restart, with the agent gate unchanged.
+
+5.4 stays open for the live check. Done so far: `TestPresetChooserPopup` shows the same widget at the toolbar popup's 450 x 550 and at the panel's sizes (all controls inside, two
+columns), selecting signals as before, and `TestPresetSessionStorage` passes with no change to the storage or the agent gate. Not done: the real popup frame in the app.
 
 ## 6. Check it
 

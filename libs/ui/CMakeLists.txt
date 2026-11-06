@@ -277,6 +277,9 @@ set(kritaui_LIB_SRCS
     widgets/kis_paintop_preset_icon_library.cpp
     widgets/kis_pattern_chooser.cc
 
+    widgets/KisBrushStrokePreviewCache.cpp
+    widgets/KisBrushStrokePreviewGenerator.cpp
+    widgets/KisPresetTagChips.cpp
     widgets/kis_preset_chooser.cpp
     widgets/kis_progress_widget.cpp
     widgets/kis_selection_options.cc

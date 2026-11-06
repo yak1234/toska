@@ -1791,7 +1791,8 @@ void KisConfig::setVastScrolling(const qreal factor) const
 
 int KisConfig::presetChooserViewMode(bool defaultValue) const
 {
-    return (defaultValue ? 0 : m_cfg.readEntry("presetChooserViewMode", 0));
+    // Krita Agent: Strokes (KisPresetChooser::STROKE) by default; a stored choice is kept.
+    return (defaultValue ? 2 : m_cfg.readEntry("presetChooserViewMode", 2));
 }
 
 void KisConfig::setPresetChooserViewMode(const int mode) const

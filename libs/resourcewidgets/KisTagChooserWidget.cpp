@@ -352,6 +352,16 @@ void KisTagChooserWidget::updateIcons()
     d->tagToolButton->loadIcon();
 }
 
+KisTagModel *KisTagChooserWidget::model() const
+{
+    return d->model;
+}
+
+QMenu *KisTagChooserWidget::tagMenu() const
+{
+    return d->tagToolButton->menu();
+}
+
 void KisTagChooserWidget::tagToolContextMenuAboutToShow()
 {
     /* only enable the save button if the selected tag set is editable */
