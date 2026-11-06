@@ -17,6 +17,9 @@ Live on 2026-11-05, in the installed Toska, on a copy of istanbul.kra, driving t
   the dock stayed hidden and the tab layout came back.
 - Not confirmed: the eye button did not toggle under synthetic clicks (cause unknown, maybe only the clicks); right-click menu
   (the tool's foreground click closes menus); Window > Dockers sending a widget back; workspace switch; two windows.
+- Brushes, 2026-11-06, installed build 27dfb50c, on a copy: real stroke previews show in the tab; the Digital chip filters; clicking
+  a card picks the brush. Found and fixed live: the grid had the bottom quarter of the panel (a row stretch left by the strip layout).
+  The agent's own brushes fill All with hundreds of near-identical cards: still open. Not tried: the toolbar's popup, the … menu.
 - Found: a stray tick mark over the eye on the top row; Brushes' tag row clips (the Tag button overlaps its arrow) until task 5.
 
 - [x] 1.1 Take `KisLayerBox`'s and `PresetDocker`'s widgets from their docks into a panel tab, and back. Find the safe way
