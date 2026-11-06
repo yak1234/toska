@@ -87,6 +87,8 @@ void KisAlternateInvocationAction::activate(int shortcut)
 void KisAlternateInvocationAction::deactivate(int shortcut)
 {
     KisTool::ToolAction action = shortcutToToolAction(shortcut);
+    // The view may be closing: its tool proxy can already be gone while the matcher lets go of this action.
+    if (!inputManager()->toolProxy()) return;
     inputManager()->toolProxy()->deactivateToolAction(action);
 }
 

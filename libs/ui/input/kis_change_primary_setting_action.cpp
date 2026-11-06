@@ -56,6 +56,8 @@ void KisChangePrimarySettingAction::activate(int shortcut)
 
 void KisChangePrimarySettingAction::deactivate(int shortcut)
 {
+    // The view may be closing: its tool proxy can already be gone while the matcher lets go of this action.
+    if (!inputManager()->toolProxy()) return;
     inputManager()->toolProxy()->deactivateToolAction(decodeAction(shortcut));
 }
 
