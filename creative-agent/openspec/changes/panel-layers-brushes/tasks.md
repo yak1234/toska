@@ -10,7 +10,16 @@ painting, only with no painting running.
 
 A throwaway test on a copy. Record the answers here before building on them.
 
-- [ ] 1.1 Take `KisLayerBox`'s and `PresetDocker`'s widgets from their docks into a panel tab, and back. Find the safe way
+Live on 2026-11-05, in the installed Toska, on a copy of istanbul.kra, driving the real window with synthetic clicks:
+- Works: Move it here moved the real Layers widget into the tab; the Layers dock left the window; Duplicate layer, selecting a
+  row and the off-badge hover worked from the tab, and thumbnails drew for the new layer. The hidden Brushes dock opened straight
+  in its tab, and clicking a brush changed the current brush. Cmd+Q with both in tabs quit with no crash report. After a relaunch
+  the dock stayed hidden and the tab layout came back.
+- Not confirmed: the eye button did not toggle under synthetic clicks (cause unknown, maybe only the clicks); right-click menu
+  (the tool's foreground click closes menus); Window > Dockers sending a widget back; workspace switch; two windows.
+- Found: a stray tick mark over the eye on the top row; Brushes' tag row clips (the Tag button overlaps its arrow) until task 5.
+
+- [x] 1.1 Take `KisLayerBox`'s and `PresetDocker`'s widgets from their docks into a panel tab, and back. Find the safe way
       to do it (`QDockWidget.setWidget`, reparenting, or a small fork hook).
 - [ ] 1.2 With the dock hidden: does it still get `setCanvas` on a document change? Do its right-click menus and shortcuts
       work? Does anything in `LayerBox` skip work while hidden?
@@ -20,26 +29,26 @@ A throwaway test on a copy. Record the answers here before building on them.
 
 ## 2. The tabs in the panel
 
-- [ ] 2.1 New `tests/ui_panel_tabs.py`, with fake docks: all of the proposal's panel measures at the three sizes; the "open
+- [x] 2.1 New `tests/ui_panel_tabs.py`, with fake docks: all of the proposal's panel measures at the three sizes; the "open
       as its own panel" line and Move it here; the status and "Waiting for you" lines on all five tabs. Add it to the "panel
       UI scripts" group in `agent/ci.sh`, under PyQt5 and PyQt6.
-- [ ] 2.2 Tab bar at the top with five tabs, always visible; header on Chat only. Replaces `panel-redesign` 4.2's hiding rule.
-- [ ] 2.3 One widget, one place: dock visibility decides, in both directions; each window uses its own docks.
-- [ ] 2.4 Status line and "Waiting for you" below every tab; Show returns to Chat at the card.
+- [x] 2.2 Tab bar at the top with five tabs, always visible; header on Chat only. Replaces `panel-redesign` 4.2's hiding rule.
+- [x] 2.3 One widget, one place: dock visibility decides, in both directions; each window uses its own docks.
+- [x] 2.4 Status line and "Waiting for you" below every tab; Show returns to Chat at the card.
 - [ ] 2.5 Default workspace (`agent/make_agent_workspace.py`, `Photoshop_Agent.kws`): separate Layers and Brushes docks
       hidden. Existing layouts untouched; update `test_new_install_defaults.py`.
 
 ## 3. Layers restyle (fork C++)
 
-- [ ] 3.1 `WdgLayerBox.ui`: one top row (blend mode, opacity, percent, filter, …), one bottom row of the seven actions.
+- [x] 3.1 `WdgLayerBox.ui`: one top row (blend mode, opacity, percent, filter, …), one bottom row of the seven actions.
       Works at the panel's narrowest width.
-- [ ] 3.2 New icon set in the panel's style, `dark_` and `light_` SVGs per the `krita/pics/layerbox` convention.
-- [ ] 3.3 `NodeDelegate`: row spacing, rounded thumbnails and selection, quieter colours from the palette. Folder rows and
+- [x] 3.2 New icon set in the panel's style, `dark_` and `light_` SVGs per the `krita/pics/layerbox` convention.
+- [x] 3.3 `NodeDelegate`: row spacing, rounded thumbnails and selection, quieter colours from the palette. Folder rows and
       clip indent redrawn to match. Extend `TestNodeDelegate` for row layout and hit areas.
-- [ ] 3.4 Badges only while on; dimmed hidden layers. Every property stays reachable (hover or menu, decided live).
-- [ ] 3.5 Second line for non-normal blending and opacity, through the existing Blending Info Style if it can do this.
+- [x] 3.4 Badges only while on; dimmed hidden layers. Every property stays reachable (hover or menu, decided live).
+- [x] 3.5 Second line for non-normal blending and opacity, through the existing Blending Info Style if it can do this.
 - [ ] 3.6 Check it in the plain Layers dock too, and under Toska Night, Toska Day, Krita dark and light.
-- [ ] 3.7 List every upstream file edited in `AGENT-FORK.md`, as for the Revamp port.
+- [x] 3.7 List every upstream file edited in `AGENT-FORK.md`, as for the Revamp port.
 
 ## 4. Stroke previews
 
