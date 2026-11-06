@@ -1,8 +1,8 @@
 # Tasks: Layers and Brushes tabs
 
 Stopped here 2026-11-06, the artist: "It's good ... let's just call it a day." Built, installed locally, look approved, not
-published. Next, in order: the stray tick above the top layer's eye; confirm by hand the eye button (the artist said generally that
-it works; synthetic clicks did not toggle it), right-click, Window > Dockers, the … menu, the toolbar's popup; task 2.5, the
+published. Stray tick fixed 2026-11-06. Next, in order: confirm by hand the eye button (the artist said generally that it works;
+synthetic clicks still do not toggle it, cause unconfirmed), right-click, Window > Dockers, the … menu, the toolbar's popup; task 2.5, the
 new-install layout; a full agent/ci.sh, then publish with the artist's approval. Agent brushes stay in All: the artist declined
 hiding them.
 
