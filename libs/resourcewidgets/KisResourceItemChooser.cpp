@@ -761,6 +761,7 @@ void KisResourceItemChooser::applyVerticalLayout()
     thisLayout->addWidget(d->viewModeButton, 0, 1);
     thisLayout->addWidget(d->storagePopupButton, 0, 2);
     thisLayout->addWidget(d->resourcesSplitter, 1, 0, 1, 3);
+    thisLayout->setRowStretch(0, 0);      // the strip layouts leave their stretch on this row
     thisLayout->setRowStretch(1, 1);
     thisLayout->addWidget(d->tagManager->tagFilterWidget(), 2, 0, 1, 3);
     thisLayout->addWidget(d->importExportBtns, 3, 0, 1, 3);

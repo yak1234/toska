@@ -406,6 +406,9 @@ void TestPresetChooserPopup::testShortDockFallsBackToTheStockBar()
     QVERIFY(chipsOf(popup)->isVisible());
     QVERIFY(searchOf(popup)->isVisible());
     QVERIFY(!comboOf(popup)->isVisible());
+    // The list has the height again. Live, in the agent panel's tab, an empty row kept two thirds of it.
+    QVERIFY2(chooserOf(popup)->itemChooser()->itemView()->height() > 687 - 120,
+             qPrintable(QString::number(chooserOf(popup)->itemChooser()->itemView()->height())));
     // The strip's square items are gone: the stroke grid is back.
     QCOMPARE(chooserOf(popup)->itemChooser()->itemView()->gridSize().height(),
              KisPresetChooser::strokeGridHeight(chooserOf(popup)->iconSize()));
