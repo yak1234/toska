@@ -62,7 +62,7 @@ while (( $# )); do
     *) install=$1; shift ;;
   esac
 done
-install=${install:-${ROOT:h}/krita-master/_install}
+install=${install:-${ROOT:h}/toska/_install}
 # A build that is installing into INSTALL_DIR would be packaged half-written: wait for it (or package a copy of the tree).
 # Compare the executable of each process (ninja) and its working folder, not any command line that mentions ninja.
 if ps -axo pid=,comm= | awk '$2 ~ /(^|\/)ninja$/ {print $1}' | while read -r pid; do lsof -a -p "$pid" -d cwd -Fn 2>/dev/null; done | grep -q "^n${install:h}/"; then

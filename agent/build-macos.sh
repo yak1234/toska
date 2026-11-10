@@ -56,8 +56,10 @@ if [[ ! -f _build/build.ninja ]]; then
     -DCMAKE_OSX_ARCHITECTURES="$(uname -m)" -DCMAKE_OSX_DEPLOYMENT_TARGET=12 \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/krita-deps-management/tools/macos-toolchain-krita.cmake"
 fi
-# Never install into another checkout's folder (a worktree configured with a foreign PWD once did).
-grep -qx "CMAKE_INSTALL_PREFIX:PATH=$ROOT/_install" _build/CMakeCache.txt || {
+# Never install into another checkout's folder (a worktree configured with a foreign PWD once did). Compared after
+# resolving links, so a checkout renamed behind a link (forks/krita-master -> toska) still matches its own cache.
+prefix=$(sed -n 's/^CMAKE_INSTALL_PREFIX:PATH=//p' _build/CMakeCache.txt)
+[[ -n "$prefix" && "${prefix:A}" == "$ROOT/_install" ]] || {
   echo "_build installs outside $ROOT/_install: remove _build and configure again" >&2
   exit 1
 }

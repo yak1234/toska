@@ -1832,7 +1832,7 @@ def main(argv=None):
         print('--notarize needs the app signed with a Developer ID: set KRITA_AGENT_SIGN_IDENTITY (and no --no-sign)', file=sys.stderr)
         return 2
 
-    install = Path(args.install or ROOT.parent / 'krita-master' / '_install')
+    install = Path(args.install or ROOT.parent / 'toska' / '_install')
     if not (install / 'bin' / 'krita.app').is_dir():
         print('no krita.app in %s/bin: build first (agent/build-macos.sh)' % install, file=sys.stderr)
         return 2

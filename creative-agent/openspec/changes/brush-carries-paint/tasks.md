@@ -18,7 +18,7 @@ Hairy keeps a carried colour per bristle and samples the paint under each bristl
 ## Global Constraints
 
 - **Benchmark scenes (2026-11-01; overrides any scene named in this plan):** every A/B gate follows `creative-agent/openspec/benchmark-scenes.md` — fixed goal images, 3 runs per arm, blind Luna + the user, and the muddiness / stroke-count / repetition / observe-time measurements. "Still life" means scene 1; New Moscow and the artist's own paintings are never used.
-- Paths are relative to the fork root `forks/krita-master` (branch `krita-agent`).
+- Paths are relative to the fork root `forks/toska` (branch `krita-agent`).
 - C++ builds only via `nice -n 19 env CMAKE_BUILD_PARALLEL_LEVEL=8 zsh agent/build-macos.sh` (never Homebrew ninja). C++ tests only via `agent/run-tests.sh <TestName> [function]`. Add every new test program to `agent/ci-tests.txt`. Tests use QTest, absolute paths in a `QTemporaryDir`, `QVERIFY` on every pointer, and never open a dialog.
 - Plugin tests run from `creative-agent/krita-creative-agent` with `uv run -q --with pyqt5 --with pillow --with numpy --with httpx --with opencv-python-headless python -m unittest discover -s tests -p '<pattern>'`.
 - Companion: new modules and tests are strict TypeScript (`.ts`, `.test.ts`); run `npm run test:unit` and `npm run typecheck`. Every test deletes what it writes.
