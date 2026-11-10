@@ -193,3 +193,11 @@ test('artwork moved onto empty canvas is kept: what left one place is a picture 
     assert.deepEqual(undone.fallback === undefined && [undone.findings.map(f => f.type), undone.relocated], [['artwork_removed', 'flat_block'], undefined], JSON.stringify(read));
   }
 });
+
+test('after a move no part of the document is shown as the painting: the ninths it left are empty', () => {
+  const moved = { ...ISTANBUL, fresh_share: 0.4961, removed_share: 0.9922, changed_share: 1 };
+  const canvas = { width: 12000, height: 4000 };
+  assert.ok(detailPlan(ISTANBUL, canvas)!.painted.length > 0);
+  assert.deepEqual(detailPlan(moved, canvas)!.painted, []);
+  assert.deepEqual(detailPlan(moved, canvas)!.fresh, detailPlan(ISTANBUL, canvas)!.fresh);
+});

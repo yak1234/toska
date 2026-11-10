@@ -113,7 +113,10 @@ export function detailPlan(map: ChangeMap, canvas: { width: number; height: numb
   const crop = newGroundCrop(map, canvas, 1);
   if (!crop) return null;
   const painted: Box[] = [];
-  Object.keys(CELL_NAMES).forEach((name, index) => {
+  // A batch that removed artwork (a move of the picture) left the ninths that were painted before empty: nothing of the
+  // painting is where it was, so no part of the document is shown as "the painting" (live, Istanbul, 2026-11-10: the
+  // moved harbour was compared with two black tiles and undone as removed). Luna then compares with the view before.
+  if (!removedArtwork(map)) Object.keys(CELL_NAMES).forEach((name, index) => {
     const cell = map.cells[name], row = Math.floor(index / 3), column = index % 3;
     if (cell.empty_before > PAINTED_CELL.empty || cell.fresh > PAINTED_CELL.fresh) return;
     const x = Math.floor(column * canvas.width / 3), y = Math.floor(row * canvas.height / 3);
