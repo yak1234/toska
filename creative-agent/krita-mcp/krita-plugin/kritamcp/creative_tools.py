@@ -196,6 +196,10 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             # Luna's goal comparison: one area of the goal or a canvas view at a given size (goal_likeness.py), as a JPEG.
             from .goal_likeness import comparison_crop
             return comparison_crop(params)
+        if operation == 'change_map':
+            # Luna's move review: what a batch painted on empty canvas, measured from the views around it (blank_canvas.py).
+            from .blank_canvas import change_map_operation
+            return change_map_operation(params)
         if operation == 'model_image':
             from .creative_reference import model_image
             return model_image(params)

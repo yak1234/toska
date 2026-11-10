@@ -1,6 +1,7 @@
 // Image-based checks answered by Luna Decisions. Question texts are shared with
 // scripts/evaluate-visual-checks.py so the evaluation measures what ships.
 import {readFileSync} from 'node:fs';
+import type {Reading} from './blank-canvas.ts';
 import type {Answer, Answers, ChoiceQuestion, DecisionMaker, DecisionPart, DecisionUsage, FallbackReason, NoulQuestion, Questions, ScoreQuestion} from './decisions/types.ts';
 
 /** One failure type a paint pass can introduce (visual-check-questions.json `pass.failures`). */
@@ -15,6 +16,8 @@ export type VisualCheckQuestions = {
  progress:{max_checks:number; instructions:string; scale:string[]};
  layer_need:{instructions:string; needs:Record<string,string>};
  move:{texture_over_forms:FailureType; feature:FailureType; any_feature:FailureType};
+ new_ground:{instructions:string; readings:Record<string,string>;
+  same_finish:{threshold:number; instructions:string; criteria:NoulQuestion['criteria']; calibration?:string}};
 };
 export const QUESTIONS=JSON.parse(readFileSync(new URL('./visual-check-questions.json',import.meta.url),'utf8')) as VisualCheckQuestions;
 const noul=({instructions,criteria}:{instructions:string; criteria:NoulQuestion['criteria']}):NoulQuestion=>({type:'noul',instructions,criteria});
@@ -99,8 +102,9 @@ export const MAX_FEATURES=4;
 // Did one painting batch of an Agent move make the painting worse? The pass artifacts, plus a broad texture over
 // forms BEFORE showed, plus each named focal feature (protected areas, kept or proposed) still as visible as BEFORE.
 // A feature BEFORE did not show is never "lost": the question compares with BEFORE.
-export async function moveCheck({client,before,after,features,signal}:
- {client:DecisionMaker; before:DecisionPart; after:DecisionPart; features:string[]; signal?:AbortSignal}):Promise<MoveCheckResult> {
+// facts (blank-canvas.ts factsText): what was measured empty before the batch, told first when part of it is new ground.
+export async function moveCheck({client,before,after,features,signal,facts}:
+ {client:DecisionMaker; before:DecisionPart; after:DecisionPart; features:string[]; signal?:AbortSignal; facts?:string}):Promise<MoveCheckResult> {
  const move=QUESTIONS.move;
  const names=[...new Set(features.map(f=>String(f).trim().slice(0,60)).filter(Boolean))].slice(0,MAX_FEATURES);
  const fill=(t:string,feature:string)=>t.replaceAll('{feature}',feature);
@@ -109,7 +113,7 @@ export async function moveCheck({client,before,after,features,signal}:
  const questions:Questions={...artifactQuestions(),texture_over_forms:noul(move.texture_over_forms),
   ...(names.length ? Object.fromEntries(names.map((name,i)=>['feature_'+i,featureQuestion(name)])) : {any_feature:noul(move.any_feature)})};
  const first=await client.decide({signal,purpose:'detect-move-failures',questions,
-  parts:['BEFORE (canvas before this painting batch):',before,'AFTER (canvas after this painting batch):',after]});
+  parts:[...(facts ? [facts] : []),'BEFORE (canvas before this painting batch):',before,'AFTER (canvas after this painting batch):',after]});
  if(first.fallback)return {fallback:first.fallback,elapsed_ms:first.elapsed_ms};
  const answered=artifactAnswers(first.answers);
  const texture=probability(first.answers?.texture_over_forms);
@@ -125,6 +129,33 @@ export async function moveCheck({client,before,after,features,signal}:
  if(!flagged.length)return {findings:[],usage,elapsed_ms:first.elapsed_ms};
  const second=await locate({client,after,signal,purpose:'locate-move-failures',labels:Object.fromEntries(flagged.map(f=>[f.id,f.finding.label])),usage});
  return {findings:flagged.map(f=>({...f.finding,location:second.locations[f.id] ?? null})),usage,elapsed_ms:first.elapsed_ms+second.elapsed_ms};
+}
+
+/** What new ground reads as, and (beside existing paint) how sure Luna is that it has the painting's finish; or why
+ * Luna did not answer. same_finish is null when there was no painting to compare with or that answer was malformed. */
+export type NewGroundResult = CheckFallback | {reading:Reading; confidence:number; probabilities:Record<string,number>; same_finish:number|null;
+ usage:Pick<DecisionUsage,'cost'|'input_tokens'>; elapsed_ms:number; fallback?:undefined};
+const READINGS=Object.keys(QUESTIONS.new_ground.readings) as Reading[];
+// What does the paint a batch laid on empty canvas read as (openspec blank-canvas-review, goal 4)? One request, on a crop
+// of the new ground alone: the finished part of the canvas must not answer for it, and "is it new compared with BEFORE"
+// is not asked, because on empty canvas everything is (a perfect copy scored flat block 1.0, Istanbul 2026-11-10).
+// painting: the canvas before the batch, when part of it was painted. Then a second question in the same request asks
+// whether the new ground has that painting's finish: a hatched graphic rebuild read as a "picture" (0.86) beside an oil
+// painting, and this is what told it from a faithful copy (0 against 0.91).
+export async function newGroundCheck({client,crop,facts,painting,signal}:
+ {client:DecisionMaker; crop:DecisionPart; facts?:string; painting?:DecisionPart; signal?:AbortSignal}):Promise<NewGroundResult> {
+ const {instructions,readings,same_finish}=QUESTIONS.new_ground;
+ const result=await client.decide({signal,purpose:'read-new-ground',
+  questions:{new_ground:choice(instructions,readings),...(painting ? {same_finish:noul(same_finish)} : {})},
+  parts:[...(facts ? [facts] : []),...(painting ? ['PAINTING (the canvas before this painting batch; its empty part had no paint):',painting] : []),
+   'NEW GROUND (the part of the canvas that was empty before this painting batch, as it is now):',crop]});
+ if(result.fallback)return {fallback:result.fallback,elapsed_ms:result.elapsed_ms};
+ const answer=result.answers?.new_ground;
+ if(answer?.type!=='choice' || !READINGS.includes(answer.choice as Reading))return {fallback:'service_or_response_error',elapsed_ms:result.elapsed_ms};
+ const probabilities=Object.fromEntries(READINGS.map(id=>[id,Number(answer.probabilities?.[id]) || 0]));
+ const confidence=Number.isFinite(answer.confidence) ? answer.confidence as number : probabilities[answer.choice] ?? 0;
+ return {reading:answer.choice as Reading,confidence,probabilities,same_finish:painting ? probability(result.answers?.same_finish) : null,
+  usage:{cost:result.usage.cost,input_tokens:result.usage.input_tokens},elapsed_ms:result.elapsed_ms};
 }
 
 // How much did each repeatedly failed review check improve? Scores 0..3 on the

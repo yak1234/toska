@@ -71,7 +71,7 @@ async function image(api, id) {
 }
 
 // The painter's OpenRouter key, as the app reads it (Pi's auth), else OPENROUTER_API_KEY.
-async function lunaKey() {
+export async function lunaKey() {
   if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY;
   const { ModelRuntime, getAgentDir } = await import('@earendil-works/pi-coding-agent');
   const { inheritPiCatalog } = await import('../src/model-catalog.mjs');

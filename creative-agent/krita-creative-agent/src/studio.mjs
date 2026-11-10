@@ -3,7 +3,8 @@ import {LunaRouter, routingState, contextIdentity, routingAdvice} from './routin
 import { DecisionService } from './decisions/service.ts';
 import { chatShapes } from './shapes/chat.ts';
 import { chatCloseups, goalReference } from './closeups.ts';
-import {passCheck, progressCheck, moveCheck, seamCheck} from './visual-checks.ts';
+import {passCheck, progressCheck, moveCheck, newGroundCheck, seamCheck} from './visual-checks.ts';
+import { emptyCells, groundBoxes, needsArtist, newGroundCrop, parseChangeMap, reviewBatch, updateGround } from './blank-canvas.ts';
 import { executionSettings, thinkingLevel, AUTO_REASONING_NOTE, migrateSettings, DEFAULT_DECISIONS } from './execution-settings.mjs';
 import { panelSchema, DEFAULT_PLANNER } from './settings-schema.mjs';
 import { COMIC_OPERATIONS, CRAFT_OPERATIONS, CRAFT_TOOLS, FORK_TOOLS, mutates } from './craft.mjs';
@@ -1195,7 +1196,18 @@ export class StudioRuntime extends PaintingRuntime {
       review: async ({before,after,features,scope}) => {
         const study=scope ?? this.study;
         const [b,a]=await Promise.all([before,after].map(path=>imageContent(study.directory,path)));
-        return moveCheck({client:await this.luna(),before:b.content,after:a.content,features,signal:this.lunaSignal()});
+        const client=await this.luna(), signal=this.lunaSignal();
+        // Blank-canvas review (blank-canvas.ts): what the batch painted on empty canvas is measured first, and that
+        // part is judged by what it reads as, not as a change to a painting. No measure, the review of before.
+        const map=await this.changeMap(b.content,a.content);
+        return reviewBatch({map,
+          over: facts => moveCheck({client,before:b.content,after:a.content,features,signal,...(facts ? {facts} : {})}),
+          ground: async facts => {
+            const crop=await this.newGroundImage(map,a.content);
+            if (!crop) return {fallback:'no_checks',elapsed_ms:0};
+            // Beside existing paint the new ground is also compared with it; on a wholly empty canvas there is none.
+            return newGroundCheck({client,crop,facts,signal,...(emptyCells(map).length<9 ? {painting:b.content} : {})});
+          }});
       },
       undo: async passes => {
         const undone=await this.rejectDamage(passes);
@@ -1208,6 +1220,31 @@ export class StudioRuntime extends PaintingRuntime {
       undos: this.moveUndos(),
       release: id => this.batchStarts?.delete(id),
     };
+  }
+  /** What a batch painted on empty canvas, measured by the plugin from the two views (blank_canvas.py change_map), with
+   * the chat's unsettled ground counted as empty. Null when it cannot be measured (an older plugin): reviewed as before. */
+  async changeMap(before, after) {
+    try {
+      const part=image=>{ const data=Buffer.from(image.data,'base64'); return {image_base64:image.data,sha256:createHash('sha256').update(data).digest('hex')}; };
+      const answer=await super.callNative('change_map',{before:part(before),after:part(after),ground:groundBoxes(this.goal?.ground)});
+      const map=parseChangeMap(answer);
+      if (map) this.diagnostics?.record({type:'change_map',fresh_share:map.fresh_share,removed_share:map.removed_share,changed_share:map.changed_share,fresh_box:map.fresh_box});
+      return map;
+    } catch { return null; }
+  }
+  /** The new ground cut from the AFTER view (the plugin's comparison_crop), at the scale the view shows. */
+  async newGroundImage(map, after) {
+    const canvas=this.lastObservation;
+    if (!map || !(canvas?.width>0 && canvas?.height>0)) return null;
+    const plan=newGroundCrop(map,canvas,Math.min(1,this.viewSide()/Math.max(canvas.width,canvas.height)));
+    if (!plan) return null;
+    try {
+      const data=Buffer.from(after.data,'base64');
+      const answer=await super.callNative('comparison_crop',{image_base64:after.data,sha256:createHash('sha256').update(data).digest('hex'),
+        size:[canvas.width,canvas.height],source:plan.source,out:plan.out});
+      const image=answer?.images?.[0] ?? answer;
+      return image?.image_base64 ? {type:'image',data:image.image_base64,mimeType:image.mime_type ?? 'image/jpeg'} : null;
+    } catch { return null; }
   }
   /** The automatic undos of an Agent move, Luna review's and the goal-likeness check's together (UNDO_CAP in all). */
   moveUndos() {
@@ -1578,6 +1615,12 @@ export class StudioRuntime extends PaintingRuntime {
     if (verdict.status==='undone') review.undone_batches++;
     review.findings=[...review.findings,...verdict.findings].slice(-12);
     review.verdict=review.undone_batches ? 'undone' : review.findings.length ? 'warned' : 'kept';
+    // Kept paint on empty canvas: the move remembers what it read as (needsArtist), the chat which ground is unsettled.
+    if (verdict.new_ground && verdict.status!=='undone') {
+      const {box,...read}=verdict.new_ground;
+      review.new_ground=read;
+      if (this.goal) this.goal.ground=updateGround(groundBoxes(this.goal.ground),verdict.new_ground);
+    }
     move.review=review;
     move.review_line=moveReviewLine(review);
     this.persist().then(()=>this.publish()).catch(()=>{});
@@ -4268,6 +4311,10 @@ export class StudioRuntime extends PaintingRuntime {
       this.currentMove = undefined;
       if (this.goal.status === 'active') this.goal.status = move.status === 'ready' ? 'move_ready' : doneAlready ? 'complete' : 'paused';
       await this.flushCheckpoint();
+      // A move Luna stopped or undid whole, or a third placeholder running, waits for the artist: Auto-approve does not
+      // keep it (move 6 of the Istanbul chat was auto-kept with "Luna undid 2 of 2 batches" and move 7 began).
+      const needs=move.actions ? needsArtist(move, this.goal.moves ?? []) : null;
+      if (needs) move.needs_artist=needs; else delete move.needs_artist;
       this.emit({type:'move', move}); await this.persist(); this.publish();
       const askNext = move.ask_next ? ` Luna sees little left to add here. What should come next?${move.ask_next.elements.length ? ' ' + listOr(move.ask_next.elements) : ''}` : '';
       if (!this.runError && !this.cancelRequested)
@@ -4277,7 +4324,7 @@ export class StudioRuntime extends PaintingRuntime {
           : move.luna_stopped ? `Move ${move.number} stopped: ${move.luna_stopped} Keep it, undo it, or type a correction.`
           : (move.underpainting?.closed ? `Move ${move.number} underpainted the whole picture and ended with the transfer: keep it, undo it, or type a correction.`
           : move.limited ? `Move ${move.number} reached its size limit: keep it, undo it, or say continue to finish it.`
-          : `Move ${move.number} painted: keep it, undo it, or type a correction.`)+(move.review_line ? ' '+move.review_line+'.' : '')+(move.likeness_line ? ' '+move.likeness_line+'.' : ''))+askNext);
+          : `Move ${move.number} painted: keep it, undo it, or type a correction.`)+(move.review_line ? ' '+move.review_line+'.' : '')+(move.likeness_line ? ' '+move.likeness_line+'.' : ''))+(move.needs_artist ? ' Auto-approve is waiting for you: '+move.needs_artist : '')+askNext);
       // The chat's last word on a finished move (the artist, 2026-10-31: the chat ended on "one more pass…" while the status
       // said the request was finished): what it painted, and whether Keep ends the request or continues it.
       if (move.status === 'ready' && move.finished && !guidesOnly && move.title && !this.runError && !this.cancelRequested)

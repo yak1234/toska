@@ -133,6 +133,24 @@
    }
   }
  },
+ "new_ground": {
+  "instructions": "NEW GROUND is the part of a canvas that was empty before this painting batch and is painted now; nothing was under it. What does NEW GROUND read as? Judge only what it shows now: do not judge it for being new, large or rectangular.",
+  "readings": {
+   "picture": "A painted picture: recognisable forms with light and shade, in continuous paint. It could be part of a finished painting.",
+   "underpainting": "A first layer of a picture: its colours and big shapes are placed where a picture would have them, but separate dabs, blocks or gaps still show and forms are soft or coarse.",
+   "placeholder": "Not a picture yet: a flat fill, a plain gradient, bands of colour or scattered marks, with no recognisable forms.",
+   "other": "None of these, or NEW GROUND cannot be judged."
+  },
+  "same_finish": {
+   "threshold": 0.5,
+   "instructions": "Is NEW GROUND painted to the same finish as the painted part of PAINTING: the same kind of brushwork, the same level of detail and the same way of rendering light? Ignore what it depicts.",
+   "criteria": {
+    "true": "NEW GROUND could be part of the same finished painting.",
+    "false": "NEW GROUND is visibly coarser, flatter, more graphic or less finished than the painted part of PAINTING."
+   },
+   "calibration": "Istanbul 2026-11-10 (10 reviewed batches, live): two exact copies and a copy beside rough paint 0.91-0.92; a blended strip 0.26; dabs, a gradient and a hatched graphic rebuild 0-0.03."
+  }
+ },
  "seam": {
   "threshold": 0.5,
   "instructions": "Is there a seam along {where}? A seam is an artificial straight join where the painting changes brightness, colour or texture abruptly along a perfectly straight line through otherwise continuous sky, water or wall, as if a rectangle was pasted in or image tiles were joined. The painted edge of an object (a roof, tower, bridge, railing, window frame, reflection or light streak) is not a seam.",

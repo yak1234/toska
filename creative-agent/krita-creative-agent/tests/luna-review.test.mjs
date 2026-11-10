@@ -260,3 +260,41 @@ test('only a call whose every painting action names a blender preset is a blend'
   assert.equal(blending('paint_batch', smudge), true);
   assert.equal(blending('krita_gradient', {}), false);
 });
+
+// Blank-canvas review (openspec blank-canvas-review): paint on empty canvas is never undone for roughness.
+test('new ground that reads as a picture is kept with no note; the verdict carries the reading', async () => {
+  const ground = { reading: 'picture', confidence: 0.96, same_finish: 0.91, box: [0.5, 0, 0.5, 1] };
+  const { calls, result } = setup({ reviews: [{ findings: [], kind: 'new_ground', new_ground: ground }] });
+  assert.equal(await result('clone_layer'), undefined, 'the result goes to the painter unchanged');
+  assert.deepEqual(calls.undo, []);
+  assert.deepEqual([calls.record[0].status, calls.record[0].new_ground, calls.record[0].kind], ['kept', ground, 'new_ground']);
+});
+test('new ground that reads as a placeholder or an underpainting is kept, and the painter is told what to do next', async () => {
+  for (const reading of ['placeholder', 'underpainting']) {
+    const ground = { reading, confidence: 0.8, same_finish: 0 };
+    const { calls, result } = setup({ reviews: [{ findings: [], kind: 'new_ground', new_ground: ground }] });
+    const changed = await result('paint_from_reference');
+    assert.ok(changed.content.includes(before), 'the canvas image stays: nothing was undone');
+    const review = reviewOf(changed);
+    assert.match(review.note, new RegExp(`reads as an? ${reading}`)); assert.match(review.note, /It is kept\./);
+    assert.deepEqual(review.new_ground, ground);
+    assert.deepEqual(calls.undo, []); assert.equal(calls.record[0].status, 'kept');
+  }
+});
+test('a finding over existing paint is still undone when the batch also laid new ground; removed artwork too', async () => {
+  const graphic = { type: 'hard_graphic', label: 'hard graphic look', probability: 0.95, location: 'middle_left' };
+  const removed = { type: 'artwork_removed', label: 'artwork removed', probability: 1, location: null };
+  for (const finding of [graphic, removed]) {
+    const { calls, result } = setup({ reviews: [{ findings: [finding], kind: 'mixed', new_ground: { reading: 'picture', confidence: 0.97 } }] });
+    const review = reviewOf(await result());
+    assert.match(review.note, new RegExp('^Luna undid this batch: ' + finding.label));
+    assert.equal(calls.undo.length, 1);
+    assert.deepEqual([calls.record[0].status, calls.record[0].new_ground], ['undone', undefined], 'undone ground is not remembered');
+  }
+});
+test('evaluate records the reading and tells the painter nothing', async () => {
+  const { calls, result } = setup({ mode: 'evaluate', reviews: [{ findings: [], kind: 'new_ground', new_ground: { reading: 'placeholder', confidence: 0.9 } }] });
+  assert.equal(await result(), undefined);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.record[0].new_ground.reading, 'placeholder');
+});

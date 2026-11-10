@@ -5,12 +5,15 @@
 // A shipped Pi extension registered inline (src/extensions.mjs). It knows the studio only through ReviewHost.
 import type { ExtensionAPI, ToolResultEvent, ToolResultEventResult } from '@earendil-works/pi-coding-agent';
 import type { MoveCheckResult, MoveFinding } from '../src/visual-checks.ts';
+import { newGroundNote, type BatchKind, type NewGround } from '../src/blank-canvas.ts';
 
 export type LunaMode = 'off' | 'evaluate' | 'guide';
 export type BatchPass = { id: string; before_path: string; title?: string; layer_id?: string; area?: number[] | null };
 export type Verdict = { move: number; call_id: string; status: 'kept' | 'undone' | 'warned' | 'fallback';
   findings: MoveFinding[]; undone_pass_ids?: string[]; partial?: boolean; reason?: string; scope?: unknown;
-  guides_note?: string };       // the judged image still had the agent's guide lines (the plugin could not leave them out)
+  guides_note?: string;         // the judged image still had the agent's guide lines (the plugin could not leave them out)
+  kind?: BatchKind;             // where the batch's change landed (blank-canvas.ts): over paint, on empty canvas, or both
+  new_ground?: NewGround };     // what a kept batch's paint on empty canvas read as; never a reason to undo
 type Image = { type: 'image'; data: string; mimeType: string };
 export type Undone = { pass_ids: string[]; image?: Image; image_path?: string; revision?: string };
 /** What the studio provides (studio.mjs reviewHost). */
@@ -22,7 +25,7 @@ export interface ReviewHost {
   batch(toolCallId: string, toolName: string, input: Record<string, any>, details: any): BatchPass[];   // painted passes, not layer settings
   canvas?(): string | undefined;        // the latest canvas image, for a batch whose result has none (it stopped early)
   features(): Promise<string[]>;        // kept and proposed protected-area names
-  review(input: { before: string; after: string; features: string[]; scope?: unknown }): Promise<MoveCheckResult>;
+  review(input: { before: string; after: string; features: string[]; scope?: unknown }): Promise<MoveCheckResult | (Extract<MoveCheckResult, { findings: unknown }> & { kind?: BatchKind; new_ground?: NewGround })>;
   undo(passes: BatchPass[]): Promise<Undone | null>;
   record(verdict: Verdict): void;
   stop(message: string): void;         // end the move after this turn
@@ -69,7 +72,8 @@ export default function lunaReview(host: ReviewHost): (pi: ExtensionAPI) => void
     try {
       const result = await host.review({ before: passes[0].before_path, after, features: await host.features(), ...(scope === undefined ? {} : { scope }) });
       if (!('findings' in result)) return { ...base, status: 'fallback', findings: [], reason: result.fallback };
-      return { ...base, status: result.findings.length ? 'warned' : 'kept', findings: result.findings };
+      const ground = 'new_ground' in result ? result.new_ground : undefined, kind = 'kind' in result ? result.kind : undefined;
+      return { ...base, status: result.findings.length ? 'warned' : 'kept', findings: result.findings, ...(kind ? { kind } : {}), ...(ground ? { new_ground: ground } : {}) };
     } catch (error) {
       return { ...base, status: 'fallback', findings: [], reason: error instanceof Error ? error.message : String(error) };
     }
@@ -93,7 +97,13 @@ export default function lunaReview(host: ReviewHost): (pi: ExtensionAPI) => void
         return undefined;
       }
       const verdict = await check(move, event.toolCallId, passes, after, scope, guidesNote);
-      if (verdict.status !== 'warned') { host.record(verdict); return undefined; }
+      if (verdict.status !== 'warned') {
+        host.record(verdict);
+        // Paint on empty canvas is kept whatever it reads as (undo protects paint; empty canvas has none): the painter is
+        // told what it reads as and what to do next. Eight undos of new ground never helped once (Istanbul, 2026-11-10).
+        const groundNote = verdict.new_ground ? newGroundNote(verdict.new_ground) : null;
+        return groundNote ? { content: [...event.content, line({ note: groundNote, new_ground: verdict.new_ground })] } : undefined;
+      }
       const what = lost(verdict.findings);
       if (blending(toolName, event.input) && verdict.findings.every(f => f.type === 'texture_over_forms')) {
         host.record({ ...verdict, reason: `${toolName}: a blending pass, texture over forms recorded, never undone` });
@@ -115,7 +125,8 @@ export default function lunaReview(host: ReviewHost): (pi: ExtensionAPI) => void
       }
       undos().add(move);                                  // a partial undo counts too: Luna acted on this batch
       const left = passes.map(p => p.id).filter(id => !undone.pass_ids.includes(id));
-      host.record({ ...verdict, status: 'undone', undone_pass_ids: undone.pass_ids, ...(left.length ? { partial: true } : {}) });
+      const { new_ground: _undoneGround, ...acted } = verdict;     // undone ground is not on the canvas: not remembered
+      host.record({ ...acted, status: 'undone', undone_pass_ids: undone.pass_ids, ...(left.length ? { partial: true } : {}) });
       const feature = verdict.findings.find(f => f.feature)?.feature;
       const note = (left.length
         ? `Luna undid part of this batch: ${what}. ${left.join(', ')} could not be undone; repair what remains.`

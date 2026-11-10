@@ -167,6 +167,27 @@ class PanelAutoApprove(unittest.TestCase):
         self.assertEqual(self.answers(), [{'type': 'move', 'action': 'keep', 'move': 1}])
         self.assertEqual(self.records(), [{'kind': 'move', 'answer': 'keep', 'delay': 10, 'card': 'move:1'}])
 
+    def test_a_move_that_needs_the_artist_is_never_kept(self):
+        # Luna undid every batch, stopped the move, or new ground read as a placeholder three moves running (blank-canvas.ts
+        # needsArtist): the card says why and waits. Move 6 of the Istanbul chat was auto-kept with nothing of it painted.
+        self.setting(10)
+        why = 'Luna undid every batch of this move: nothing of it is on the canvas.'
+        self.panel.handle_event({'type': 'move', 'move': dict(MOVE, step=None, needs_artist=why)})
+        self.wait(60)
+        self.assertEqual(self.commands, [])
+        self.assertNotIn('Auto-approve: Keeping', self.visible_text())
+        self.assertTrue(self.panel.move_bar.isVisible())
+        self.assertIn('Auto-approve is waiting for you: ' + why, self.panel.move_summary.text())
+        self.panel.handle_event({'type': 'move', 'move': dict(MOVE, step=None)})       # the same card without the reason counts down
+        self.wait(10)
+        self.assertEqual(self.answers(), [{'type': 'move', 'action': 'keep', 'move': 1}])
+
+    def test_a_finished_plan_step_whose_move_needs_the_artist_is_not_met(self):
+        self.setting(10); self.finished_step()
+        self.panel.handle_event({'type': 'move', 'move': dict(MOVE, needs_artist='Luna stopped this move.')})
+        self.wait(60)
+        self.assertEqual(self.commands, [])
+
     def test_it_waits_while_the_agent_is_busy(self):
         self.setting(10); self.finished_step()
         self.panel.handle_event({'type': 'busy', 'busy': True}); self.wait(60)

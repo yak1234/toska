@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {passCheck,progressCheck,moveCheck,MAX_FEATURES,artifactFindings,QUESTIONS} from '../src/visual-checks.ts';
+import {passCheck,progressCheck,moveCheck,newGroundCheck,MAX_FEATURES,artifactFindings,QUESTIONS} from '../src/visual-checks.ts';
 const before={type:'image',data:'YmVmb3Jl',mimeType:'image/png'}, after={type:'image',data:'YWZ0ZXI=',mimeType:'image/png'};
 const FAILURES=Object.keys(QUESTIONS.pass.failures);
 function client(answer) {
@@ -105,4 +105,45 @@ test('features past MAX_FEATURES are dropped',async()=>{
 test('a move check fallback is returned, not findings',async()=>{
  const r=await moveCheck({client:client(()=>({fallback:'timeout',elapsed_ms:5})),before,after,features:['Moon']});
  assert.deepEqual(r,{fallback:'timeout',elapsed_ms:5});
+});
+
+// Blank-canvas review (openspec blank-canvas-review).
+test('new ground is read from its own crop, with the measured facts first and no BEFORE to compare with',async()=>{
+ const crop={type:'image',data:'Y3JvcA==',mimeType:'image/jpeg'};
+ const c=client(()=>({answers:{new_ground:{type:'choice',choice:'picture',confidence:.93,probabilities:{picture:.95,underpainting:.03,placeholder:.01,other:.01}}}}));
+ const r=await newGroundCheck({client:c,crop,facts:'MEASURED FACTS: the right third was empty.'});
+ assert.equal(c.requests.length,1);assert.equal(c.requests[0].purpose,'read-new-ground');
+ assert.deepEqual(c.requests[0].parts,['MEASURED FACTS: the right third was empty.','NEW GROUND (the part of the canvas that was empty before this painting batch, as it is now):',crop]);
+ const q=c.requests[0].questions.new_ground;
+ assert.equal(q.type,'choice');assert.deepEqual(Object.keys(q.criteria),['picture','underpainting','placeholder','other']);
+ assert.ok(!/not present in BEFORE/.test(q.instructions) && /do not judge it for being new, large or rectangular/.test(q.instructions));
+ assert.deepEqual([r.reading,r.confidence,r.probabilities.picture,r.usage.cost,r.same_finish],['picture',.93,.95,.0001,null]);
+});
+test('beside existing paint, the same request asks whether new ground has the painting\'s finish',async()=>{
+ const crop={type:'image',data:'Y3JvcA==',mimeType:'image/jpeg'};
+ const c=client(()=>({answers:{new_ground:{type:'choice',choice:'picture',confidence:.8},same_finish:{type:'noul',noul:.04}}}));
+ const r=await newGroundCheck({client:c,crop,facts:'F.',painting:before});
+ assert.equal(c.requests.length,1);
+ assert.deepEqual(Object.keys(c.requests[0].questions),['new_ground','same_finish']);
+ assert.deepEqual(c.requests[0].parts,['F.','PAINTING (the canvas before this painting batch; its empty part had no paint):',before,
+  'NEW GROUND (the part of the canvas that was empty before this painting batch, as it is now):',crop]);
+ assert.deepEqual([r.reading,r.same_finish],['picture',.04]);
+ const bad=await newGroundCheck({client:client(()=>({answers:{new_ground:{type:'choice',choice:'picture'},same_finish:{type:'refusal'}}})),crop,painting:before});
+ assert.deepEqual([bad.reading,bad.same_finish],['picture',null],'a malformed finish answer does not lose the reading');
+});
+test('new ground: an unknown choice, a refusal and a failed request fall back',async()=>{
+ const crop={type:'image',data:'Y3JvcA=='};
+ assert.equal((await newGroundCheck({client:client(()=>({answers:{new_ground:{type:'choice',choice:'masterpiece'}}})),crop})).fallback,'service_or_response_error');
+ assert.equal((await newGroundCheck({client:client(()=>({answers:{new_ground:{type:'refusal'}}})),crop})).fallback,'service_or_response_error');
+ assert.equal((await newGroundCheck({client:client(()=>({fallback:'timeout'})),crop})).fallback,'timeout');
+ const bare=await newGroundCheck({client:client(()=>({answers:{new_ground:{type:'choice',choice:'placeholder',probabilities:{placeholder:.8}}}})),crop});
+ assert.deepEqual([bare.reading,bare.confidence],['placeholder',.8],'confidence falls back to the choice\'s probability');
+ assert.deepEqual(client(()=>({})).requests,[]);
+});
+test('a move check is told the measured facts first when it is given them, and is unchanged without',async()=>{
+ const c=client(()=>({answers:{...nouls({}).answers,texture_over_forms:{type:'noul',noul:.01},any_feature:{type:'noul',noul:.01}}}));
+ await moveCheck({client:c,before,after,features:[],facts:'MEASURED FACTS: x.'});
+ await moveCheck({client:c,before,after,features:[]});
+ assert.deepEqual(c.requests[0].parts,['MEASURED FACTS: x.','BEFORE (canvas before this painting batch):',before,'AFTER (canvas after this painting batch):',after]);
+ assert.deepEqual(c.requests[1].parts,['BEFORE (canvas before this painting batch):',before,'AFTER (canvas after this painting batch):',after]);
 });

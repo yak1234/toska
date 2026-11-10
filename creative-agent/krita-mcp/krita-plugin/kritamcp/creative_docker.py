@@ -2650,6 +2650,10 @@ class CreativeAgentDocker(DockWidget):
         auto = self.auto_approve
         if not auto.on or (auto.counting() and auto.pending['kind'] not in ('plan_step', 'move')): return
         move = self.current_move
+        if move and move.get('needs_artist'):
+            # Luna stopped or undid the move, or it repeats a placeholder (blank-canvas.ts needsArtist): the card waits.
+            if auto.counting(): auto.drop('main')
+            return
         row = self.finished_step_row()
         if row is not None:
             key = row['key']
@@ -2745,6 +2749,8 @@ class CreativeAgentDocker(DockWidget):
         review = '<br><span>%s</span>' % html.escape(move['review_line']) if move.get('review_line') else ''   # Luna's verdict
         # How close the move left the canvas to the goal reference, and what the host undid (goal-likeness.ts)
         review += '<br><span>%s</span>' % html.escape(move['likeness_line']) if move.get('likeness_line') else ''
+        if move.get('needs_artist'):   # why Auto-approve does not keep this move
+            review += '<br><span>Auto-approve is waiting for you: %s</span>' % html.escape(str(move['needs_artist']))
         self.move_summary.setText('<b>Move %d</b> · %s<br><span>%s. Keep it, undo it, or type a correction below.</span>%s'
                                   % (move['number'], html.escape(move.get('title') or 'Painting move'), detail, review))
         self.move_bar.show()

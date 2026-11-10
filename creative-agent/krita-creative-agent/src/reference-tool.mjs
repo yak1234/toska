@@ -357,7 +357,12 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   if(!sameScope(job,runtime))throw new Error('The plan changed. Reference jobs must finish within their original plan.');
   const source=await reference(runtime,job.recipe.reference_id,job.reference_hash);if(source.sha256!==job.reference_hash)throw new Error('The reference changed; this job cannot be resumed.');
   const save=()=>atomic(path(job.id),job);
-  const accept=(result,pending)=>{if(result.error||result.status==='partial'||!result.revision||!result.layer_id)throw new Error('This chunk has an uncertain outcome. Inspect and recover it; do not repeat its strokes.');job.layer_id=result.layer_id;job.last_revision=result.revision;job.offset+=pending.count;job.completed+=pending.count;job.pending=null;};
+  // The reason goes with it: four transfers stopped after their first chunk with only "uncertain outcome", and neither the
+  // painter nor the trace could say why (Istanbul, 2026-11-10).
+  const uncertain=result=>{const why=typeof result?.error==='string'&&result.error ? result.error : result?.status==='partial' ? 'the pass was left partly painted'
+    : !result?.revision ? 'the pass returned no canvas revision' : !result?.layer_id ? 'the pass returned no layer' : '';
+   return 'This chunk has an uncertain outcome'+(why ? ' ('+String(why).slice(0,300).replace(/[.\s]+$/,'')+')' : '')+'. Inspect and recover it; do not repeat its strokes.';};
+  const accept=(result,pending)=>{if(!result||result.error||result.status==='partial'||!result.revision||!result.layer_id)throw new Error(uncertain(result));job.layer_id=result.layer_id;job.last_revision=result.revision;job.offset+=pending.count;job.completed+=pending.count;job.pending=null;};
   // Query the native journal before considering a dispatched-but-unacknowledged chunk.
   if(job.pending){const receipt=await runtime.callNative('operation_status',{id:job.pending.id});
    if(receipt.found){accept(receipt.result,job.pending);runtime.applyNativeRecovery?.(receipt);await save();}

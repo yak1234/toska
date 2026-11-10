@@ -76,7 +76,7 @@ test('partial receipts, changed canvas/reference and Ask mode cannot resume pain
  h.setRevision('manual');await assert.rejects(h.tools[1].execute('b',{job_id:id}),/canvas changed/);h.setRevision('r1');
  await writeFile(h.ref,'changed');await assert.rejects(h.tools[1].execute('b',{job_id:id}),/reference changed/);assert.equal(h.calls.length,n);
  }finally{await h.close();}
- const p=await harness();try{p.setAfter(()=>{p.receipts.set(p.calls[0].id,{status:'partial',error:'interrupted'});throw new Error('lost');});await assert.rejects(p.tools[0].execute('partial',recipe));const id=createHash('sha256').update('partial').digest('hex').slice(0,32);await assert.rejects(p.tools[1].execute('retry',{job_id:id}),/uncertain outcome/);assert.equal(p.calls.length,1);}finally{await p.close();}
+ const p=await harness();try{p.setAfter(()=>{p.receipts.set(p.calls[0].id,{status:'partial',error:'interrupted'});throw new Error('lost');});await assert.rejects(p.tools[0].execute('partial',recipe));const id=createHash('sha256').update('partial').digest('hex').slice(0,32);await assert.rejects(p.tools[1].execute('retry',{job_id:id}),/uncertain outcome \(interrupted\)\. Inspect and recover it/,'the reason goes with it');assert.equal(p.calls.length,1);}finally{await p.close();}
 });
 
 test('a transfer is underpainting: one full transfer per plan, then patches only, and none in the second half of the plan',async()=>{
