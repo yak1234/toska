@@ -239,7 +239,11 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
  const buildPlan=async(recipe,pixels,canvas,inside)=>{
   const analysed=analysisCopy(recipe,pixels);   // edges and surface: a very large crop is read reduced (reference-generator.mjs)
   const plan=({edges:generateEdgePlan,surface:generateSurfacePlan}[recipe.mode]??generateReferencePlan)(analysed.recipe,analysed.image,{width:canvas.width,height:canvas.height},{limit:runtime.config?.edge_limit??EDGE_LIMIT});
-  return inside?scopePlan(plan,await loadAreaMask(inside,runtime.study.directory)):plan;
+  // The plan is the job's: it carries the recipe as asked, not the reduced copy it was analysed from. With the reduced
+  // one every surface or edges transfer from a large (sharpened) reference stopped before its first stroke with "The saved
+  // reference job no longer matches its stroke plan" (live, Istanbul, 2026-11-10: three surface transfers).
+  const asked=analysed.recipe===recipe?plan:{...plan,recipe};
+  return inside?scopePlan(asked,await loadAreaMask(inside,runtime.study.directory)):asked;
  };
  async function start(id,recipe,signal){
   signal?.throwIfAborted();allowed(runtime);await mkdir(folder(),{recursive:true});const identifier=hash(id).slice(0,32);let old;try{old=JSON.parse(await readFile(path(identifier),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}

@@ -611,3 +611,22 @@ test('a transfer stretched past 2x on a painted canvas sharpens its reference fi
   }finally{await other.close();}
  }finally{await patch.close();}
 });
+
+test('a surface transfer from a crop too large to analyse whole keeps the recipe as asked and paints (live, Istanbul, 2026-11-10)',async()=>{
+ // The crop (2100 x 2100, past ANALYSIS_PIXELS) is analysed from a reduced copy; the plan carried that copy's recipe and
+ // the job stopped before its first stroke with "The saved reference job no longer matches its stroke plan".
+ const side=2100,big={width:side,height:side,data:Buffer.alloc(side*side*4)};
+ for(let y=0;y<side;y++)for(let x=0;x<side;x++){const v=Math.round(40+170*x/side);big.data.set([v,Math.round(v*.6),30,255],(y*side+x)*4);}
+ const h=await harness();try{
+  h.runtime.study.canvas={mode:'current'};h.runtime.study.references[0]={id:'ref',path:h.ref,name:'Sky',width:side,height:side};
+  const native=h.runtime.callNative;
+  h.runtime.callNative=async(op,p)=>op==='decode_reference'?{width:side,height:side,rgba_base64:big.data.toString('base64'),sha256:p.sha256}:native(op,p);
+  const tool=h.tools.find(t=>t.name==='paint_reference_surface');
+  const done=await tool.execute('blend',{name:'Blend',reference_id:'ref',preset:'k) Blender Basic',source:[0,0,side,side],target:[0,0,48,48],spacing:60,length:120,max_detail:1,edges:false});
+  assert.equal(done.details.status,'complete',JSON.stringify(done.details));
+  assert.ok(done.details.total_strokes>0);
+  const {readdir}=await import('node:fs/promises'),folder=join(h.runtime.study.directory,'reference-paintings');
+  const job=JSON.parse(await readFile(join(folder,(await readdir(folder)).find(n=>n.endsWith('.json'))),'utf8'));
+  assert.deepEqual(job.recipe.source,[0,0,side,side],'the job keeps the source as asked');
+ }finally{await h.close();}
+});
