@@ -3682,6 +3682,9 @@ export class StudioRuntime extends PaintingRuntime {
     try {
       await this.addReferences(command.references);
       await this.setPaintOnlyHere(command.paint_only_here);          // an area the message brings (Use my selection, the typed phrase)
+      // The card's Use this: the area is the shapes model's outline, which the painter checks before painting (areaContext).
+      if (command.paint_only_here && this.goal?.question?.select_area?.proposal && this.goal.paint_only_here)
+        this.goal.paint_only_here = {...this.goal.paint_only_here, found:true};
       // A refine-part step's area stays while that step is painted (a continuation, a Redo); one left from another step goes.
       const stepArea = this.goal?.paint_only_here?.step_area ? this.goal.paint_only_here : null;
       // A canvas reference's area stays for its own move and a Keep that continues it; any other message ends it.

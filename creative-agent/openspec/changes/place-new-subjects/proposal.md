@@ -33,6 +33,22 @@ water" from generated image assets.
    Krita takes it; "Use this" pressed before then says why and keeps it. The artist's own selection made meanwhile stays
    until they press.
 
+## Added the same day (the artist: "fix that right now")
+
+"More soldiers" from a canvas reference, then "get rid of the middle soldier" (chat 0226a3af).
+
+5. **The change area holds the whole figures.** The area was the pixels differing by ΔE 12 or more: the soldiers' cast
+   shadows. The khaki figures on the warm dock differed less, so rows of soldiers were outside the area and others were
+   cut (one arm was painted). A weaker difference (ΔE 6, `MASK_RULES.spread`) now belongs to a clear one it touches; a
+   weaker difference alone is still the model drifting. Replayed on the saved canvas and reference of this chat: every
+   soldier inside, no sky or smoke patches; on the ships reference of the same chat: the same ships, with the flag that
+   had been cut.
+6. **A found outline is not accepted by Auto-approve.** The card with the shapes model's outline carries no recommended
+   answer. For "middle soldier" the outline was a spot at the dock's right edge and was accepted in five seconds.
+   This replaces the hands-free answer of 2026-10-25 for this card only.
+7. **The painter looks before it paints in a found area.** The area's context says it is the shapes model's outline, that
+   it is often wrong, and to observe its bounds first and paint nothing when it shows something else.
+
 ## Not in this change
 
 - Reading an answer to a question as the answer, not as a new request (the "paint in sea in the front" turn).

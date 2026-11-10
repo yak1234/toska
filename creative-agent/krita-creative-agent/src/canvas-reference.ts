@@ -57,6 +57,10 @@ export const MASK_RULES = Object.freeze({
   blur: 0.004,
   /** ΔE76 (CIELAB) from which a pixel differs. */
   threshold: 12,
+  /** ΔE from which a pixel belongs to a change it touches (0: off). A figure's body often differs less from the ground
+   *  it stands on than its cast shadow does: the area found the shadows and cut or missed the figures (Istanbul,
+   *  2026-11-10, "more soldiers"). A weaker difference that touches no clear one is the model drifting, and is left out. */
+  spread: 6,
   /** The fine pass's ΔE, used only when the normal one finds nothing (0: no fine pass). */
   fine: 6,
   /** Pieces (and holes) smaller than this share of the picture are specks. */
@@ -196,6 +200,22 @@ function dropSmall(mask: Uint8Array, width: number, height: number, value: numbe
   }
 }
 
+/** Of `mask`'s pieces (4-connected), only those that hold a pixel of `seeds` stay. */
+function keepTouching(mask: Uint8Array, width: number, height: number, seeds: Uint8Array): void {
+  const seen = new Uint8Array(mask.length), stack = new Int32Array(mask.length), piece: number[] = [];
+  for (let start = 0; start < mask.length; start++) {
+    if (seen[start] || !mask[start]) continue;
+    let top = 0, seeded = false; stack[top++] = start; seen[start] = 1; piece.length = 0;
+    while (top) {
+      const p = stack[--top]!, x = p % width; piece.push(p);
+      if (seeds[p]) seeded = true;
+      for (const q of [x > 0 ? p - 1 : -1, x < width - 1 ? p + 1 : -1, p >= width ? p - width : -1, p + width < mask.length ? p + width : -1])
+        if (q >= 0 && !seen[q] && mask[q]) { seen[q] = 1; stack[top++] = q; }
+    }
+    if (!seeded) for (const p of piece) mask[p] = 0;
+  }
+}
+
 /** The mask grown by `r` pixels (a chamfer 3-4 distance, near round). */
 function dilate(mask: Uint8Array, width: number, height: number, r: number): Uint8Array {
   const far = 1e9, d = new Float64Array(mask.length);
@@ -272,7 +292,14 @@ function differenceAt(canvas: Rgba, reference: Rgba, within: Uint8Array | null |
   let mask: Uint8Array = new Uint8Array(n);
   for (let p = 0; p < n; p++) if (delta[p]! >= threshold) mask[p] = 255;
   const least = Math.max(4, Math.round(n * rules.speck));
-  dropSmall(mask, width, height, 255, least); dropSmall(mask, width, height, 0, least);
+  dropSmall(mask, width, height, 255, least);
+  if (rules.spread && rules.spread < threshold) {
+    const weak = new Uint8Array(n);
+    for (let p = 0; p < n; p++) if (delta[p]! >= rules.spread) weak[p] = 255;
+    keepTouching(weak, width, height, mask);
+    mask = weak;
+  }
+  dropSmall(mask, width, height, 0, least);
   mask = dilate(mask, width, height, Math.max(MIN_DILATE, Math.round(long * rules.dilate)));
   if (within) for (let p = 0; p < n; p++) if ((within[p] ?? 0) < 128) mask[p] = 0;
   return { width, height, data: mask, ...measure(mask, width, height) };

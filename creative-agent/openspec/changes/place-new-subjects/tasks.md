@@ -11,3 +11,9 @@ Tests first, seen failing. From `krita-creative-agent`: `npm run -s test:unit`, 
       `tests/ui_panel_paint_only_here.py`, under PyQt5 and PyQt6.
 - [ ] 5. Live in Toska on a copy: after a finished plan, "add two ships" makes the images and paints them in without a
       selection card; "paint only the sea" shows the outline as marching ants. Not done.
+- [x] 6. `canvas-reference.ts` `MASK_RULES.spread` and `keepTouching`. Test in `tests/canvas-reference.test.mjs`; replayed
+      on the two saved references of chat 0226a3af (pictures looked at, not in the repo).
+- [x] 7. `paint-only-here.ts`: no recommended answer with a found outline; `found` on the area and `check` in its context;
+      `studio.mjs` marks the area found. Tests in `tests/paint-only-here.test.mjs`. The mark in `studio.mjs` has no test.
+- [ ] 8. Live in Toska: a canvas reference with many small figures paints them all; a wrong outline is refused by the
+      painter. Not done.

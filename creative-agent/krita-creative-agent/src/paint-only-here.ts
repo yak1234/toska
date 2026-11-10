@@ -24,7 +24,9 @@ import { decodePlane, encodePlane } from './shapes/png.ts';
 import { elementsNamed } from './project-folder.ts';
 
 export type Rect = [number, number, number, number];
-export type PaintOnlyArea = { name: string | null; bounds: Rect; mask_path: string; sha256: string; share: number; canvas: [number, number]; set_at: string };
+export type PaintOnlyArea = { name: string | null; bounds: Rect; mask_path: string; sha256: string; share: number; canvas: [number, number]; set_at: string;
+  /** The shapes model's outline the artist accepted on the card (Use this), not an area they drew: checked before painting. */
+  found?: boolean };
 export type PaintOnlyCommand = { action?: string; mask_path?: unknown; bounds?: unknown; canvas?: unknown; name?: unknown };
 export type AreaMask = { width: number; height: number; data: Uint8Array; bounds: Rect };
 
@@ -101,7 +103,11 @@ export function areaContext(area: PaintOnlyArea | null | undefined) {
   const percent = Math.max(1, Math.round(area.share * 100));
   return {
     name: areaLabel(area), bounds: area.bounds,
-    description: `The artist's own selection (${percent}% of the canvas), the pixels they drew around inside bounds [${area.bounds.join(', ')}].`,
+    description: area.found
+      ? `An outline the shapes model found for "${areaLabel(area)}" and the artist accepted (${percent}% of the canvas), inside bounds [${area.bounds.join(', ')}]. The shapes model often outlines the wrong place.`
+      : `The artist's own selection (${percent}% of the canvas), the pixels they drew around inside bounds [${area.bounds.join(', ')}].`,
+    ...(area.found ? { check: `Before any painting call, look: observe_canvas with region [${area.bounds.join(', ')}]. If what is there is not ${areaLabel(area)}, paint nothing: `
+      + `call finish_move saying what the outline shows instead, and ask the artist to draw around ${areaLabel(area)} with the Freehand Selection tool and press Paint only here.` } : {}),
     rules: 'Paint only inside it: Krita blocks every write outside it, and its edge is softened a few pixels. paint_from_reference, '
       + 'continue_reference_painting and the edges and surface tools paint only the dabs inside it, so transfer the whole reference over '
       + 'the whole canvas (or the reference area that lies under it) and the area may be the first transfer; paint_finish and paint_accents '
@@ -218,8 +224,10 @@ export async function askForArea(host: SelectionHost, given: string, { request }
     : `Select ${part}: Find it for me outlines it with the shapes model, or draw around it with the Freehand Selection tool (the Magnetic one snaps to edges), then press Use my selection.`;
   // Auto-approve's answer (auto-approve.ts): Use this for a found outline; Paint everywhere when the shapes model already found
   // nothing (asking it again finds nothing again: the artist, 2026-10-25, hands-free like the demo); else Find it for me.
-  const recommended = proposal ? PROPOSAL_OPTIONS[0] : searched ? 'Paint everywhere' : SELECT_OPTIONS[0];
-  goal.question = { id: randomUUID(), question, options: [...(proposal ? PROPOSAL_OPTIONS : SELECT_OPTIONS)], recommended, asked_in: 'agent',
+  // A found outline has no recommended answer, so Auto-approve leaves it to the artist: the shapes model outlined a spot at
+  // the dock's edge for "middle soldier", it was accepted in five seconds, and the repair went there (Istanbul, 2026-11-10).
+  const recommended = proposal ? undefined : searched ? 'Paint everywhere' : SELECT_OPTIONS[0];
+  goal.question = { id: randomUUID(), question, options: [...(proposal ? PROPOSAL_OPTIONS : SELECT_OPTIONS)], ...(recommended ? { recommended } : {}), asked_in: 'agent',
     select_area: { part, ...(request ? { request: request.slice(0, 500) } : {}), ...(proposal ? { proposal } : {}) } };
   goal.status = 'needs_input'; host.yieldTurn();
   await host.persist(); host.publish();

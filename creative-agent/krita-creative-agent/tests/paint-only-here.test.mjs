@@ -83,6 +83,17 @@ test('the painter\'s context carries the area: bounds, a short description, what
   assert.match(context.rules, /refine, sharpen or add detail[^]*paint_finish with detail "fine"[^]*then paint_accents/, 'finish-stage goal 6: the refine sequence in an area');
   assert.match(context.reply, /^Painting only inside your selection: the sky/);
   assert.equal(areaContext(null), undefined);
+  assert.equal(context.check, undefined, 'the artist drew it: nothing to check');
+});
+
+test('an area the shapes model found is checked before it is painted in', () => {
+  // Istanbul, 2026-11-10: "get rid of the middle soldier". The outline was a spot at the dock's right edge; the painter
+  // patched it without looking and left a smudge there, and the fragment in the middle stayed.
+  const context = areaContext({ name: 'middle soldier', bounds: [8500, 3200, 1000, 800], share: 0.01, mask_path: '/x.png', sha256: 'a', canvas: [12000, 4000], found: true });
+  assert.match(context.description, /shapes model found for "middle soldier"/);
+  assert.doesNotMatch(context.description, /they drew/);
+  assert.match(context.check, /observe_canvas with region \[8500, 3200, 1000, 800\]/);
+  assert.match(context.check, /not middle soldier[^]*paint nothing[^]*Freehand/);
 });
 
 test('a scoped transfer keeps only the dabs whose centre lies inside the area, deterministically', () => {
@@ -255,7 +266,7 @@ test('with a found outline the card asks "Is this the sky?" with Use this, Adjus
   assert.deepEqual(asked, ['the sky']);
   assert.match(goal.question.question, /^Is this the sky\? It is selected on your painting now\./);
   assert.deepEqual(goal.question.options, PROPOSAL_OPTIONS);
-  assert.equal(goal.question.recommended, 'Use this', 'Auto-approve paints inside the found outline');
+  assert.equal(goal.question.recommended, undefined, 'a found outline waits for the artist: Auto-approve accepted one in the wrong place (Istanbul, 2026-11-10)');
   assert.deepEqual(PROPOSAL_OPTIONS, ['Use this', 'Adjust with Freehand', 'Paint everywhere']);
   assert.deepEqual(goal.question.select_area, { part: 'the sky', request: 'Paint the moonlit sky.', proposal });
   assert.deepEqual(events.at(-1).select_area.proposal, proposal, 'the panel loads it as the selection');

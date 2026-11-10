@@ -34,6 +34,23 @@ function drift(image) {
 }
 const inside = (mask, x, y) => mask.data[y * mask.width + x] >= 128;
 
+test('a weaker change that touches a clear one belongs to it; a weaker change by itself is the model drifting', () => {
+  // Istanbul, 2026-11-10: "more soldiers". The clear differences were the cast shadows; the khaki figures on the warm dock
+  // differed less than the threshold, so the area missed whole rows of soldiers and cut others (one arm was painted).
+  const canvas = { width: 400, height: 200, data: new Uint8Array(400 * 200 * 4).map((_, i) => i % 4 === 3 ? 255 : [150, 110, 80][i % 4]) };
+  const reference = copy(canvas);
+  paint(reference, [100, 120, 20, 40], [60, 40, 30]);          // a cast shadow: clear
+  paint(reference, [100, 80, 20, 40], [128, 96, 72]);          // the figure above it: weaker, and touching
+  paint(reference, [300, 30, 40, 30], [128, 96, 72]);          // the same weak change far away, alone: a drifting cloud
+  const strict = differenceMask(canvas, reference, { rules: { ...MASK_RULES, spread: 0 } });
+  assert.ok(inside(strict, 110, 140) && !inside(strict, 110, 90), 'the threshold alone finds the shadow and misses the figure');
+  const mask = differenceMask(canvas, reference);
+  assert.ok(inside(mask, 110, 140), 'the shadow');
+  assert.ok(inside(mask, 110, 90), 'the figure it belongs to');
+  assert.ok(!inside(mask, 320, 45), 'not the lone weak change');
+  assert.ok(!inside(mask, 200, 100), 'not the unchanged dock between');
+});
+
 test('the command: an instruction, and "in <part>" at its end for an area', () => {
   assert.deepEqual(canvasReferenceRequest('/canvas-reference add more ghosts and ghost-like lighting'), { instruction: 'add more ghosts and ghost-like lighting', part: null });
   assert.deepEqual(canvasReferenceRequest('/canvas-reference more snow and crisp effects in the sky'), { instruction: 'more snow and crisp effects', part: 'the sky' });
