@@ -72,6 +72,11 @@ export const emptyCells = (map: ChangeMap): string[] => Object.keys(CELL_NAMES).
 /** Did the batch remove artwork (painted before, empty after)? Measured, so it is a finding at probability 1. */
 export const removedArtwork = (map: ChangeMap): boolean => map.removed_share >= REMOVED;
 /** A new ground that is the painting itself in another place: read as a picture, in the painting's finish. */
+/** Whether Luna is sent the parts at actual pixels (full-detail-review-crops). Off: on the real case they made both answers
+ * worse. Live and replayed, Istanbul, 2026-11-10, the artist's own finished picture moved onto empty canvas: with two 1:1
+ * parts of it beside two 1:1 parts of the same picture, "picture" fell from 0.86 to 0.62 and same finish from 0.84 to
+ * 0.08. The crop read from the document (sharper than a crop of the view) is used; the parts wait for labelled cases. */
+export const REVIEW_TILES = false;
 export const RELOCATED_CONFIDENCE = 0.6;
 export const relocated = (read: { reading: string; confidence: number; same_finish: number | null }): boolean =>
   read.reading === 'picture' && read.confidence >= RELOCATED_CONFIDENCE && read.same_finish !== null && read.same_finish >= SAME_FINISH;

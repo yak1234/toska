@@ -163,13 +163,17 @@ test('with 1:1 tiles Luna is told what each image is and its scale, and finish i
  assert.match(q.same_finish.instructions,/NEW GROUND at 1:1.*PAINTING at 1:1/);
  assert.deepEqual([r.reading,r.same_finish],['picture',.2]);
 });
-test('tiles of the new ground alone keep the calibrated finish question; without tiles nothing changes',async()=>{
+test('parts at actual pixels are sent only as a pair, new ground beside painting; otherwise the calibrated request',async()=>{
  const crop={type:'image',data:'Y3JvcA==',mimeType:'image/jpeg'},t1={type:'image',data:'dDE=',mimeType:'image/jpeg'};
  const answers=()=>({answers:{new_ground:{type:'choice',choice:'picture',confidence:.8},same_finish:{type:'noul',noul:.2}}});
  const c=client(answers);
+ // Live, Istanbul, 2026-11-10: two 1:1 parts of the artist's own moved picture, with no part of the painting at that
+ // scale, read "picture" 0.58 and same finish 0.21 (0.86 and 0.84 without them).
  await newGroundCheck({client:c,crop,painting:before,scale:.3,tiles:{fresh:[t1],painting:[]}});
  assert.equal(c.requests[0].questions.same_finish.instructions,QUESTIONS.new_ground.same_finish.instructions);
- assert.equal(c.requests[0].parts.length,6);
+ assert.equal(c.requests[0].questions.new_ground.instructions,QUESTIONS.new_ground.instructions);
+ assert.deepEqual(c.requests[0].parts,['PAINTING (the canvas before this painting batch; its empty part had no paint):',before,
+  'NEW GROUND (the part of the canvas that was empty before this painting batch, as it is now):',crop]);
  const plain=client(answers);
  await newGroundCheck({client:plain,crop,painting:before,scale:1,tiles:{fresh:[],painting:[t1]}});
  assert.deepEqual(plain.requests[0].parts,['PAINTING (the canvas before this painting batch; its empty part had no paint):',before,
@@ -177,5 +181,5 @@ test('tiles of the new ground alone keep the calibrated finish question; without
  assert.equal(plain.requests[0].questions.new_ground.instructions,QUESTIONS.new_ground.instructions);
  const alone=client(answers);
  await newGroundCheck({client:alone,crop,scale:.3,tiles:{fresh:[t1],painting:[t1]}});
- assert.equal(alone.requests[0].parts.length,4,'no painting, no painting tiles');
+ assert.equal(alone.requests[0].parts.length,2,'no painting: the crop alone');
 });

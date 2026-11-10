@@ -150,10 +150,15 @@ export async function newGroundCheck({client,crop,facts,painting,signal,tiles,sc
  {client:DecisionMaker; crop:DecisionPart; facts?:string; painting?:DecisionPart; signal?:AbortSignal;
   tiles?:{fresh:DecisionPart[]; painting:DecisionPart[]}; scale?:number}):Promise<NewGroundResult> {
  const {instructions,readings,same_finish,tiles_note}=QUESTIONS.new_ground;
- const fresh=tiles?.fresh ?? [], beside=painting && fresh.length ? tiles?.painting ?? [] : [];
+ // The parts at actual pixels are sent only as a pair, new ground beside painting, and only the finish question reads
+ // them. Alone they misled both questions (live, Istanbul, 2026-11-10: the artist's own finished picture, moved, read
+ // "picture" 0.58 and same finish 0.21 with two 1:1 parts of it and no part of the painting at that scale; 0.86 and 0.84
+ // without): a 6000 px painting is soft at actual pixels, which only says something beside the painting at that scale.
+ const pair=!!painting && !!tiles?.fresh.length && !!tiles?.painting.length;
+ const fresh=pair ? tiles!.fresh : [], beside=pair ? tiles!.painting : [];
  const reduced=fresh.length && typeof scale==='number' && scale>0 && scale<1 ? `; the whole of it, shown at ${Math.max(1,Math.round(scale*100))}% of its size` : '';
  const result=await client.decide({signal,purpose:'read-new-ground',
-  questions:{new_ground:choice(fresh.length ? instructions+' '+tiles_note : instructions,readings),
+  questions:{new_ground:choice(pair ? instructions+' '+tiles_note : instructions,readings),
    ...(painting ? {same_finish:noul(beside.length ? {...same_finish,instructions:same_finish.tiles_instructions} : same_finish)} : {})},
   parts:[...(facts ? [facts] : []),...(painting ? ['PAINTING (the canvas before this painting batch; its empty part had no paint):',painting] : []),
    `NEW GROUND (the part of the canvas that was empty before this painting batch, as it is now${reduced}):`,crop,

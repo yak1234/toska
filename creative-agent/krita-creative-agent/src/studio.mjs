@@ -4,7 +4,7 @@ import { DecisionService } from './decisions/service.ts';
 import { chatShapes } from './shapes/chat.ts';
 import { chatCloseups, goalReference } from './closeups.ts';
 import {passCheck, progressCheck, moveCheck, newGroundCheck, seamCheck} from './visual-checks.ts';
-import { detailPlan, emptyCells, groundBoxes, needsArtist, newGroundCrop, parseChangeMap, parseReviewCrops, reviewBatch, updateGround } from './blank-canvas.ts';
+import { detailPlan, emptyCells, groundBoxes, needsArtist, newGroundCrop, parseChangeMap, parseReviewCrops, reviewBatch, updateGround, REVIEW_TILES } from './blank-canvas.ts';
 import { executionSettings, thinkingLevel, AUTO_REASONING_NOTE, migrateSettings, DEFAULT_DECISIONS } from './execution-settings.mjs';
 import { panelSchema, DEFAULT_PLANNER } from './settings-schema.mjs';
 import { COMIC_OPERATIONS, CRAFT_OPERATIONS, CRAFT_TOOLS, FORK_TOOLS, mutates } from './craft.mjs';
@@ -1212,10 +1212,21 @@ export class StudioRuntime extends PaintingRuntime {
             const crop=detailed?.crop ?? await this.newGroundImage(map,a.content);
             if (!crop) return {fallback:'no_checks',elapsed_ms:0};
             // Beside existing paint the new ground is also compared with it; on a wholly empty canvas there is none.
-            const read=await newGroundCheck({client,crop,facts,signal,...(emptyCells(map).length<9 ? {painting:b.content} : {}),
-              ...(detailed ? {scale:detailed.scale,tiles:{fresh:detailed.fresh.map(t=>t.image),painting:detailed.painting.map(t=>t.image)}} : {})});
-            return read.fallback ? read : {...read,detail:detailed ? 'document' : 'view',
-              ...(detailed ? {tiles:{fresh:detailed.fresh.map(t=>t.box),painting:detailed.painting.map(t=>t.box)}} : {})};
+            const beside=emptyCells(map).length<9 ? {painting:b.content} : {};
+            let read=await newGroundCheck({client,crop,facts,signal,...beside,
+              ...(detailed && REVIEW_TILES ? {scale:detailed.scale,tiles:{fresh:detailed.fresh.map(t=>t.image),painting:detailed.painting.map(t=>t.image)}} : {})});
+            // What Luna read is recorded whatever the verdict (an undone batch drops its new ground): a move was undone
+            // twice as "artwork removed" and nothing said what the new ground had read as (Istanbul, 2026-11-10).
+            const note=(route,r)=>this.diagnostics?.record({type:'new_ground_read',route,...(r.fallback ? {fallback:r.fallback} : {reading:r.reading,confidence:r.confidence,same_finish:r.same_finish}),elapsed_ms:r.elapsed_ms});
+            note(detailed ? 'document' : 'view',read);
+            // The larger request (the crop and its parts at actual pixels) got no answer: asked again from the view alone.
+            let route=detailed;
+            if (read.fallback && detailed) {
+              const plain=await this.newGroundImage(map,a.content);
+              if (plain) { read=await newGroundCheck({client,crop:plain,facts,signal,...beside}); route=null; note('view',read); }
+            }
+            return read.fallback ? read : {...read,detail:route ? 'document' : 'view',
+              ...(route && REVIEW_TILES ? {tiles:{fresh:route.fresh.map(t=>t.box),painting:route.painting.map(t=>t.box)}} : {})};
           }});
       },
       undo: async passes => {
