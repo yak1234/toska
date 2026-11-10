@@ -473,6 +473,28 @@ class NativePolicyTests(unittest.TestCase):
         self.assertNotIn('changed', result, 'a revision this plugin did not compute is only refused')
         self.assertEqual(result['error'], 'The painting changed since the last observation. Inspect the fresh canvas before continuing.')
 
+    def test_a_checkpoint_recomposited_by_area_is_not_a_changed_painting(self):
+        # Istanbul, 2026-11-10: a transfer's second chunk was refused because the whole recomposite differs invisibly
+        # from the recomposite by area its checkpoint was hashed from. The same picture, layers and selection pass.
+        part = lambda pixels, layers=(('a', 'Sky', 255, True, False, 0),), selection=None: {'pixels': pixels, 'layers': [list(l) for l in layers], 'selection': selection, 'size': [768, 1024]}
+        def harness(now, same=True, kept='seen', view='copy'):
+            h=Harness(); h._revision_parts={'seen': part('p1'), 'other': part('p0'), 'current-revision': now}
+            h._creative_session['area_checkpoint']={'revision': kept, 'view': view}
+            h._creative_area_refresh_note=lambda doc: 'copy now'
+            h._creative_views_same=lambda one, other: same
+            p=request(); p['params']['expected_revision']='seen'
+            return h, h.cmd_creative(p)
+        h, result = harness(part('p2'))
+        self.assertEqual(result.get('status'), 'ok', result.get('error')); self.assertEqual(h.paints, 1)
+        self.assertNotIn('area_checkpoint', h._creative_session)
+        refused = [harness(part('p2'), same=False),                                        # the picture visibly changed
+                   harness(part('p2', (('a', 'Sky', 255, False, False, 0),))),               # a layer changed too
+                   harness(part('p2', selection='s')),                                      # the selection changed too
+                   harness(part('p2'), kept='other'),                                      # not this session's checkpoint
+                   harness(part('p2'), view=None)]                                         # no copy was kept
+        for h, result in refused:
+            self.assertEqual(result['error_code'], 'canvas_changed'); self.assertEqual(h.paints, 0)
+
     def test_disappeared_file_never_recreated_or_painted(self):
         h=Harness(); h._creative_session.update(saved_once=True,painting_path='/nonexistent/old/painting.kra')
         with self.assertRaisesRegex(ValueError,'will not be recreated'): h.cmd_creative(request())

@@ -62,7 +62,8 @@ JOB_POLL_MS = 10
 # paint_pass has the bridge's default 120 s (not in LONG_OPERATIONS), so a job is cancelled at 100 s of job time: the result
 # is then a definite "stopped after N strokes", not a lost one. After the cancel the job gets CANCEL_GRACE_SECONDS to end.
 JOB_DEADLINE_SECONDS = 100
-CHEAP_REFRESH_MS = 1500      # a whole recomposite at most this long is done at every pass checkpoint (see projection_fresh)
+CHEAP_REFRESH_MS = 5000      # a whole recomposite at most this long is done at every pass checkpoint (see projection_fresh)
+SAME_VIEW_LEVELS = 12        # two small copies of the canvas show the same picture when no pixel differs by more than this
 AREA_CHECK_SIDE = 512        # the long side of the copy that checks a recomposite by area against the whole one
 CANCEL_GRACE_SECONDS = 15
 # After the artist's Undo ended a job, Krita carries the undo out later, from its event loop once the image is idle: the pass
@@ -670,6 +671,8 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         self._creative_validate_save_target(doc, session)
         expected = params.get('expected_revision')
         current = self._creative_revision(doc) if expected else None
+        if expected and expected != current and self._creative_same_after_area_refresh(doc, session, expected, current):
+            expected = current                         # the checkpoint's own recomposite by area, not a change
         if expected and expected != current:
             what = self._creative_revision_changed(expected, current)
             return {'error': 'The painting changed since the last observation' + (' (' + what + ')' if what else '')
@@ -1735,6 +1738,37 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         except Exception:
             return None
 
+    def _creative_same_after_area_refresh(self, doc, session, expected, current):
+        """True when `expected` is the revision of this session's last checkpoint, taken from a canvas recomposited by
+        area, and the canvas after the whole recomposite still shows that picture: the same layers and selection, and
+        no pixel of a small copy differing by more than SAME_VIEW_LEVELS. A stroke the artist made in between shows in
+        the copy and is refused as before. Never raises: on any doubt the pass is refused."""
+        try:
+            kept = session.get('area_checkpoint')
+            if not kept or kept.get('revision') != expected or kept.get('view') is None:
+                return False
+            if self._creative_revision_changed(expected, current) != 'the picture':
+                return False
+            now = self._creative_area_refresh_note(doc)         # read as the checkpoint's copy was, after the whole recomposite
+            same = now is not None and self._creative_views_same(kept['view'], now)
+            if same:
+                session.pop('area_checkpoint', None)
+            return same
+        except Exception:
+            return False
+
+    def _creative_views_same(self, one, other):
+        """Two small copies of the canvas of one size with no pixel differing by more than SAME_VIEW_LEVELS."""
+        if (one.width(), one.height()) != (other.width(), other.height()):
+            return False
+        import numpy as np
+        from .qt_compat import QImage
+        def rows(image):
+            image = image.convertToFormat(QImage.Format.Format_ARGB32)
+            data = np.frombuffer(image.constBits().asstring(image.sizeInBytes()), np.uint8).reshape(image.height(), image.bytesPerLine())
+            return data[:, :image.width() * 4].astype(np.int16)
+        return not bool(np.abs(rows(one) - rows(other)).max() > SAME_VIEW_LEVELS)
+
     def _creative_area_refresh_differs(self, before, projection):
         """Where the small copy from before the whole recomposite differs from the canvas after it: [x, y, w, h] in
         fractions of the canvas and the share of the copy's pixels, or None when they agree. Never raises."""
@@ -1746,7 +1780,7 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                 image = image.convertToFormat(QImage.Format.Format_ARGB32)
                 data = np.frombuffer(image.constBits().asstring(image.sizeInBytes()), np.uint8).reshape(image.height(), image.bytesPerLine())
                 return data[:, :image.width() * 4].reshape(image.height(), image.width(), 4).astype(np.int16)
-            differs = np.abs(rows(before) - rows(after)).max(-1) > 12
+            differs = np.abs(rows(before) - rows(after)).max(-1) > SAME_VIEW_LEVELS
             if not differs.any():
                 return None
             ys, xs = np.nonzero(differs)
@@ -2360,7 +2394,9 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         if session.pop('compare_area_refresh', False):
             area_note = self._creative_area_refresh_note(doc)   # what the pass's own recomposite by area left out
             lap('area_check')
-        if not session.pop('projection_fresh', False):
+        by_area = session.pop('projection_fresh', False)
+        session.pop('area_checkpoint', None)
+        if not by_area:
             doc.refreshProjection()
             doc.waitForDone()
             lap('refresh')
@@ -2374,6 +2410,11 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         lap('read')
         revision = self._creative_revision(doc, projection)
         lap('revision')
+        if by_area:
+            # This revision is of a canvas recomposited by area. The next pass checks after a whole recomposite, whose
+            # pixels can differ invisibly (Istanbul, 2026-11-10: every transfer's second chunk refused); a small copy
+            # of what this checkpoint showed lets that check tell such a difference from a change to the picture.
+            session['area_checkpoint'] = {'revision': revision, 'view': self._creative_area_refresh_note(doc)}
         if area_note is not None:
             area_note = self._creative_area_refresh_differs(area_note, projection)
         if region:
