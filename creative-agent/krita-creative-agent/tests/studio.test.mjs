@@ -116,7 +116,7 @@ test('a temporary provider failure after painting retries without replaying the 
     await h.start('plan');await h.runtime.setMode('autopilot');await h.runtime.prompt('',{start_plan:true});
     assert.ok(failed);assert.equal(h.runtime.goal.status,'complete');assert.equal(h.runtime.goal.passes,1);
     assert.equal(h.calls.filter(c=>c.operation==='paint_pass').length,1);
-    assert.ok(h.events.some(e=>e.phase==='retrying'));
+    assert.ok(h.events.some(e=>e.phase==='retrying'&&e.message==="The model's provider had an error. Trying again in 3 s (1/5)…"));   // model-busy-retries 1, 2
   } finally {await h.close();}
 });
 
@@ -711,8 +711,9 @@ test('configuring a provider while idle preserves the current model and invalida
 
 test('text-only Pi models support detached Ask and Plan but cannot receive images or enter Agent', {timeout:20000}, async()=>{
   const h=await harness(req=>{
-    assert.ok(!req.tools.some(t=>['observe_canvas','view_reference'].includes(t.function.name)));
-    return req.tools.some(t=>t.function.name==='propose_plan')?call('propose_plan',brief):{content:'Text-only discussion.'};
+    const tools=req.tools??[];                      // a request without tools (Ask, detached) carries no list at all
+    assert.ok(!tools.some(t=>['observe_canvas','view_reference'].includes(t.function.name)));
+    return tools.some(t=>t.function.name==='propose_plan')?call('propose_plan',brief):{content:'Text-only discussion.'};
   });
   try{
     const base=h.runtime.models.getModel('local-test','vision-test');

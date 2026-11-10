@@ -17,6 +17,7 @@ import { isFillNudge } from './reference-first.ts';
 import { GUARDS_CHANNEL, LOOP_GUARDS, PAINTING_WEIGHT, argumentRepairExtension } from './extensions.mjs';
 import { withArgumentRepair } from './argument-repair.ts';
 import { discoverEndpointModels, endpointProviderId, endpointUrl, isLocalEndpoint, withPrices } from './model-endpoint.ts';
+import { MODEL_RETRY, modelTrouble, pausedMessage, retryStatus } from './model-trouble.ts';
 
 const SIGN_IN_NAMES = { 'openai-codex': 'ChatGPT (Codex)', 'anthropic': 'Claude', 'google-gemini-cli': 'Gemini CLI', 'google-antigravity': 'Google Antigravity' };
 /** How to restore a lapsed or missing OAuth sign-in. The chat keeps its model. */
@@ -284,7 +285,7 @@ export class PaintingRuntime {
   async openSession(model, sessionFile) {
       const { directory, id } = this.study;
       const settings = SettingsManager.inMemory({
-        compaction: { enabled: true, reserveTokens: compactionReserve(model), keepRecentTokens: 12000, modelOverrides: { [model.provider + '/' + model.id]: { reserveTokens: compactionReserve(model) } } }, retry: { enabled: true, maxRetries: 2, baseDelayMs: 1000, provider: { timeoutMs: 90000, maxRetries: 0 } },
+        compaction: { enabled: true, reserveTokens: compactionReserve(model), keepRecentTokens: 12000, modelOverrides: { [model.provider + '/' + model.id]: { reserveTokens: compactionReserve(model) } } }, retry: { enabled: true, ...MODEL_RETRY, provider: { timeoutMs: 90000, maxRetries: 0 } },
         packages: [], extensions: [], skills: [], enableAnalytics: false, enableInstallTelemetry: false,
         images: { autoResize: true, blockImages: false },
       });
@@ -422,12 +423,15 @@ export class PaintingRuntime {
     if (['turn_start','turn_end','message_start','message_end','tool_execution_start','tool_execution_end','auto_retry_start','auto_retry_end'].includes(event.type)) {
       // One record shape for several event kinds: each field is present only on some of them.
       const fields = /** @type {{toolCallId?: string, toolName?: string, isError?: boolean, message?: {role?: string, stopReason?: string}}} */ (event);
+      // Why a retry started: the kind of trouble and its status code, never the provider's text (model-busy-retries 4).
+      const trouble = event.type === 'auto_retry_start' ? modelTrouble(event.errorMessage) : undefined;
       hooks(this).diagnostics?.record({type:'model_'+event.type,tool_call_id:fields.toolCallId,tool:fields.toolName,
-        model_request_id:this.diagnosticRequestId,role:fields.message?.role,error:!!fields.isError,stop_reason:fields.message?.stopReason});
+        model_request_id:this.diagnosticRequestId,role:fields.message?.role,error:!!fields.isError,stop_reason:fields.message?.stopReason,
+        ...(trouble ? {trouble:trouble.kind, status_code:trouble.code, delay_ms:event.delayMs} : {})});
     }
     if (event.type === 'auto_retry_start') {
       this.runError = undefined;
-      this.setActivity('retrying','Temporary model connection problem. Retrying automatically ('+event.attempt+'/'+event.maxAttempts+')…');
+      this.setActivity('retrying', retryStatus(modelTrouble(event.errorMessage), event.attempt, event.maxAttempts, event.delayMs));
     }
     if (event.type === 'auto_retry_end' && event.success) this.runError = undefined;
     if (event.type === 'compaction_start') {
@@ -456,7 +460,7 @@ export class PaintingRuntime {
       this.emit({ type: 'message_end' });
       if (event.message.stopReason === 'error') {
         const provider = this.study?.provider, message = event.message.errorMessage ?? 'The model request failed.';
-        this.runError = this.signInLapsed(provider, message) ? signInMessage(provider, true) : this.redact(message);
+        this.runError = this.signInLapsed(provider, message) ? signInMessage(provider, true) : pausedMessage(modelTrouble(message), this.redact(message));
       }
     }
     if (event.type === 'tool_execution_start') {
