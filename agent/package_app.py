@@ -579,7 +579,9 @@ class Packager:
         self.problems = []
         self.built_from = ''
         self.arch = install_architecture(self.install)
-        self.neutralise = [self.install, self.source, ROOT.parent, os.path.expanduser('~')]   # what the binaries must not carry of this machine
+        # What the binaries must not carry of this machine. A tree configured before the checkout was renamed has the old
+        # spelling baked in (forks/krita-master is now a link to forks/toska), so each tree goes in under its link names too.
+        self.neutralise = [*link_spellings(self.install), *link_spellings(self.source), ROOT.parent, os.path.expanduser('~')]
 
     # -- helpers
     def copy_file(self, source, destination):
@@ -1539,6 +1541,21 @@ def harmless_reference(line, concrete=()):
     if SOURCE_PATH.fullmatch(line) or any(c.fullmatch(line) for c in KNOWN_CONSTANTS):
         return True
     return not any(mark in UPSTREAM_CI_PATH.sub('', line) for mark in GENERIC_MARKS)
+
+
+def link_spellings(path):
+    """`path`, and the same path spelled through every link beside the checkout that points at it (forks/krita-master ->
+    toska). Without the link spelling only the forks folder is neutralised and "krita-master/_install" is left behind."""
+    path = Path(path)
+    spellings = [path]
+    try:
+        inside = path.resolve().relative_to(ROOT.resolve())
+    except ValueError:
+        return spellings
+    for sibling in sorted(ROOT.parent.iterdir()):
+        if sibling.is_symlink() and sibling.resolve() == ROOT.resolve():
+            spellings.append(sibling / inside)
+    return spellings
 
 
 def neutral_bytes(length):
