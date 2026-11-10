@@ -23,3 +23,12 @@ Tests first, seen failing. Agent: `npm run -s test:unit`, `npm run -s typecheck`
 - 2.3 has no unit test: the studio's route (`newGroundDetail`, the fallback to the view) is covered only by its parts.
 - Not run: 3.2 (nothing was run in Toska) and 3.3. Luna was not asked anything with tiles. The wording without tiles
   is unchanged, so the ten labelled cases were not asked again.
+
+## Results (2026-11-10)
+
+- Live in the installed Toska on a copy of Istanbul (12000 x 4000): `review_crops` answered in about 110 ms; the crop
+  read from the document was used (`detail: document`, scale 0.172) and Luna read the moved picture "picture" 0.84,
+  same finish 0.91.
+- The parts at actual pixels are built but OFF (`REVIEW_TILES` in blank-canvas.ts). Replayed on that case: with two 1:1
+  parts of the new ground "picture" fell from 0.86 to 0.58 and same finish from 0.84 to 0.21; beside two 1:1 parts of the
+  same picture, to 0.62 and 0.08. They need labelled cases and probably a request of their own before they are used.
