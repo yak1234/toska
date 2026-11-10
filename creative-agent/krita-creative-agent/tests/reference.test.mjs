@@ -557,3 +557,57 @@ test('the edge-limit retry rebuilds at most three times and never raises min_con
  const wider=editEdgeRecipe({min_contrast:.5,spacing:1.5},{estimate:8000,limit:2000});
  assert.ok(wider.spacing>1.5 && wider.min_contrast===.5);
 });
+// sharpen-patch-references (approved 2026-11-10): Istanbul's painter was refused 616 source px over 2000 canvas px (3.2x) and
+// made more AI references to get under 2x. The transfer sharpens its reference first and paints from the sharpened picture.
+test('a transfer stretched past 2x on a painted canvas sharpens its reference first, scales its rects and paints; without a sharpener, Never or a failure it is refused',async()=>{
+ const big={width:96,height:96,data:Buffer.alloc(96*96*4)};
+ for(let y=0;y<96;y++)for(let x=0;x<96;x++)big.data.set(x<48?[200,20,10,255]:[10,20,200,255],(y*96+x)*4);
+ const painted=async()=>{const h=await harness();h.runtime.study.canvas={mode:'current'};h.runtime.study.references[0]={id:'ref',path:h.ref,name:'Dock',width:24,height:24};
+  const native=h.runtime.callNative;
+  h.runtime.callNative=async(op,p)=>op==='observe'?{...await native(op,p),painted_share:.8}
+   :op==='decode_reference'&&h.runtime.study.references[0].sharpened?{width:96,height:96,rgba_base64:big.data.toString('base64'),sha256:p.sha256}:native(op,p);
+  return h;};
+ const sharpenTo=(h,k,seen=[])=>async(ref,{onProgress}={})=>{seen.push(ref.id);onProgress?.(1,2);
+  Object.assign(ref,{sharpened:{from:{path:ref.path,width:ref.width,height:ref.height,sha256:'old'}},width:ref.width*k,height:ref.height*k});
+  return {scale:k,was:[24,24],note:`The reference "Dock" was sharpened ${k}x`};};
+ const edges={name:'Rim',reference_id:'ref',preset:'b) Basic-6 Details',source:[6,6,12,12],target:[0,0,48,48],min_contrast:.05};
+ const h=await painted();try{
+  const edgeTool=h.tools.find(t=>t.name==='paint_reference_edges'),seen=[],status=[];
+  h.runtime.emit=e=>{if(e.type==='status')status.push(e.message);};
+  await assert.rejects(edgeTool.execute('no sharpener',edges),/stretches the reference 4x/,'no sharpener: refused as before');
+  h.runtime.sharpenReference=async()=>{throw new Error('Sharpening ran out of memory. Close some apps and try again.');};
+  await assert.rejects(edgeTool.execute('failed',edges),/stretches the reference 4x.*Sharpening it first failed: Sharpening ran out of memory/,'a failure refuses with the reason');
+  h.runtime.sharpenReference=sharpenTo(h,4,seen);
+  const done=await edgeTool.execute('sharpened',edges);
+  assert.equal(done.details.status,'complete');
+  assert.deepEqual(seen,['ref']);
+  assert.match(done.details.sharpened,/"Dock" was sharpened 4x/,'the painter is told');
+  assert.ok(status.some(m=>/Sharpening "Dock" 4x for this transfer: 50%/.test(m)),status.join('|'));
+  const {readdir}=await import('node:fs/promises'),folder=join(h.runtime.study.directory,'reference-paintings');
+  const jobs=(await Promise.all((await readdir(folder)).filter(n=>n.endsWith('.json')).map(async n=>JSON.parse(await readFile(join(folder,n),'utf8')))));
+  const job=jobs.find(j=>j.recipe.name==='Rim');
+  assert.deepEqual(job.recipe.source,[24,24,48,48],'the source rect in the sharpened pixels');
+  assert.deepEqual(job.requested.source,[6,6,12,12],'what was asked is kept');
+  assert.equal(h.calls.at(-1).args.region.join(),'0,0,48,48');
+  // The same rect again (old pixels, an earlier job used it) is scaled, not sharpened twice.
+  const again=await edgeTool.execute('again',{...edges,name:'Rim 2'});
+  assert.equal(again.details.status,'complete');assert.deepEqual(seen,['ref'],'never sharpened twice');
+  // Still past 2x in the sharpened pixels: refused, saying it is already sharpened.
+  await assert.rejects(edgeTool.execute('tiny',{...edges,name:'Tiny',source:[40,40,8,8]}),/stretches the reference 6x.*already sharpened/);
+ }finally{await h.close();}
+ const patch=await painted();try{
+  patch.runtime.goal={revision:1,current_step:0,brief:{steps:[{},{},{},{},{},{}]}};
+  const seen=[];patch.runtime.sharpenReference=sharpenTo(patch,4,seen);
+  const asked={...recipe,name:'Patch',source:[0,0,8,8],target:[2,2,24,24],focal_regions:[[2,2,4,4]],steps:[4,2,1]};
+  const done=await patch.tools[0].execute('patch',asked);
+  assert.equal(done.details.status,'complete');assert.deepEqual(seen,['ref']);
+  const folder=join(patch.runtime.study.directory,'reference-paintings'),{readdir}=await import('node:fs/promises');
+  const job=JSON.parse(await readFile(join(folder,(await readdir(folder)).find(n=>n.endsWith('.json'))),'utf8'));
+  assert.deepEqual(job.recipe.source,[0,0,32,32]);assert.deepEqual(job.recipe.focal_regions,[[8,8,16,16]],'focal rects are source rects too');
+  // A size refusal is not a stretch refusal: nothing is sharpened for it.
+  const other=await painted();try{
+   other.runtime.goal=patch.runtime.goal;const none=[];other.runtime.sharpenReference=sharpenTo(other,4,none);
+   await assert.rejects(other.tools[0].execute('full',{...recipe,target:[0,0,64,64]}),/already exists/);assert.deepEqual(none,[]);
+  }finally{await other.close();}
+ }finally{await patch.close();}
+});

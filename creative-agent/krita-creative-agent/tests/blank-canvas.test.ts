@@ -4,7 +4,7 @@
 // measured change map. The numbers of the Istanbul case are the plugin's own answer for that chat's views. Writes no files.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { batchKind, dropFreshFindings, emptyCells, factsText, groundBoxes, needsArtist, newGroundCrop, newGroundNote, parseChangeMap, removedArtwork,
+import { batchKind, detailPlan, parseReviewCrops, dropFreshFindings, emptyCells, factsText, groundBoxes, needsArtist, newGroundCrop, newGroundNote, parseChangeMap, removedArtwork,
   reviewBatch, updateGround, type Box, type ChangeMap } from '../src/blank-canvas.ts';
 
 const cells = (empty: Record<string, number>, fresh: Record<string, number> = {}): ChangeMap['cells'] =>
@@ -147,4 +147,49 @@ test('removed artwork is a finding even when Luna does not answer; otherwise Lun
   const kept = await reviewBatch({ map: { ...ISTANBUL, fresh_share: 0.5 }, over: down,
     ground: async () => ({ reading: 'underpainting' as const, confidence: 0.7, same_finish: null, usage, elapsed_ms: 4 }) });
   assert.deepEqual(kept.fallback === undefined && [kept.findings, kept.new_ground?.reading], [[], 'underpainting'], 'the reading still counts when the move check fails');
+});
+
+// Full-detail crops (openspec full-detail-review-crops).
+test('the detail plan is the fresh box and the painted ninths the batch did not touch, in canvas pixels', () => {
+  assert.deepEqual(detailPlan(ISTANBUL, { width: 12000, height: 4000 }), { fresh: [6047, 0, 5953, 4000],
+    painted: [[0, 0, 4000, 1333], [0, 1333, 4000, 1333], [0, 2666, 4000, 1334]] });
+  assert.equal(detailPlan(over, { width: 100, height: 100 }), null);
+  const blank: ChangeMap = { ...ISTANBUL, fresh_box: [0, 0, 1, 1], cells: cells(Object.fromEntries(Object.keys(ISTANBUL.cells).map(name => [name, 1]))) };
+  assert.deepEqual(detailPlan(blank, { width: 3000, height: 3000 }), { fresh: [0, 0, 3000, 3000], painted: [] });
+});
+
+test('the plugin\'s review crops are checked before Luna sees them', () => {
+  const image = { image_base64: 'YQ==', mime_type: 'image/jpeg' };
+  const answer = { status: 'ok', whole: { ...image, source: [6047, 0, 5953, 4000], out: [1024, 688], scale: 0.172 },
+    fresh_tiles: [{ ...image, source: [7000, 100, 1024, 1024] }], painting_tiles: [{ ...image, source: [10, 20, 1024, 1024] }], ms: 40 };
+  const part = { type: 'image', data: 'YQ==', mimeType: 'image/jpeg' };
+  assert.deepEqual(parseReviewCrops(JSON.parse(JSON.stringify(answer))), { crop: part, scale: 0.172,
+    fresh: [{ image: part, box: [7000, 100, 1024, 1024] }], painting: [{ image: part, box: [10, 20, 1024, 1024] }] });
+  assert.equal(parseReviewCrops({ ...answer, whole: { ...answer.whole, image_base64: '' } }), null);
+  assert.equal(parseReviewCrops({ ...answer, whole: { ...answer.whole, scale: 3 } }), null);
+  assert.equal(parseReviewCrops({ ...answer, fresh_tiles: [{ ...image, source: [1, 2, 3] }] }), null);
+  assert.equal(parseReviewCrops({ error: 'Unsupported creative operation' }), null);
+  assert.equal(parseReviewCrops(null), null);
+});
+
+test('the route and the tile boxes go onto the review record', async () => {
+  const tiles = { fresh: [[7000, 100, 1024, 1024]] as Box[], painting: [[10, 20, 1024, 1024]] as Box[] };
+  const result = await reviewBatch({ map: ISTANBUL, over: async () => { throw new Error('not asked'); },
+    ground: async () => ({ reading: 'picture' as const, confidence: 0.9, same_finish: 0.8, usage: { cost: 0.001, input_tokens: 1000 }, elapsed_ms: 7, detail: 'document' as const, tiles }) });
+  assert.deepEqual(result.fallback === undefined && result.new_ground, { reading: 'picture', confidence: 0.9, same_finish: 0.8, box: [0.5039, 0, 0.4961, 1], detail: 'document', tiles });
+});
+
+test('artwork moved onto empty canvas is kept: what left one place is a picture of the same finish in another', async () => {
+  // The harbour moved to the empty right half: half the change is new ground, and the left it came from is empty after.
+  const moved = { ...ISTANBUL, fresh_share: 0.5, removed_share: 0.97 };
+  const blocky = { type: 'flat_block', label: 'flat block', probability: 1, location: 'middle_left' };
+  const picture = async () => ({ reading: 'picture' as const, confidence: 0.9, same_finish: 0.92, usage, elapsed_ms: 4 });
+  const result = await reviewBatch({ map: moved, over: async () => ({ findings: [blocky], usage, elapsed_ms: 9 }), ground: picture });
+  assert.deepEqual(result.fallback === undefined && [result.findings, result.relocated, result.kind, result.new_ground?.reading], [[], true, 'mixed', 'picture']);
+  // Not a move: the new ground is rough paint, another finish, an unsure reading, or nothing was compared.
+  for (const read of [{ reading: 'underpainting' as const, confidence: 0.9, same_finish: 0.92 }, { reading: 'picture' as const, confidence: 0.9, same_finish: 0.2 },
+    { reading: 'picture' as const, confidence: 0.5, same_finish: 0.92 }, { reading: 'picture' as const, confidence: 0.9, same_finish: null }]) {
+    const undone = await reviewBatch({ map: moved, over: async () => ({ findings: [blocky], usage, elapsed_ms: 9 }), ground: async () => ({ ...read, usage, elapsed_ms: 4 }) });
+    assert.deepEqual(undone.fallback === undefined && [undone.findings.map(f => f.type), undone.relocated], [['artwork_removed', 'flat_block'], undefined], JSON.stringify(read));
+  }
 });

@@ -16,7 +16,10 @@ export type Reading = 'picture' | 'underpainting' | 'placeholder' | 'other';
 /** same_finish: Luna's probability that the new ground has the finish of the paint beside it (null: nothing to compare with). */
 /** box: the new ground in fractions of the view (the plugin's fresh_box), kept so the chat remembers unsettled ground. */
 export type Box = [number, number, number, number];
-export type NewGround = { reading: Reading; confidence: number; same_finish?: number | null; box?: Box };
+/** detail: where the crop Luna read came from, the document (review_crops) or the canvas view. tiles: the parts shown at
+ * actual pixels, in canvas pixels (openspec full-detail-review-crops). */
+export type Detail = { detail?: 'document' | 'view'; tiles?: { fresh: Box[]; painting: Box[] } };
+export type NewGround = { reading: Reading; confidence: number; same_finish?: number | null; box?: Box } & Detail;
 /** Boxes of unsettled ground a chat keeps (the plugin's GROUND_LIMIT). */
 export const GROUND_LIMIT = 8;
 /** Below this, new ground that reads as a picture is coarser than the painting beside it (visual-check-questions.json). */
@@ -68,6 +71,10 @@ export const emptyCells = (map: ChangeMap): string[] => Object.keys(CELL_NAMES).
 
 /** Did the batch remove artwork (painted before, empty after)? Measured, so it is a finding at probability 1. */
 export const removedArtwork = (map: ChangeMap): boolean => map.removed_share >= REMOVED;
+/** A new ground that is the painting itself in another place: read as a picture, in the painting's finish. */
+export const RELOCATED_CONFIDENCE = 0.6;
+export const relocated = (read: { reading: string; confidence: number; same_finish: number | null }): boolean =>
+  read.reading === 'picture' && read.confidence >= RELOCATED_CONFIDENCE && read.same_finish !== null && read.same_finish >= SAME_FINISH;
 
 /** The text part that opens a review of a new-ground or mixed batch: what was measured, in the words of the questions. */
 export function factsText(map: ChangeMap): string {
@@ -96,6 +103,51 @@ export function newGroundCrop(map: ChangeMap, canvas: { width: number; height: n
   const w = Math.max(1, Math.min(canvas.width - x, Math.round(fw * canvas.width))), h = Math.max(1, Math.min(canvas.height - y, Math.round(fh * canvas.height)));
   const scale = Math.min(viewScale, CROP_SIDE / Math.max(w, h));
   return { source: [x, y, w, h], out: [Math.max(16, Math.round(w * scale)), Math.max(16, Math.round(h * scale))] };
+}
+
+/** A ninth the batch did not touch and that was painted before: at most these shares empty and fresh. */
+export const PAINTED_CELL = { empty: 0.1, fresh: 0.02 };
+/** What the plugin's review_crops is asked (openspec full-detail-review-crops): the fresh box and the painted ninths the
+ * batch did not touch, in whole canvas pixels. The plugin reads them from the document and chooses the 1:1 tiles. */
+export function detailPlan(map: ChangeMap, canvas: { width: number; height: number }): { fresh: Box; painted: Box[] } | null {
+  const crop = newGroundCrop(map, canvas, 1);
+  if (!crop) return null;
+  const painted: Box[] = [];
+  Object.keys(CELL_NAMES).forEach((name, index) => {
+    const cell = map.cells[name], row = Math.floor(index / 3), column = index % 3;
+    if (cell.empty_before > PAINTED_CELL.empty || cell.fresh > PAINTED_CELL.fresh) return;
+    const x = Math.floor(column * canvas.width / 3), y = Math.floor(row * canvas.height / 3);
+    const w = Math.floor((column + 1) * canvas.width / 3) - x, h = Math.floor((row + 1) * canvas.height / 3) - y;
+    if (w > 0 && h > 0) painted.push([x, y, w, h]);
+  });
+  return { fresh: crop.source, painted };
+}
+type Picture = { type: 'image'; data: string; mimeType: string };
+export type ReviewCrops = { crop: Picture; scale: number; fresh: { image: Picture; box: Box }[]; painting: { image: Picture; box: Box }[] };
+/** The plugin's review_crops answer checked field by field, or null (the review then cuts its crop from the view). */
+export function parseReviewCrops(value: unknown): ReviewCrops | null {
+  const v = value as { whole?: unknown; fresh_tiles?: unknown; painting_tiles?: unknown } | null;
+  if (!v || typeof v !== 'object') return null;
+  const picture = (part: unknown): Picture | null => {
+    const p = part as { image_base64?: unknown; mime_type?: unknown } | null;
+    return p && typeof p === 'object' && typeof p.image_base64 === 'string' && p.image_base64.length > 0
+      ? { type: 'image', data: p.image_base64, mimeType: typeof p.mime_type === 'string' ? p.mime_type : 'image/jpeg' } : null;
+  };
+  const box = (b: unknown): b is Box => Array.isArray(b) && b.length === 4 && b.every(n => Number.isInteger(n) && n >= 0) && b[2] > 0 && b[3] > 0;
+  const crop = picture(v.whole), scale = (v.whole as { scale?: unknown } | null)?.scale;
+  if (!crop || typeof scale !== 'number' || !(scale > 0 && scale <= 1)) return null;
+  const tiles = (list: unknown): { image: Picture; box: Box }[] | null => {
+    if (!Array.isArray(list) || list.length > 4) return null;
+    const out: { image: Picture; box: Box }[] = [];
+    for (const item of list) {
+      const image = picture(item), source = (item as { source?: unknown } | null)?.source;
+      if (!image || !box(source)) return null;
+      out.push({ image, box: source });
+    }
+    return out;
+  };
+  const fresh = tiles(v.fresh_tiles), painting = tiles(v.painting_tiles);
+  return fresh && painting ? { crop, scale, fresh, painting } : null;
 }
 
 /** What the painter is told about kept new ground; nothing for a picture in the painting's finish. */
@@ -152,9 +204,9 @@ type Usage = { cost: number; input_tokens: number };
 /** Luna did not answer: the reason (decisions/types.ts FallbackReason, or 'no_checks') and the time spent. */
 export type ReviewFallback = { fallback: string; elapsed_ms: number };
 export type OverAnswer = { findings: Finding[]; usage: Usage; elapsed_ms: number; fallback?: undefined };
-export type GroundAnswer = { reading: Reading; confidence: number; same_finish: number | null; usage: Usage; elapsed_ms: number; fallback?: undefined };
+export type GroundAnswer = { reading: Reading; confidence: number; same_finish: number | null; usage: Usage; elapsed_ms: number; fallback?: undefined } & Detail;
 /** A reviewed batch: the move check's result, with what its new ground read as when it had any. */
-export type Reviewed = ReviewFallback | (OverAnswer & { new_ground?: NewGround; kind?: BatchKind });
+export type Reviewed = ReviewFallback | (OverAnswer & { new_ground?: NewGround; kind?: BatchKind; relocated?: boolean });
 export const ARTWORK_REMOVED: Finding = { type: 'artwork_removed', label: 'artwork removed', probability: 1, location: null };
 const failed = (result: { fallback?: string } | null): result is ReviewFallback => typeof result?.fallback === 'string';
 /** One batch's review, by its kind (goal 2). over(facts): the BEFORE/AFTER move check. ground(facts): what the new
@@ -176,6 +228,14 @@ export async function reviewBatch({ map, over, ground }: { map: ChangeMap | null
   const overOk = painted && !failed(painted) ? painted : null, readOk = failed(read) ? null : read;
   if (!overOk && !readOk && !removed.length) return failed(painted) ? painted : read as ReviewFallback;
   const usage: Usage = { cost: (overOk?.usage.cost ?? 0) + (readOk?.usage.cost ?? 0), input_tokens: (overOk?.usage.input_tokens ?? 0) + (readOk?.usage.input_tokens ?? 0) };
+  // Artwork moved, not removed (Istanbul: the harbour moved to the right half so the left could become the dock): what left
+  // one place is on what was empty canvas as a picture in the painting's own finish. The paint-over findings would only
+  // describe the place it left, so the batch is kept on the new ground's reading alone.
+  if (removed.length && readOk && relocated(readOk))
+    return { findings: [], usage, elapsed_ms, kind, relocated: true,
+      new_ground: { reading: readOk.reading, confidence: readOk.confidence, same_finish: readOk.same_finish, ...(map.fresh_box ? { box: map.fresh_box } : {}),
+        ...(readOk.detail ? { detail: readOk.detail } : {}), ...(readOk.tiles ? { tiles: readOk.tiles } : {}) } };
   return { findings: [...removed, ...(overOk ? dropFreshFindings(overOk.findings, map) : [])], usage, elapsed_ms, kind,
-    ...(readOk ? { new_ground: { reading: readOk.reading, confidence: readOk.confidence, same_finish: readOk.same_finish, ...(map.fresh_box ? { box: map.fresh_box } : {}) } } : {}) };
+    ...(readOk ? { new_ground: { reading: readOk.reading, confidence: readOk.confidence, same_finish: readOk.same_finish, ...(map.fresh_box ? { box: map.fresh_box } : {}),
+      ...(readOk.detail ? { detail: readOk.detail } : {}), ...(readOk.tiles ? { tiles: readOk.tiles } : {}) } } : {}) };
 }

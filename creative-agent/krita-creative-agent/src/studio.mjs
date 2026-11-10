@@ -4,7 +4,7 @@ import { DecisionService } from './decisions/service.ts';
 import { chatShapes } from './shapes/chat.ts';
 import { chatCloseups, goalReference } from './closeups.ts';
 import {passCheck, progressCheck, moveCheck, newGroundCheck, seamCheck} from './visual-checks.ts';
-import { emptyCells, groundBoxes, needsArtist, newGroundCrop, parseChangeMap, reviewBatch, updateGround } from './blank-canvas.ts';
+import { detailPlan, emptyCells, groundBoxes, needsArtist, newGroundCrop, parseChangeMap, parseReviewCrops, reviewBatch, updateGround } from './blank-canvas.ts';
 import { executionSettings, thinkingLevel, AUTO_REASONING_NOTE, migrateSettings, DEFAULT_DECISIONS } from './execution-settings.mjs';
 import { panelSchema, DEFAULT_PLANNER } from './settings-schema.mjs';
 import { COMIC_OPERATIONS, CRAFT_OPERATIONS, CRAFT_TOOLS, FORK_TOOLS, mutates } from './craft.mjs';
@@ -61,6 +61,7 @@ import { stagePolicy, reviseStages, stagesNamed, orderStages, folderPlanSteps, s
 import { refineGroups, partsOf, unionFound } from './refine-parts.ts';
 import { goalSharpener, sharpenedContext, noMoreDetailNote, refineRequested, pictureGoal, ENLARGEMENT } from './goal-sharpen.ts';
 import { sharpenFirstMessage } from './finish-tool.ts';
+import { referenceSharpener } from './reference-sharpen.ts';
 import { ensureMassMaps } from './mass-map.ts';
 import { keptLayer, stackSummary } from './kept-layers.ts';
 import { writePlan, writePlanGoal, appendNote, readPlan, parsePlan, planDifference, briefFromPlan, remapTicks, stepFile, stepKeys, layerName } from './folder-notes.ts';
@@ -354,6 +355,9 @@ export class StudioRuntime extends PaintingRuntime {
     this.planSteps = planStepControls(this.planStepHost());
     // Sharpen goal (goal-sharpen.ts): a folder goal enlarged more than 2x is offered a local 4x sharpening.
     this.goalSharpen = options.goalSharpen ?? goalSharpener(this.sharpenHost(), options.sharpenModel ?? {});   // tests fake the model
+    // Sharpen patch references (reference-sharpen.ts): a transfer stretched past 2x sharpens its reference first (reference-tool.mjs sharpenFirst).
+    this.referenceSharpen = options.referenceSharpen ?? referenceSharpener(this.sharpenHost(), options.sharpenModel ?? {});
+    this.sharpenReference = Object.assign((reference, sharpenOptions) => this.referenceSharpen.sharpen(reference, sharpenOptions), {refusal: reference => this.referenceSharpen.refusal(reference)});
     // Folder study (folder-study-chat.ts): a note per folder image, read as text; tests give their own reader (null: none).
     this.studyReader = options.studyReader; this.studyModel = options.studyModel; this.folderStudy = new ChatFolderStudy(this.folderStudyHost());
     // /canvas-edit-ref (canvas-reference.ts): an image model's picture of the canvas with an edit, a target only when used.
@@ -1203,10 +1207,15 @@ export class StudioRuntime extends PaintingRuntime {
         return reviewBatch({map,
           over: facts => moveCheck({client,before:b.content,after:a.content,features,signal,...(facts ? {facts} : {})}),
           ground: async facts => {
-            const crop=await this.newGroundImage(map,a.content);
+            // The new ground read from the document, with parts at actual pixels (full-detail-review-crops); else cut from the view.
+            const detailed=await this.newGroundDetail(map);
+            const crop=detailed?.crop ?? await this.newGroundImage(map,a.content);
             if (!crop) return {fallback:'no_checks',elapsed_ms:0};
             // Beside existing paint the new ground is also compared with it; on a wholly empty canvas there is none.
-            return newGroundCheck({client,crop,facts,signal,...(emptyCells(map).length<9 ? {painting:b.content} : {})});
+            const read=await newGroundCheck({client,crop,facts,signal,...(emptyCells(map).length<9 ? {painting:b.content} : {}),
+              ...(detailed ? {scale:detailed.scale,tiles:{fresh:detailed.fresh.map(t=>t.image),painting:detailed.painting.map(t=>t.image)}} : {})});
+            return read.fallback ? read : {...read,detail:detailed ? 'document' : 'view',
+              ...(detailed ? {tiles:{fresh:detailed.fresh.map(t=>t.box),painting:detailed.painting.map(t=>t.box)}} : {})};
           }});
       },
       undo: async passes => {
@@ -1231,6 +1240,21 @@ export class StudioRuntime extends PaintingRuntime {
       if (map) this.diagnostics?.record({type:'change_map',fresh_share:map.fresh_share,removed_share:map.removed_share,changed_share:map.changed_share,fresh_box:map.fresh_box});
       return map;
     } catch { return null; }
+  }
+  /** The new ground read from the document (the plugin's review_crops): the fresh box at up to 1024 px, parts of it at
+   * actual pixels, and parts of the painting the batch did not touch. Null on any failure (an older plugin, a Krita
+   * without the scaled read, guide lines showing): the crop then comes from the view (newGroundImage). */
+  async newGroundDetail(map) {
+    const canvas=this.lastObservation;
+    if (!map || !(canvas?.width>0 && canvas?.height>0)) return null;
+    const plan=detailPlan(map,canvas);
+    if (!plan) return null;
+    let found=null, reason;
+    try { found=parseReviewCrops(await super.callNative('review_crops',plan)); if (!found) reason='unreadable answer'; }
+    catch (error) { reason=String(error?.message ?? error).slice(0,200); }
+    this.diagnostics?.record(found ? {type:'review_crops',detail:'document',scale:found.scale,fresh_tiles:found.fresh.map(t=>t.box),painting_tiles:found.painting.map(t=>t.box)}
+      : {type:'review_crops',detail:'view',reason});
+    return found;
   }
   /** The new ground cut from the AFTER view (the plugin's comparison_crop), at the scale the view shows. */
   async newGroundImage(map, after) {

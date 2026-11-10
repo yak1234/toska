@@ -3,6 +3,7 @@ import { PLUGIN_DECODE_PIXELS, REFERENCE_MB, STEP_MAX, WORKING_PIXELS } from './
 import { boundedImage } from './bounded-image.ts';
 import { decodeRgba, pngSize } from './png-rgba.ts';
 import { goalSourceFile, staleGoalSource } from './goal-sharpen.ts';
+import { scaleRect, sharpenedNote } from './reference-sharpen.ts';
 import { isPaintingMode } from './modes.mjs';
 import {createHash} from 'node:crypto';
 import {mkdir,readFile,writeFile,rename,readdir,stat} from 'node:fs/promises';
@@ -42,6 +43,7 @@ const summary=j=>({job_id:j.id,name:j.recipe.name,status:j.status,completed_stro
  ...(j.fitted?{fitted:j.fitted.underpainting?underpaintingNote(j):`Steps widened from [${j.fitted.from}] to [${j.recipe.steps}] so the transfer fits ${j.fitted.move?`one Agent move (about ${j.fitted.move} strokes)`:`about ${j.fitted.minutes} of the ${j.fitted.left} minutes left`}; the dabs are larger, so refine focal areas by hand, and make the picture crisp with paint_accents.`}:{}),
  ...(j.inside_label?{inside:j.inside_label+'. Only the dabs inside it were planned; Krita keeps every write there.'}:{}),
  ...(j.repaired?{repaired:`The host adjusted this call: ${j.repaired}.`}:{}),
+ ...(j.sharpened?.note?{sharpened:j.sharpened.note}:{}),
  ...(j.mixing&&j.mixing!=='rgb'?{mixing:j.solve===false?`${j.mixing}: each dab mixes with the paint beneath, in the reference colour (unsolved).`:`${j.mixing}: each dab mixes with the paint beneath, its colour chosen so the mix lands on the reference colour.`}:{}),
  ...(j.paint_set?{paint_set:{...j.paint_set.report,chosen:j.paint_set.chosen,note:paintSetNote(j.paint_set)}}:{}),
  ...(j.ground?{ground:'A toned ground layer in the reference\u2019s colours, top to bottom, lies under the transfer, so gaps between dabs show its tone, not white canvas.'}:{}),
@@ -267,7 +269,9 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   if(routed)recipe=routed.recipe;
   // A source rect in the goal's pixels from before it was sharpened (the whole old picture, or one an earlier transfer
   // used) is scaled to the sharpened pixels; the job records what was asked.
-  {const goalRef=runtime.study.references.find(r=>r.id===recipe.reference_id),scaled=goalRef?.sharpened?staleGoalSource(recipe.source,goalRef,await jobs()):null;
+  {const goalRef=runtime.study.references.find(r=>r.id===recipe.reference_id),scaled=goalRef?.sharpened?staleGoalSource(recipe.source,goalRef,
+    // A transfer that sharpened its reference itself (sharpenFirst) asked in the old pixels: that rect, repeated, is stale too.
+    (await jobs()).flatMap(j=>j.sharpened?.from&&j.requested?[j,{reference_hash:j.sharpened.from,recipe:{reference_id:j.requested.reference_id,source:j.requested.source}}]:[j])):null;
    if(scaled)recipe={...recipe,source:scaled};}
   // Shapes the host puts right instead of refusing (argument repair, LIVE 2026-10-23/24): told in the job's summary.
   const repaired=[];
@@ -277,10 +281,35 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
     repaired.push(`source [${recipe.source}] cropped to [${fit.source}] (the target's proportions)`+(fit.target!==recipe.target?`, target [${recipe.target}] to [${fit.target}]`:''));
     recipe={...recipe,source:fit.source,target:fit.target,...(recipe.focal_regions?{focal_regions:focal}:{})};
    }}
-  const source=await reference(runtime,recipe.reference_id);
+  let source=await reference(runtime,recipe.reference_id);
   const observation=await runtime.callNative('observe');runtime.decisionObservation=observation;
-  const pixels=await decode(source);
-  let ground=null,fitted=null,requested=asked;
+  let pixels=await decode(source);
+  let ground=null,fitted=null,requested=asked,sharpened=null;
+  // Sharpen patch references (reference-sharpen.ts, approved 2026-11-10): a transfer refused for its stretch sharpens its
+  // reference 4x first (runtime.sharpenReference; the call waits, the status line says how far), reads the sharpened
+  // picture, scales its source and focal rects to the new pixels, and is checked again. `check` gives the refusal for the
+  // recipe as it is now. Any other refusal, no sharpener, Never, a part or a failure: refused, with the reason.
+  const sharpenFirst=async check=>{
+   const refusal=check();
+   if(!refusal||refusal!==stretchRefusal(recipe,{established:true}))return refusal;
+   const ref=runtime.study.references.find(r=>r.id===recipe.reference_id);
+   if(ref?.sharpened)return `${refusal} ${sharpenedNote(ref)} It is already sharpened, so it has no more detail to give at this size.`;
+   if(!ref||!runtime.sharpenReference)return refusal;
+   const why=runtime.sharpenReference.refusal?.(ref);
+   if(why)return `${refusal} It was not sharpened first: ${why}.`;
+   const label=ref.name??ref.id,was=ref.width;
+   let done;
+   try{done=await runtime.sharpenReference(ref,{signal,onProgress:(at,total,message)=>runtime.emit({type:'status',phase:'painting',message:message??`Sharpening "${label}" 4x for this transfer: ${Math.floor(at/Math.max(1,total)*100)}%\u2026`})});}
+   catch(error){signal?.throwIfAborted();return `${refusal} Sharpening it first failed: ${String(error?.message??error).replace(/\.?$/,'.')}`;}
+   source=await reference(runtime,recipe.reference_id);pixels=await decode(source);
+   const k=done.scale??pixels.width/was,size={width:pixels.width,height:pixels.height};
+   recipe={...recipe,source:scaleRect(recipe.source,k,size),...(recipe.focal_regions?{focal_regions:recipe.focal_regions.map(r=>scaleRect(r,k,size))}:{})};
+   const fit=cropToAspect(recipe.source,recipe.target);   // rounding may leave the proportions a pixel off
+   if(fit)recipe={...recipe,source:fit.source,target:fit.target};
+   sharpened={note:done.note,from:ref.sharpened?.from?.sha256??null};
+   const still=check();
+   return still&&still===stretchRefusal(recipe,{established:true})?`${still} ${done.note} It is already sharpened, so it has no more detail to give at this size.`:still;
+  };
   // The artist's Paint only here area (paint-only-here.ts): every transfer while it is set paints inside it only.
   const area=runtime.goal?.paint_only_here??null,inside=area?{sha256:area.sha256,mask_path:area.mask_path,bounds:area.bounds}:null;
   if(area&&scopedShare(area,recipe.target)<=0)throw new Error(`The target [${recipe.target}] lies outside the area the artist chose (${chipLine(area).toLowerCase()}, bounds [${area.bounds}]): transfer the reference area that lies under it, or the whole reference over the whole canvas.`);
@@ -288,8 +317,8 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
    const all=await paintedJobs(),painted=all.filter(j=>!j.recipe.mode).length,established=existingPainting(runtime,observation);
    const ref=runtime.study.references.find(r=>r.id===recipe.reference_id),part=ref?.part_kind==='part'&&ref.bounds?ref:null;
    const scoped=area?{share:scopedShare(area,recipe.target),painted:all.some(j=>!j.recipe.mode&&j.inside?.sha256===area.sha256)}:null;
-   const refusal=transferRefusal(runtime.goal,recipe,observation,painted,{established,protectedAreas:observation.protected_areas?.length??0,part,inside:scoped})
-    ??(!painted&&!established&&!area?wholeReferenceRefusal(recipe,{...ref,width:pixels.width,height:pixels.height},observation):null);
+   const refusal=await sharpenFirst(()=>transferRefusal(runtime.goal,recipe,observation,painted,{established,protectedAreas:observation.protected_areas?.length??0,part,inside:scoped})
+    ??(!painted&&!established&&!area?wholeReferenceRefusal(recipe,{...ref,width:pixels.width,height:pixels.height},observation):null));
    if(refusal)throw new Error(refusal);
    const left=runtime.timeLeftMs?.(),[,,ttw,tth]=recipe.target;
    const whole=!painted&&!established&&!area&&ttw*tth>=WHOLE_SHARE*observation.width*observation.height;
@@ -308,7 +337,8 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
    if(stops)ground={status:'pending',args:{name:recipe.name+' \u00b7 ground',area:[{shape:'rectangle',bounds:recipe.target}],gradient:{type:'linear',start:[tx+tw/2,ty],end:[tx+tw/2,ty+th],stops}}};
   }
   if(recipe.mode){
-   const refusal=stretchRefusal(recipe,{established:existingPainting(runtime,observation),paintedJobs:(await paintedJobs()).length});
+   const established=existingPainting(runtime,observation),painted=(await paintedJobs()).length;
+   const refusal=await sharpenFirst(()=>stretchRefusal(recipe,{established,paintedJobs:painted}));
    if(refusal)throw new Error(refusal);
   }
   let plan;
@@ -332,7 +362,7 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
    runtime.diagnostics?.record?.({type:'transfer_paint_set',chosen:paintSet.chosen,...laid.report});
   }
   if(inside&&!plan.total)throw new Error(`No dab of this transfer lies inside the area the artist chose (${chipLine(area).toLowerCase()}): transfer the reference area that lies under it.`);
-  const job={id:identifier,version:REFERENCE_GENERATOR_VERSION,recipe,...(jobMixing?{mixing:jobMixing}:{}),...(jobMixing&&!solved?{solve:false}:{}),...(paintSet?{paint_set:paintSet}:{}),...(inside?{inside,inside_label:chipLine(area)}:{}),...(requested!==recipe?{requested}:{}),...(routed?{closeup:routed.note}:{}),...(fitted?{fitted}:{}),...(ground?{ground}:{}),...(repaired.length?{repaired:repaired.join('; ')}:{}),reference_hash:source.sha256,plan_hash:hash(JSON.stringify(plan)+'\n'),canvas:{width:observation.width,height:observation.height},scope:scope(runtime),status:'ready',pass:0,pass_count:plan.passes.length,offset:0,completed:0,total:plan.total,last_revision:observation.revision,layer_id:null,pending:null};await atomic(path(identifier),job);return run(job,signal,plan);
+  const job={id:identifier,version:REFERENCE_GENERATOR_VERSION,recipe,...(jobMixing?{mixing:jobMixing}:{}),...(jobMixing&&!solved?{solve:false}:{}),...(paintSet?{paint_set:paintSet}:{}),...(inside?{inside,inside_label:chipLine(area)}:{}),...(requested!==recipe?{requested}:{}),...(routed?{closeup:routed.note}:{}),...(fitted?{fitted}:{}),...(ground?{ground}:{}),...(repaired.length?{repaired:repaired.join('; ')}:{}),...(sharpened?{sharpened}:{}),reference_hash:source.sha256,plan_hash:hash(JSON.stringify(plan)+'\n'),canvas:{width:observation.width,height:observation.height},scope:scope(runtime),status:'ready',pass:0,pass_count:plan.passes.length,offset:0,completed:0,total:plan.total,last_revision:observation.revision,layer_id:null,pending:null};await atomic(path(identifier),job);return run(job,signal,plan);
  }
  // The canvas under the transfer's dabs: a fresh look at the start of each pass (as canvas edit reads its picture), decoded
  // once for the pass, never per dab. A chunk result or an earlier look is not trusted to carry a readable image.
@@ -450,7 +480,7 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
  const offered=mixingField(),transferSchema=Type.Object({...referenceSchema.properties,...offered,...paintSetFields},{additionalProperties:false});
  return [
   defineTool({name:'paint_from_reference',label:'Painting from a reference',executionMode:'sequential',parameters:transferSchema,
-   description:'Underpainting only: start faithful reference-assisted reconstruction with locally sampled native brush strokes (small dabs, no edges or materials). One full transfer per plan, and on a fresh canvas it goes first: a reference with the canvas\u2019s proportions is transferred whole, onto the whole canvas, over a toned ground the host lays from its colours; the host sets that whole-picture underpainting\u2019s steps on the canvas (fine dabs a few canvas px apart, widened to its own budget of a few minutes), whatever steps you give. Under a time allowance the host widens the steps so the job fits; then only patches of a missing region, stretched at most 2x; a patch fades out over its outer edge, so extend the target about 15% past the damage on each side that meets existing paint; off in the second half of the plan, except a focal patch of one face or hand (at most 3% of the canvas), also stretched at most 2x, so from an attached close-up reference. Source/target/focal rectangles are [x,y,width,height]; aspect ratios must match. Plans coarse, fine and optional focal passes, with one editable layer per pass. Defaults: steps [6,2.5,1.2], seed 714. Paints the whole job (all passes) in one call and returns the finished canvas; use continue_reference_painting only to resume a job that was stopped or interrupted. Returns a job ID and actual canvas at a saved boundary; if it is paused, inspect and use continue_reference_painting until complete. Keep all refinement within the current planned stage. This transfers reference colors and positions; it is not independent drawing. Does not change the reference. paints: use when the user asks for a limited palette / real paints; strictness from the user\u2019s words (\u2018as close as possible\u2019 \u2192 exact); never choose a looser level yourself.',
+   description:'Underpainting only: start faithful reference-assisted reconstruction with locally sampled native brush strokes (small dabs, no edges or materials). One full transfer per plan, and on a fresh canvas it goes first: a reference with the canvas\u2019s proportions is transferred whole, onto the whole canvas, over a toned ground the host lays from its colours; the host sets that whole-picture underpainting\u2019s steps on the canvas (fine dabs a few canvas px apart, widened to its own budget of a few minutes), whatever steps you give. Under a time allowance the host widens the steps so the job fits; then only patches of a missing region, stretched at most 2x (a reference stretched further is sharpened 4x on this computer first, automatically, in the same call: the answer gives its new size, and its source rects are in the new pixels from then on); a patch fades out over its outer edge, so extend the target about 15% past the damage on each side that meets existing paint; off in the second half of the plan, except a focal patch of one face or hand (at most 3% of the canvas), also stretched at most 2x (sharpened first when further), so preferably from an attached close-up reference. Source/target/focal rectangles are [x,y,width,height]; aspect ratios must match. Plans coarse, fine and optional focal passes, with one editable layer per pass. Defaults: steps [6,2.5,1.2], seed 714. Paints the whole job (all passes) in one call and returns the finished canvas; use continue_reference_painting only to resume a job that was stopped or interrupted. Returns a job ID and actual canvas at a saved boundary; if it is paused, inspect and use continue_reference_painting until complete. Keep all refinement within the current planned stage. This transfers reference colors and positions; it is not independent drawing. Does not change the reference. paints: use when the user asks for a limited palette / real paints; strictness from the user\u2019s words (\u2018as close as possible\u2019 \u2192 exact); never choose a looser level yourself.',
    execute:(id,recipe,signal)=>start(id,recipe,signal)}),
   defineTool({name:'continue_reference_painting',label:'Continuing reference painting',executionMode:'sequential',parameters:Type.Object({job_id:Type.String({pattern:'^[a-f0-9]{32}$'}),...offered},{additionalProperties:false}),
    description:'Resume a saved reference job in its original stage. Reconciles a pending chunk against Krita receipts before painting, checks reference/plan identity and canvas revision, and preserves one layer per refinement pass. Paints all remaining passes (coarse, fine, focal) in one call; it returns early only if painting was stopped. Unknown/partial native outcomes require recovery and are never blindly repainted.',
@@ -461,10 +491,10 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
   defineTool({name:'list_reference_paintings',label:'Finding saved reference painting jobs',executionMode:'sequential',parameters:Type.Object({},{additionalProperties:false}),description:'List saved reference jobs and their completion counts for this study. Read-only; use their IDs to resume after a restart.',
    execute:async()=>{const list=(await jobs()).map(summary);return {content:[{type:'text',text:JSON.stringify(list)}],details:{jobs:list}};}}),
   defineTool({name:'paint_reference_edges',label:'Sharpening edges from the reference',executionMode:'sequential',parameters:edgeSchema,
-   description:'Edges from the reference (not for finishing: paint_accents makes a painting crisp; these paired strokes look scratchy on painterly references): paint the reference\u2019s own edges in a region as thin strokes that follow each edge, one in each side\u2019s colour, so forms, contours, highlights and reflections become crisp where the canvas is soft or mosaic-like. Source/target are [x,y,width,height] with matching aspect ratios; target the region on the canvas where that source content already sits. Choose focal regions (a figure, a vehicle, a railing, lit windows), not the whole picture. On a painted canvas the target may be at most 2x the source; past that attach a closer reference of the area. Use a crisp opaque preset (Basic-6 Details, Ink-2 Fineliner). One editable layer; resumable with continue_reference_painting.',
+   description:'Edges from the reference (not for finishing: paint_accents makes a painting crisp; these paired strokes look scratchy on painterly references): paint the reference\u2019s own edges in a region as thin strokes that follow each edge, one in each side\u2019s colour, so forms, contours, highlights and reflections become crisp where the canvas is soft or mosaic-like. Source/target are [x,y,width,height] with matching aspect ratios; target the region on the canvas where that source content already sits. Choose focal regions (a figure, a vehicle, a railing, lit windows), not the whole picture. On a painted canvas the target may be at most 2x the source; past that the reference is sharpened 4x first, automatically (the answer gives its new size), and if it is still past 2x attach a closer reference of the area. Use a crisp opaque preset (Basic-6 Details, Ink-2 Fineliner). One editable layer; resumable with continue_reference_painting.',
    execute:(id,args,signal)=>start(id,{...args,mode:'edges'},signal)}),
   defineTool({name:'paint_reference_surface',label:'Blending surfaces along the forms',executionMode:'sequential',parameters:surfaceSchema,
-   description:'Finishing: blend the dab or mosaic texture in smooth areas into continuous paint, then repaint the region\u2019s edges crisp, in one call. Short smudge strokes follow the reference\u2019s own form direction (sky, clouds, hair, skin, car body) at half strength and leave busy areas alone (lit windows, reflections, snow, fur: max_detail), which need paint_accents and hand strokes instead. The smudge mixes the colours already on the canvas onto its own new layer and never repaints your layers. Use a Color Smudge blender preset (k) Blender Basic). Source/target are [x,y,width,height] with matching aspect ratios; target the canvas region where that source content already sits. On a painted canvas the target may be at most 2x the source. Two editable layers (surface, edges); resumable with continue_reference_painting.',
+   description:'Finishing: blend the dab or mosaic texture in smooth areas into continuous paint, then repaint the region\u2019s edges crisp, in one call. Short smudge strokes follow the reference\u2019s own form direction (sky, clouds, hair, skin, car body) at half strength and leave busy areas alone (lit windows, reflections, snow, fur: max_detail), which need paint_accents and hand strokes instead. The smudge mixes the colours already on the canvas onto its own new layer and never repaints your layers. Use a Color Smudge blender preset (k) Blender Basic). Source/target are [x,y,width,height] with matching aspect ratios; target the canvas region where that source content already sits. On a painted canvas the target may be at most 2x the source; past that the reference is sharpened 4x first, automatically (the answer gives its new size). Two editable layers (surface, edges); resumable with continue_reference_painting.',
    execute:(id,args,signal)=>start(id,{...args,mode:'surface'},signal)})
  ];
 }

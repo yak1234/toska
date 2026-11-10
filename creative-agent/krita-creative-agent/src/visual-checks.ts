@@ -16,8 +16,8 @@ export type VisualCheckQuestions = {
  progress:{max_checks:number; instructions:string; scale:string[]};
  layer_need:{instructions:string; needs:Record<string,string>};
  move:{texture_over_forms:FailureType; feature:FailureType; any_feature:FailureType};
- new_ground:{instructions:string; readings:Record<string,string>;
-  same_finish:{threshold:number; instructions:string; criteria:NoulQuestion['criteria']; calibration?:string}};
+ new_ground:{instructions:string; tiles_note:string; readings:Record<string,string>;
+  same_finish:{threshold:number; instructions:string; tiles_instructions:string; criteria:NoulQuestion['criteria']; calibration?:string}};
 };
 export const QUESTIONS=JSON.parse(readFileSync(new URL('./visual-check-questions.json',import.meta.url),'utf8')) as VisualCheckQuestions;
 const noul=({instructions,criteria}:{instructions:string; criteria:NoulQuestion['criteria']}):NoulQuestion=>({type:'noul',instructions,criteria});
@@ -142,13 +142,23 @@ const READINGS=Object.keys(QUESTIONS.new_ground.readings) as Reading[];
 // painting: the canvas before the batch, when part of it was painted. Then a second question in the same request asks
 // whether the new ground has that painting's finish: a hatched graphic rebuild read as a "picture" (0.86) beside an oil
 // painting, and this is what told it from a faithful copy (0 against 0.91).
-export async function newGroundCheck({client,crop,facts,painting,signal}:
- {client:DecisionMaker; crop:DecisionPart; facts?:string; painting?:DecisionPart; signal?:AbortSignal}):Promise<NewGroundResult> {
- const {instructions,readings,same_finish}=QUESTIONS.new_ground;
+// tiles (openspec full-detail-review-crops): parts of the new ground, and of the painting the batch did not touch, at
+// actual pixels; `scale` is the crop's (1 when it is not reduced). The view shows a 12000 px canvas at 0.131, where a copy
+// and a blur look alike: with tiles Luna reads what it is from the whole crop and its finish from the 1:1 parts. The
+// calibrated wording is unchanged without tiles of the new ground; painting tiles go only with them and with `painting`.
+export async function newGroundCheck({client,crop,facts,painting,signal,tiles,scale}:
+ {client:DecisionMaker; crop:DecisionPart; facts?:string; painting?:DecisionPart; signal?:AbortSignal;
+  tiles?:{fresh:DecisionPart[]; painting:DecisionPart[]}; scale?:number}):Promise<NewGroundResult> {
+ const {instructions,readings,same_finish,tiles_note}=QUESTIONS.new_ground;
+ const fresh=tiles?.fresh ?? [], beside=painting && fresh.length ? tiles?.painting ?? [] : [];
+ const reduced=fresh.length && typeof scale==='number' && scale>0 && scale<1 ? `; the whole of it, shown at ${Math.max(1,Math.round(scale*100))}% of its size` : '';
  const result=await client.decide({signal,purpose:'read-new-ground',
-  questions:{new_ground:choice(instructions,readings),...(painting ? {same_finish:noul(same_finish)} : {})},
+  questions:{new_ground:choice(fresh.length ? instructions+' '+tiles_note : instructions,readings),
+   ...(painting ? {same_finish:noul(beside.length ? {...same_finish,instructions:same_finish.tiles_instructions} : same_finish)} : {})},
   parts:[...(facts ? [facts] : []),...(painting ? ['PAINTING (the canvas before this painting batch; its empty part had no paint):',painting] : []),
-   'NEW GROUND (the part of the canvas that was empty before this painting batch, as it is now):',crop]});
+   `NEW GROUND (the part of the canvas that was empty before this painting batch, as it is now${reduced}):`,crop,
+   ...fresh.flatMap((tile,i)=>[`NEW GROUND at 1:1 (part ${i+1} of ${fresh.length} of NEW GROUND at actual pixels):`,tile]),
+   ...beside.flatMap((tile,i)=>[`PAINTING at 1:1 (part ${i+1} of ${beside.length} of the painted part of PAINTING at actual pixels):`,tile])]});
  if(result.fallback)return {fallback:result.fallback,elapsed_ms:result.elapsed_ms};
  const answer=result.answers?.new_ground;
  if(answer?.type!=='choice' || !READINGS.includes(answer.choice as Reading))return {fallback:'service_or_response_error',elapsed_ms:result.elapsed_ms};

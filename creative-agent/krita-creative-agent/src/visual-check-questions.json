@@ -135,6 +135,7 @@
  },
  "new_ground": {
   "instructions": "NEW GROUND is the part of a canvas that was empty before this painting batch and is painted now; nothing was under it. What does NEW GROUND read as? Judge only what it shows now: do not judge it for being new, large or rectangular.",
+  "tiles_note": "The images marked \"NEW GROUND at 1:1\" are parts of NEW GROUND at actual pixels. Decide what NEW GROUND reads as from the whole of it; use the 1:1 parts to see whether its paint is continuous or still separate dabs, blocks or blur.",
   "readings": {
    "picture": "A painted picture: recognisable forms with light and shade, in continuous paint. It could be part of a finished painting.",
    "underpainting": "A first layer of a picture: its colours and big shapes are placed where a picture would have them, but separate dabs, blocks or gaps still show and forms are soft or coarse.",
@@ -144,6 +145,7 @@
   "same_finish": {
    "threshold": 0.5,
    "instructions": "Is NEW GROUND painted to the same finish as the painted part of PAINTING: the same kind of brushwork, the same level of detail and the same way of rendering light? Ignore what it depicts.",
+   "tiles_instructions": "Compare the images marked \"NEW GROUND at 1:1\" with the images marked \"PAINTING at 1:1\" (all at actual pixels): is NEW GROUND painted to the same finish as the painted part of PAINTING: the same kind of brushwork, the same level of detail, the same sharpness and the same way of rendering light? Ignore what it depicts.",
    "criteria": {
     "true": "NEW GROUND could be part of the same finished painting.",
     "false": "NEW GROUND is visibly coarser, flatter, more graphic or less finished than the painted part of PAINTING."
