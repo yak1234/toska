@@ -102,6 +102,7 @@ class PaintOnlyBar(QWidget):
         column.addWidget(self.find_row); self.find_row.hide()
         self.finding = None                               # the request id of a find in flight
         self.proposal = None                              # a card's outline waiting for Use this (the artist had a selection)
+        self.late = False                                 # that outline waits only for the agent's move to close: selected then
         self.hint = QLabel(''); self.hint.setObjectName('contextHint'); self.hint.setWordWrap(True); column.addWidget(self.hint)
         self.chip.hide(); self.clear_button.hide(); self.hint.hide()
         self.button.hide(); self.find_button.hide()       # in the panel's + menu: a row only while an area is active
@@ -284,7 +285,7 @@ class PaintOnlyBar(QWidget):
     def chat_ended(self):
         self.areas.clear_all()                            # every document the chat set an area on, not only the active one
         self.set_pending(None); self.awaiting = None; self.cards = []; self.timer.stop()
-        self.close_find(); self.finding = None; self.proposal = None; self.find_button.setEnabled(True)
+        self.close_find(); self.finding = None; self.proposal = None; self.late = False; self.find_button.setEnabled(True)
         self.hide_area(); self.hint.hide()
 
     def poll(self):
@@ -339,20 +340,26 @@ class PaintOnlyBar(QWidget):
                 button.clicked.connect(lambda _checked=False, value=text, all_=controls: self.answer(value, all_))
             item['layout'].addWidget(button); controls.append(button)
         note = QLabel('Or write your own answer below.'); note.setObjectName('muted'); item['layout'].addWidget(note)
-        self.proposal = None
+        self.proposal = None; self.late = False
         if proposal and self.has_selection():
             self.proposal = proposal                      # never over the artist's own selection without a click
             self.hint.setText(KEPT); self.hint.show()
-        elif proposal: self.load_outline(proposal, 'Use this')
+        elif proposal and not self.load_outline(proposal, 'Use this'):
+            # The card arrives inside the painter's turn, before its move closes, and Krita takes no selection then
+            # (Istanbul, 2026-11-10: "It is selected on your painting now", and nothing was). It is selected once it can be.
+            self.proposal, self.late = proposal, True
         self.timer.start()
         return controls
 
     def take_proposal(self):
         """The card's outline, waiting while the artist had a selection, becomes the selection now (on their click)."""
-        proposal, self.proposal = self.proposal, None
+        proposal, late = self.proposal, self.late
         if proposal is None: return True
-        if not self.load_outline(proposal, 'Use this'): return False
-        self.say('The found outline replaced your selection.' + REPLACED)
+        self.proposal, self.late = None, False            # first: load_outline looks at the selection again itself
+        if not self.load_outline(proposal, 'Use this'):
+            self.proposal, self.late = proposal, late     # it keeps waiting
+            return False
+        if not late: self.say('The found outline replaced your selection.' + REPLACED)
         return True
 
     def adjust(self):
@@ -369,9 +376,15 @@ class PaintOnlyBar(QWidget):
 
     def watch_selection(self):
         """Use my selection is enabled once the document has a selection."""
+        if self.late and self.proposal is not None:
+            doc = self.document()
+            if doc is not None and self.panel.agent_writing_reason(doc) is None:
+                if self.has_selection(doc):                # the artist selected something meanwhile: theirs stays until they press
+                    self.late = False; self.hint.setText(KEPT); self.hint.show()
+                else: self.take_proposal()
         ready = self.has_selection()
         for button in self.cards: button.setEnabled(ready)
-        if not self.cards: self.timer.stop()
+        if not self.cards and not self.late: self.timer.stop()
 
     def use_selection(self, part, controls, text='Use my selection'):
         command = self.capture(part)

@@ -88,7 +88,10 @@ export function partShare(recipe,part){
 // Where the artist has protected what matters, the size caps step aside: the plugin keeps every protected pixel.
 // Inside the artist's Paint only here area (paint-only-here.ts, goal 6) a transfer is measured by the area (`inside.share`),
 // and the size caps step aside until a transfer has painted that area (`inside.painted`).
-export function transferRefusal(goal,recipe,canvas,paintedJobs,{established=false,protectedAreas=0,part=null,inside=null}={}){
+// A made image no transfer has painted yet (`newAsset`: make_asset's, a cut-out of one) is a new subject, not the reference
+// again: the late-plan rule steps aside for it on at most REGION_SHARE (Istanbul, 2026-11-10: four ship images made after
+// the plan's last step could not be painted in, and the painter filled flat ship shapes).
+export function transferRefusal(goal,recipe,canvas,paintedJobs,{established=false,protectedAreas=0,part=null,inside=null,newAsset=false}={}){
  const steps=goal?.brief?.steps?.length??0,step=goal?.current_step??0;
  const instead='Paint it yourself: paint_contours for silhouettes and overlaps, paint_pass with small brushes and long directed strokes for edges and detail, clipped create_layer for light and shadow.';
  const share=inside?inside.share:recipe.target[2]*recipe.target[3]/(canvas.width*canvas.height)*(part?partShare(recipe,part):1),uncapped=protectedAreas||part||(inside&&!inside.painted);
@@ -96,7 +99,9 @@ export function transferRefusal(goal,recipe,canvas,paintedJobs,{established=fals
  if(share<=FOCAL_SHARE)return stretchRefusal(recipe,{established,paintedJobs});
  // An untouched Paint only here area lifts the late-plan rule too: a folder plan's element steps come last (underpainting,
  // accents, then the elements the artist names) and paint their element inside the area the artist drew.
- if(steps>1&&step>=Math.ceil(steps/2)&&!(inside&&!inside.painted))return `Reference transfer is for underpainting and is off from step ${Math.ceil(steps/2)+1} of ${steps}: it only stamps the reference again as dabs. A focal patch (one face or hand) of at most ${Math.round(FOCAL_SHARE*100)}% of the canvas is still allowed. ${instead}`;
+ const late=steps>1&&step>=Math.ceil(steps/2)&&!(inside&&!inside.painted);
+ if(late&&newAsset&&share>REGION_SHARE)return `A made image that is new to the painting may be placed this late in the plan on a region of at most ${Math.round(REGION_SHARE*100)}% of the canvas (this target is ${Math.round(share*100)}%). Place it smaller, or ${instead[0].toLowerCase()+instead.slice(1)}`;
+ if(late&&!newAsset)return `Reference transfer is for underpainting and is off from step ${Math.ceil(steps/2)+1} of ${steps}: it only stamps the reference again as dabs. A focal patch (one face or hand) of at most ${Math.round(FOCAL_SHARE*100)}% of the canvas is still allowed. ${instead}`;
  if(!uncapped&&established&&share>REGION_SHARE)return `This painting already exists, so a reference transfer may only fill a missing region of at most ${Math.round(REGION_SHARE*100)}% of the canvas (this target is ${Math.round(share*100)}%); a full transfer would stamp dabs over the finished surface. ${instead}`;
  if(!uncapped&&paintedJobs>0&&share>REGION_SHARE)return `This plan already has a reference transfer. Another one may only fill a missing region of at most ${Math.round(REGION_SHARE*100)}% of the canvas (this target is ${Math.round(share*100)}%); a second full transfer re-rolls the same dabs. ${instead}`;
  return stretchRefusal(recipe,{established,paintedJobs});
@@ -321,7 +326,8 @@ export function referenceTools(runtime,executePass,fillRegion,mixing={catalog:()
    const all=await paintedJobs(),painted=all.filter(j=>!j.recipe.mode).length,established=existingPainting(runtime,observation);
    const ref=runtime.study.references.find(r=>r.id===recipe.reference_id),part=ref?.part_kind==='part'&&ref.bounds?ref:null;
    const scoped=area?{share:scopedShare(area,recipe.target),painted:all.some(j=>!j.recipe.mode&&j.inside?.sha256===area.sha256)}:null;
-   const refusal=await sharpenFirst(()=>transferRefusal(runtime.goal,recipe,observation,painted,{established,protectedAreas:observation.protected_areas?.length??0,part,inside:scoped})
+   const newAsset=ref?.role==='asset'&&!all.some(j=>!j.recipe.mode&&j.recipe.reference_id===ref.id);
+   const refusal=await sharpenFirst(()=>transferRefusal(runtime.goal,recipe,observation,painted,{established,protectedAreas:observation.protected_areas?.length??0,part,inside:scoped,newAsset})
     ??(!painted&&!established&&!area?wholeReferenceRefusal(recipe,{...ref,width:pixels.width,height:pixels.height},observation):null));
    if(refusal)throw new Error(refusal);
    const left=runtime.timeLeftMs?.(),[,,ttw,tth]=recipe.target;

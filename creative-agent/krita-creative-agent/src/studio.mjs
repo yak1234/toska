@@ -1132,11 +1132,11 @@ export class StudioRuntime extends PaintingRuntime {
     const W = canvas?.width, H = canvas?.height;
     const undone = this.undoneReferenceJobs();
     const painted = W && H ? (await paintedTransfers(this.study.directory, {revision:this.goal?.revision}).catch(() => [])).filter(job => !undone.has(job.id)).length : 0;
-    const rule = target => !(W && H) ? 'the canvas size is not known yet' : transferRefusal(this.goal, {source:target, target}, canvas, painted, {established:existingPainting(this, canvas), protectedAreas:canvas.protected_areas?.length ?? 0});
+    const rule = (target, newAsset = false) => !(W && H) ? 'the canvas size is not known yet' : transferRefusal(this.goal, {source:target, target}, canvas, painted, {established:existingPainting(this, canvas), protectedAreas:canvas.protected_areas?.length ?? 0, newAsset});
     const transfers = W && H ? await this.wholeTransfers(canvas) : [];
     const used = this.goal?.unify_pass, spent = used && !(used.move && this.goal.moves?.find(m => m.number === used.move)?.status === 'undone');
     return openRoutesLine({fillNudge:!!referenceState && this.fillNudged !== move && !this.goal?.paint_only_here,
-      wholeTransfer:rule([0, 0, W, H]), patchTransfer:rule([0, 0, Math.round(W * 0.4), Math.round(H * 0.4)]),
+      wholeTransfer:rule([0, 0, W, H]), patchTransfer:rule([0, 0, Math.round(W * 0.4), Math.round(H * 0.4)]), assetTransfer:rule([0, 0, Math.round(W * 0.4), Math.round(H * 0.4)], true),
       typedCap:transfers.length && !this.goal?.hand_painting ? {marks:MAX_MARKS, px:widthCap(canvas)} : null,
       unifyUsed:spent && (transfers.length || existingPainting(this, canvas)) ? String(used.what ?? used.tool ?? 'an earlier pass') : null,
       liveFilters:this.mode === 'agent'});
@@ -4329,7 +4329,7 @@ export class StudioRuntime extends PaintingRuntime {
       // Luna read the message as about one part of the picture that is no folder element (message-reading.ts): its area first.
       const reading = this.messageReading?.text === said ? this.messageReading.policy : null;
       const partNote = reading?.part && !this.goal.paint_only_here && !command.move_kind && !guidesOnly
-        ? '\nTHE ARTIST\u2019S MESSAGE is about one part of the picture (Luna read it so) and no Paint only here area is set: call ask_for_selection for that part, named as the artist named it, before painting it.\n' : '';
+        ? '\nTHE ARTIST\u2019S MESSAGE is about one part of the picture (Luna read it so) and no Paint only here area is set: call ask_for_selection for that part, named as the artist named it, before painting it. Not for something the message asks you to ADD that is not in the picture yet (a new ship, figure, tree): there is nothing to select, so choose its place and size yourself (the place-subject skill) and paint it.\n' : '';
       // Refine after the whole-picture Finish (refine-goal.ts): the whole picture runs refine_to_goal, a part is asked for and refined fine.
       const refineNote = guidesOnly || command.move_kind || folderMove ? '' : refineToGoalNote({text:said, area:!!this.goal.paint_only_here,
         finished:this.wholeFinished(), reading:this.messageReading?.text === said ? this.messageReading.reading : null});

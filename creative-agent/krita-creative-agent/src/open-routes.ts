@@ -14,6 +14,9 @@ export type RouteState = {
   wholeTransfer: string | null;
   /** Why a patch transfer (a region of at most 20% of the canvas) would be refused now, or null. */
   patchTransfer: string | null;
+  /** Why placing a made image no transfer has painted yet (a region of at most 20%) would be refused now, or null.
+   *  Absent: not checked, and the line says nothing of it. */
+  assetTransfer?: string | null;
   /** The typed-stroke cap after the underpainting (typed-strokes.ts), or null when it does not hold this move. */
   typedCap: { marks: number; px: number } | null;
   /** What used the chat's one whole-canvas softening pass (unify-pass.ts), or null when it is still free. */
@@ -35,7 +38,14 @@ function why(refusal: string): string {
 export function openRoutesLine(state: RouteState): string {
   const allowed: string[] = [], not: string[] = [];
   (state.wholeTransfer ? not : allowed).push('a whole-canvas paint_from_reference' + (state.wholeTransfer ? ` (${why(state.wholeTransfer)})` : ''));
-  (state.patchTransfer ? not : allowed).push('paint_from_reference on a region of at most 20% of the canvas' + (state.patchTransfer ? ` (${why(state.patchTransfer)})` : ''));
+  // Late in a plan the goal image is not stamped again, but two transfers stay open and the line names them: without it the
+  // painter read "not now" as every transfer and filled flat shapes for the ships it had just made (Istanbul, 2026-11-10).
+  const late = !!state.patchTransfer && /off from step/.test(state.patchTransfer);
+  if (late) {
+    if (state.assetTransfer === null) allowed.push('paint_from_reference of a make_asset image not painted yet, on a region of at most 20% of the canvas (how a new subject is placed)');
+    allowed.push('paint_from_reference on a focal patch of at most 3% of the canvas');
+    not.push(`paint_from_reference of the goal image or a painted reference on a region of at most 20% of the canvas (${why(state.patchTransfer!)})`);
+  } else (state.patchTransfer ? not : allowed).push('paint_from_reference on a region of at most 20% of the canvas' + (state.patchTransfer ? ` (${why(state.patchTransfer)})` : ''));
   allowed.push('paint_reference_surface and paint_reference_edges on an area', 'paint_finish', 'paint_accents');
   if (state.fillNudge) not.push('fill_region before a reference colour pass (the host answers it with the reference tools)');
   else allowed.push('fill_region');

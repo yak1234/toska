@@ -391,6 +391,32 @@ class PaintOnlyHere(unittest.TestCase):
         self.assertIsNotNone(self.doc.feature(SYSTEM))
         self.assertFalse(any(b.isEnabled() for b in buttons.values()), 'answered once')
 
+    def test_a_proposal_shown_while_the_agents_move_is_still_open_is_selected_once_it_closes(self):
+        # The card arrives inside the painter's turn (ask_for_selection), before its move closes: Krita takes no selection
+        # then. Istanbul, 2026-11-10: "Is this the sea in the front? It is selected on your painting now", and nothing was.
+        proposal = {'mask_path': self.found_file([0, 0, W, 10]), 'bounds': [0, 0, W, 10], 'canvas': [W, H], 'share': 0.33}
+        self.doc.move_open = True
+        buttons = self.question(proposal)
+        self.assertIsNone(self.doc.selected, 'not while the agent writes')
+        self.assertTrue(self.bar.timer.isActive(), 'it waits for the move to close')
+        self.bar.watch_selection()
+        self.assertIsNone(self.doc.selected)
+        self.doc.move_open = False; self.bar.watch_selection()
+        self.assertEqual(self.doc.selected.m[0], 255, 'selected as soon as Krita takes it')
+        self.assertIn('then press Use this', self.bar.hint.text())
+        buttons['Use this'].click()
+        self.assertEqual(self.sent('prompt')[-1]['paint_only_here']['bounds'], [0, 0, W, 10])
+
+    def test_use_this_pressed_before_the_outline_could_be_selected_keeps_it_waiting(self):
+        proposal = {'mask_path': self.found_file([0, 0, W, 10]), 'bounds': [0, 0, W, 10], 'canvas': [W, H], 'share': 0.33}
+        self.doc.move_open = True
+        buttons = self.question(proposal)
+        buttons['Use this'].click()
+        self.assertEqual(self.sent('prompt'), [], 'no answer without the area')
+        self.assertIn('agent is working', self.panel.status.text())
+        self.doc.move_open = False; self.bar.watch_selection()
+        self.assertEqual(self.doc.selected.m[0], 255)
+
     def test_a_proposal_never_replaces_the_artists_own_selection_until_they_press(self):
         self.doc.selected = selected(30, 20, 5, 5)                # the artist's own selection
         proposal = {'mask_path': self.found_file([0, 0, W, 10]), 'bounds': [0, 0, W, 10], 'canvas': [W, H], 'share': 0.33}

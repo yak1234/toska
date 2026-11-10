@@ -137,6 +137,13 @@ test('edge refinement is the finishing tool: allowed on an existing painting whe
   assert.equal(done.details.image_path,view,'Guide pacing sees the canvas after a reference job');
   assert.ok(h.calls.every(c=>c.args.name.startsWith('Rim · Edge refinement')));
   await assert.rejects(h.tools[0].execute('late transfer',{...recipe,target:[0,0,64,64]}),/off from step/);
+  // A made image no transfer has painted yet is a new subject: it is placed all the same. Once painted it is the reference again.
+  const asset=join(h.runtime.study.directory,'asset.png');await writeFile(asset,'fixture');
+  h.runtime.study.references.push({id:'asset-1',path:asset,role:'asset'});
+  const ship={...recipe,name:'Ship',reference_id:'asset-1',target:[0,0,20,20],focal_regions:[]};
+  await assert.rejects(h.tools[0].execute('goal there',{...ship,reference_id:'ref'}),/off from step/,'the same patch from the goal image');
+  assert.equal((await h.tools[0].execute('place ship',ship)).details.status,'complete');
+  await assert.rejects(h.tools[0].execute('place ship again',ship),/off from step/);
  }finally{await h.close();}
 });
 
@@ -210,6 +217,18 @@ test('a focal patch (one face or hand) is allowed at any step, even on an existi
  const hand={...recipe,source:[0,0,100,100],target:[400,400,170,170]},head={...recipe,source:[0,0,100,100],target:[400,400,180,180]};
  assert.equal(transferRefusal(late,hand,big,1,{established:true}),null,'2.9% of the canvas');
  assert.match(transferRefusal(late,head,big,1,{established:true}),/off from step 4 of 6.*focal patch.*at most 3%/,'3.2% is not a focal patch');
+});
+test('a made image no transfer has painted yet is placed at any step, on at most 20% of the canvas',()=>{
+ // Istanbul, 2026-11-10: four ship images made with make_asset after the plan's last step. The place-subject skill
+ // paints them with paint_from_reference, which the late-plan rule refused, so the painter filled flat ship shapes.
+ const late={revision:1,current_step:3,brief:{steps:[{},{},{},{}]}},canvas={width:12000,height:4000};
+ const ship={...recipe,source:[0,0,1790,724],target:[3200,1900,2400,970]};          // 4.9% of the canvas, 1.3x
+ assert.match(transferRefusal(late,ship,canvas,1,{established:true}),/off from step 3 of 4/,'the goal image again is still refused');
+ assert.equal(transferRefusal(late,ship,canvas,1,{established:true,newAsset:true}),null);
+ const wide={...recipe,source:[0,0,6000,2000],target:[0,0,9000,3000]};               // 56% of the canvas
+ assert.match(transferRefusal(late,wide,canvas,1,{established:true,newAsset:true}),/at most 20% of the canvas/,'a new image is no second underpainting');
+ const stretched={...recipe,source:[0,0,500,200],target:[3200,1900,2400,970]};
+ assert.match(transferRefusal(late,stretched,canvas,1,{established:true,newAsset:true}),/stretches the reference 4\.8x/,'the stretch limit holds');
 });
 test('busy areas (windows, reflections, fur) are not smudged',()=>{
  // Left half: a smooth ramp. Right half: a fine checkerboard of weak contrast, like lit windows or snow.

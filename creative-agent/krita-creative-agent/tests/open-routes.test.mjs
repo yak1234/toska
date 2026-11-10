@@ -24,3 +24,13 @@ test('an open canvas says so: every route is open', () => {
   assert.match(line, /Allowed now:[^\n]*whole-canvas paint_from_reference[^\n]*typed strokes/);
   assert.doesNotMatch(line, /Not now:[^\n]*(fill_region|typed)/);
 });
+
+test('late in a plan the line still names the two transfers that stay open: a new made image, and a focal patch', () => {
+  const off = 'Reference transfer is for underpainting and is off from step 3 of 4: it only stamps the reference again as dabs. A focal patch ...';
+  const line = openRoutesLine({ fillNudge: false, wholeTransfer: off, patchTransfer: off, assetTransfer: null, typedCap: null, unifyUsed: null, liveFilters: true });
+  assert.match(line, /Allowed now:[^\n]*paint_from_reference of a make_asset image not painted yet, on a region of at most 20% of the canvas \(how a new subject is placed\)/);
+  assert.match(line, /Allowed now:[^\n]*paint_from_reference on a focal patch of at most 3% of the canvas/);
+  assert.match(line, /Not now:[^\n]*paint_from_reference of the goal image or a painted reference on a region of at most 20% of the canvas \(off from step 3 of 4\)/);
+  const none = openRoutesLine({ fillNudge: false, wholeTransfer: off, patchTransfer: off, assetTransfer: 'the canvas size is not known yet', typedCap: null, unifyUsed: null, liveFilters: true });
+  assert.doesNotMatch(none, /make_asset image/);
+});
