@@ -62,6 +62,8 @@ JOB_POLL_MS = 10
 # paint_pass has the bridge's default 120 s (not in LONG_OPERATIONS), so a job is cancelled at 100 s of job time: the result
 # is then a definite "stopped after N strokes", not a lost one. After the cancel the job gets CANCEL_GRACE_SECONDS to end.
 JOB_DEADLINE_SECONDS = 100
+CHEAP_REFRESH_MS = 1500      # a whole recomposite at most this long is done at every pass checkpoint (see projection_fresh)
+AREA_CHECK_SIDE = 512        # the long side of the copy that checks a recomposite by area against the whole one
 CANCEL_GRACE_SECONDS = 15
 # After the artist's Undo ended a job, Krita carries the undo out later, from its event loop once the image is idle: the pass
 # waits (running events) this long for it before it records anything.
@@ -562,6 +564,10 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                     'result': self._creative_replay(doc, session, previous[1]) if previous else None,
                     'committed_operation_count': self._creative_committed_count(session),
                     'committed_stage_counts': counts}
+        if operation == 'review_crops':
+            # Luna's blank-canvas review: the new ground read from the document, with tiles at actual pixels (review_crops.py). Read-only.
+            from .review_crops import guides_showing, review_crops_operation
+            return review_crops_operation(doc, params, guides=guides_showing(self, doc, session))
         if operation == 'observe':
             fields(params, ('region', 'guides'))
             # guides: false is the painting as Luna and the review judge it, without the agent's guide lines.
@@ -663,9 +669,12 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                     'error_code': 'outcome_unknown', 'unresolved_operations': unresolved}
         self._creative_validate_save_target(doc, session)
         expected = params.get('expected_revision')
-        if expected and expected != self._creative_revision(doc):
-            return {'error': 'The painting changed since the last observation. Inspect the fresh canvas before continuing.',
-                    'error_code': 'canvas_changed'}
+        current = self._creative_revision(doc) if expected else None
+        if expected and expected != current:
+            what = self._creative_revision_changed(expected, current)
+            return {'error': 'The painting changed since the last observation' + (' (' + what + ')' if what else '')
+                             + '. Inspect the fresh canvas before continuing.',
+                    'error_code': 'canvas_changed', **({'changed': what} if what else {})}
         # How long each step takes, in the result (not shown to the model): finds what is slow on a large painting.
         # A step that observed the canvas also reports the observation's parts, as step.part (outside the total).
         timings, clock = {}, [time.monotonic()]
@@ -903,7 +912,15 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                 else:
                     self._creative_stock_strokes(doc, session, params, result)
                 if result.get('error_code') != 'validation_rejected':
-                    session['projection_fresh'] = True   # the observation after this skips a second recomposite
+                    # The observation after this skips a second recomposite, but only where a whole one is slow (live
+                    # filter masks). The next pass checks its expected revision after a whole recomposite, and a view
+                    # recomposited by area gave another revision on empty canvas: every transfer's second chunk was
+                    # refused as "the painting changed" (Istanbul, 2026-11-10). Where the whole one is cheap the
+                    # checkpoint does it too, so both revisions are made the same way.
+                    if session.get('full_refresh_ms', CHEAP_REFRESH_MS + 1) > CHEAP_REFRESH_MS:
+                        session['projection_fresh'] = True
+                    else:
+                        session['compare_area_refresh'] = True
             else:
                 selected = self.cmd_select_layer({'id': params['layer_id']})
                 if selected.get('error'):
@@ -1710,6 +1727,35 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                     bounds[0] + bounds[2] <= region[0] + region[2] and bounds[1] + bounds[3] <= region[1] + region[3]):
                 raise ValueError('That layer extends beyond the current stage region. Protected areas cannot be adjusted.')
 
+    def _creative_area_refresh_note(self, doc):
+        """A small copy of the canvas as the pass's recomposite by area left it, before the whole one. Never raises."""
+        try:
+            doc.waitForDone()
+            return canvas_projection.read_scaled(doc, [0, 0, doc.width(), doc.height()], AREA_CHECK_SIDE / max(doc.width(), doc.height()))
+        except Exception:
+            return None
+
+    def _creative_area_refresh_differs(self, before, projection):
+        """Where the small copy from before the whole recomposite differs from the canvas after it: [x, y, w, h] in
+        fractions of the canvas and the share of the copy's pixels, or None when they agree. Never raises."""
+        try:
+            import numpy as np
+            from .qt_compat import QImage
+            after = projection.scaled(before.width(), before.height(), Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            def rows(image):
+                image = image.convertToFormat(QImage.Format.Format_ARGB32)
+                data = np.frombuffer(image.constBits().asstring(image.sizeInBytes()), np.uint8).reshape(image.height(), image.bytesPerLine())
+                return data[:, :image.width() * 4].reshape(image.height(), image.width(), 4).astype(np.int16)
+            differs = np.abs(rows(before) - rows(after)).max(-1) > 12
+            if not differs.any():
+                return None
+            ys, xs = np.nonzero(differs)
+            h, w = differs.shape
+            return {'box': [round(float(xs.min()) / w, 3), round(float(ys.min()) / h, 3), round(float(xs.max() + 1 - xs.min()) / w, 3), round(float(ys.max() + 1 - ys.min()) / h, 3)],
+                    'share': round(float(differs.mean()), 4)}
+        except Exception:
+            return None
+
     def _creative_revision(self, doc, projection=None):
         if projection is None:
             doc.refreshProjection()
@@ -1717,6 +1763,7 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             projection = doc.projection(0, 0, doc.width(), doc.height())
         digest = hashlib.sha256()
         digest.update(projection.constBits().asstring(projection.sizeInBytes()))
+        pixels = digest.copy().hexdigest()
         # Protected areas (selection masks in their own group) never render: proposing, keeping or removing one is
         # not a canvas change, so it must not refuse the painter's next pass as "the painting changed".
         manifest, skip = [], None
@@ -1728,9 +1775,37 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                 manifest.append((n.uniqueId().toString(), n.name(), n.opacity(), n.visible(), n.locked(), depth))
         digest.update(json.dumps([doc.width(), doc.height(), manifest]).encode())
         selection = doc.selection()
+        chosen = None
         if selection is not None:
-            digest.update(bytes(selection.pixelData(0, 0, doc.width(), doc.height())))
-        return digest.hexdigest()
+            data = bytes(selection.pixelData(0, 0, doc.width(), doc.height()))
+            digest.update(data)
+            chosen = hashlib.sha256(data).hexdigest()
+        revision = digest.hexdigest()
+        # What each recent revision was made of, so a refused pass can say what changed (revision_changed).
+        known = self.__dict__.setdefault('_revision_parts', {})
+        known[revision] = {'pixels': pixels, 'layers': manifest, 'selection': chosen, 'size': [doc.width(), doc.height()]}
+        while len(known) > 8:
+            known.pop(next(iter(known)))
+        return revision
+
+    def _creative_revision_changed(self, expected, current):
+        """What differs between two revisions this plugin computed: 'the picture', 'the layers (names)', 'the selection'.
+        Four transfers stopped after their first chunk with "the painting changed" and nothing said what had (Istanbul,
+        2026-11-10). '' when the expected revision is not one this plugin remembers."""
+        known = self.__dict__.get('_revision_parts', {})
+        was, now = known.get(expected), known.get(current)
+        if not was or not now:
+            return ''
+        changed = []
+        if was['pixels'] != now['pixels']:
+            changed.append('the picture')
+        if was['layers'] != now['layers'] or was['size'] != now['size']:
+            before, after = {tuple(l) for l in was['layers']}, {tuple(l) for l in now['layers']}
+            names = sorted({str(l[1]) for l in before ^ after})[:4]
+            changed.append('the layers' + (' (' + ', '.join(names) + ')' if names else ''))
+        if was['selection'] != now['selection']:
+            changed.append('the selection')
+        return ' and '.join(changed)
 
     def _creative_passes(self, session):
         if 'passes' not in session:
@@ -2281,16 +2356,26 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         def lap(part):
             now = time.monotonic(); parts[part] = int((now - clock[0]) * 1000); clock[0] = now
         # A full recomposite reruns every filter mask; skip it right after a pass that just did one.
+        area_note = None
+        if session.pop('compare_area_refresh', False):
+            area_note = self._creative_area_refresh_note(doc)   # what the pass's own recomposite by area left out
+            lap('area_check')
         if not session.pop('projection_fresh', False):
             doc.refreshProjection()
-        doc.waitForDone()
-        lap('refresh')
+            doc.waitForDone()
+            lap('refresh')
+            session['full_refresh_ms'] = parts['refresh']
+        else:
+            doc.waitForDone()
+            lap('refresh')
         projection = doc.projection(0, 0, doc.width(), doc.height())
         if projection.isNull():
             raise RuntimeError('Could not read the canvas projection')
         lap('read')
         revision = self._creative_revision(doc, projection)
         lap('revision')
+        if area_note is not None:
+            area_note = self._creative_area_refresh_differs(area_note, projection)
         if region:
             self._creative_region(region, doc.width(), doc.height())
         unguided, guides_note, tried = None, None, False
@@ -2338,6 +2423,8 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             observation['guides_hidden'] = True
         if guides_note:
             observation['guides_note'] = guides_note
+        if area_note:
+            observation['area_refresh_differed'] = area_note   # a diagnostic: the view by area was not the whole one
         session['observe_ms'] = parts
         return observation
 

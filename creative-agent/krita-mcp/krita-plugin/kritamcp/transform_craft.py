@@ -112,11 +112,24 @@ class TransformCraft:
         scale = params.get('scale', 1)
         scale = scale if isinstance(scale, list) else [scale, scale]
         mask = doc.createTransformMask(params.get('name') or 'Transform')
-        if mask is None or not node.addChildNode(mask, None):
+        if mask is None:
             raise RuntimeError('Krita could not add the transform mask.')
-        xml = free_transform_xml(mask.toXML(), center, params.get('move', [0, 0]), scale, params.get('rotate', 0))
-        if mask.fromXML(xml) is False:
-            raise RuntimeError('Krita rejected the transform.')
+        # The transform is set before the mask joins the layer. Set afterwards, it replaced the mask's parameters while
+        # Krita's worker threads were already recompositing the layer with the old ones, and Toska crashed in
+        # KisTransformMaskAdapter::compareTransform (a double free, Istanbul, 2026-11-10). A mask that takes no
+        # transform until it has a layer (another Krita) is set after it is added, with the canvas settled, as before.
+        ready = False
+        try:
+            ready = mask.fromXML(free_transform_xml(mask.toXML(), center, params.get('move', [0, 0]), scale, params.get('rotate', 0))) is not False
+        except Exception:
+            ready = False
+        if not node.addChildNode(mask, None):
+            raise RuntimeError('Krita could not add the transform mask.')
+        if not ready:
+            doc.waitForDone()
+            xml = free_transform_xml(mask.toXML(), center, params.get('move', [0, 0]), scale, params.get('rotate', 0))
+            if mask.fromXML(xml) is False:
+                raise RuntimeError('Krita rejected the transform.')
         doc.waitForDone()
         doc.refreshProjection()
         identifier = mask.uniqueId().toString()

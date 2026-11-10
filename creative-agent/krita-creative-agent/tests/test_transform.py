@@ -63,6 +63,32 @@ class TransformTests(region_tests.RegionSetup, unittest.TestCase):
         self.assertEqual((mask.shown, layer.shown), (False, True))
         region_tests.run(self.h, 'review_pass', {'pass_id': 'moon', 'action': 'reject'}, 'reject-moon')     # the layer's own pass still rejects
 
+    def test_the_transform_is_set_before_the_mask_joins_the_layer(self):
+        # Set afterwards it replaced the parameters under Krita's worker threads: a crash (Istanbul, 2026-11-10).
+        layer = self.agent_layer(); order = []
+        added, made = layer.addChildNode, self.h.doc.createTransformMask
+        layer.addChildNode = lambda node, above: order.append('added') or added(node, above)
+        def create(name):
+            mask = made(name); took = mask.fromXML
+            mask.fromXML = lambda xml: order.append('transform') or took(xml)
+            return mask
+        self.h.doc.createTransformMask = create
+        self.assertEqual(region_tests.run(self.h, 'transform_layer', {'layer_id': layer.id, 'move': [3, 0]}, 'move')['status'], 'ok')
+        self.assertEqual(order, ['transform', 'added'])
+
+    def test_a_mask_that_takes_no_transform_before_it_has_a_layer_is_set_after(self):
+        layer = self.agent_layer(); order = []
+        added, made = layer.addChildNode, self.h.doc.createTransformMask
+        layer.addChildNode = lambda node, above: order.append('added') or added(node, above)
+        def create(name):
+            mask = made(name); took = mask.fromXML
+            mask.fromXML = lambda xml: order.append('transform') or ('added' in order and took(xml))
+            return mask
+        self.h.doc.createTransformMask = create
+        self.assertEqual(region_tests.run(self.h, 'transform_layer', {'layer_id': layer.id, 'move': [3, 0]}, 'move')['status'], 'ok')
+        self.assertEqual(order, ['transform', 'added', 'transform'])
+        self.assertEqual(values(layer.childNodes()[0].xml)['transformed'], (4, 1))
+
     def test_krita_s_own_parameters_are_edited_and_a_pivot_is_honoured(self):
         own = transform.FREE_TRANSFORM.replace('value="Bicubic"', 'value="Lanczos3"')
         self.h.doc.own_xml = own.split('\n', 1)[1]

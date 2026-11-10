@@ -454,6 +454,25 @@ class NativePolicyTests(unittest.TestCase):
         result=h.cmd_creative(p)
         self.assertEqual(result['error_code'],'canvas_changed'); self.assertEqual(h.paints,0)
 
+    def test_a_refused_pass_says_what_changed(self):
+        part = lambda pixels, layers, selection=None: {'pixels': pixels, 'layers': layers, 'selection': selection, 'size': [768, 1024]}
+        layers = [['a', 'Sky', 255, True, False, 0]]
+        cases = [(part('p1', layers), part('p2', layers), 'the picture'),
+                 (part('p1', layers), part('p1', layers + [['b', 'Quay', 255, True, False, 0]]), 'the layers (Quay)'),
+                 (part('p1', layers), part('p1', layers, 's'), 'the selection'),
+                 (part('p1', layers), part('p2', [['a', 'Sky', 255, False, False, 0]]), 'the picture and the layers (Sky)')]
+        for was, now, words in cases:
+            h=Harness(); h._revision_parts={'seen': was, 'current-revision': now}
+            p=request(); p['params']['expected_revision']='seen'
+            result=h.cmd_creative(p)
+            self.assertEqual(result['error_code'],'canvas_changed'); self.assertEqual(h.paints,0)
+            self.assertEqual(result['changed'], words)
+            self.assertIn('('+words+')', result['error'])
+        h=Harness(); p=request(); p['params']['expected_revision']='never seen'
+        result=h.cmd_creative(p)
+        self.assertNotIn('changed', result, 'a revision this plugin did not compute is only refused')
+        self.assertEqual(result['error'], 'The painting changed since the last observation. Inspect the fresh canvas before continuing.')
+
     def test_disappeared_file_never_recreated_or_painted(self):
         h=Harness(); h._creative_session.update(saved_once=True,painting_path='/nonexistent/old/painting.kra')
         with self.assertRaisesRegex(ValueError,'will not be recreated'): h.cmd_creative(request())
@@ -925,6 +944,20 @@ class ForkStrokeJobTests(unittest.TestCase):
         self.assertTrue(h.job.waits and all(0 < ms <= 50 for ms in h.job.waits), 'every wait on the GUI thread is short and bounded')
         self.assertEqual(result['stroke_job']['state'], 'done')
         self.assertEqual((result['stroke_job']['strokes'], result['stroke_job']['total']), (3, 3))
+
+    def test_the_checkpoint_after_a_job_recomposites_the_whole_image_where_that_is_cheap(self):
+        # Istanbul, 2026-11-10: a view recomposited by area gave another revision than the whole recomposite the next
+        # pass checks against, so every transfer's second chunk was refused as "the painting changed".
+        h = self.harness(); h._creative_session['full_refresh_ms'] = 230
+        self.assertEqual(self._pass(h)['status'], 'ok')
+        self.assertNotIn('projection_fresh', h._creative_session, 'the checkpoint recomposites as the next check does')
+        self.assertTrue(h._creative_session.get('compare_area_refresh'))
+        for slow in (None, module.CHEAP_REFRESH_MS + 1):
+            h = self.harness()
+            if slow: h._creative_session['full_refresh_ms'] = slow
+            self.assertEqual(self._pass(h)['status'], 'ok')
+            self.assertTrue(h._creative_session.get('projection_fresh'), 'a slow or unmeasured recomposite is skipped as before')
+            self.assertNotIn('compare_area_refresh', h._creative_session)
 
     def test_without_a_region_the_job_gets_no_selection(self):
         h = self.harness()
