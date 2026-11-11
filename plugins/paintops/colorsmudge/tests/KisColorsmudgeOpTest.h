@@ -16,6 +16,17 @@ private Q_SLOTS:
 
     void test();
     void test_data();
+
+    // Toska: the preset's mixing model (KisColorSmudgeMixingOptionData, KisColorSmudgeStrategyBase::setMixing)
+    void testMixingOptionRoundTrip();
+    void testUnknownModelReadsAsRgb();
+    void testSpectralSmudgeBlueIntoYellowIsGreen();
+    void testPigmentComplementariesBrownOnCanvas();
+    void testMixOnBrushOffIsRgb();
+    void testMixInWetPaintStoredOnly();
+    void testNonRgbColourSpaceFallsBack();
+    void testNonNormalCompositeKeepsKritaOp();
+    void testOverlayModeUsesModel();
 };
 
 #endif // KISCOLORSMUDGEOPTEST_H

@@ -28,6 +28,7 @@
 #include <KisColorRateOption.h>
 #include <KisSmudgeRadiusOption.h>
 #include <KisSmudgeOverlayModeOptionData.h>
+#include <KisColorSmudgeMixingOptionData.h>
 
 class QPointF;
 
@@ -73,6 +74,7 @@ private:
     QList<KisHSVOption*> m_hsvOptions;
     KisAirbrushOptionData m_airbrushData;
     KisSmudgeOverlayModeOptionData m_overlayModeData;
+    KisColorSmudgeMixingOptionData m_mixingData;
 
     QRect                     m_dstDabRect;
     QPointF                   m_lastPaintPos;

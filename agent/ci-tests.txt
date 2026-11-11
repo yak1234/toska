@@ -69,3 +69,4 @@ TestNodeView
 KisMacosFullScreenTest
 KisPaintMixTest
 KisMyPaintOpTest
+KisColorsmudgeOpTest

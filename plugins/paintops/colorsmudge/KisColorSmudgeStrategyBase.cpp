@@ -12,6 +12,38 @@
 #include "kis_paint_device.h"
 #include "KisColorSmudgeSampleUtils.h"
 
+#include <KoColorModelStandardIds.h>
+#include <KoColorProfile.h>
+
+/**********************************************************************************/
+/*                 Toska: mixing by a model                                       */
+/**********************************************************************************/
+
+std::optional<KisPaintMix::PixelFormat> KisColorSmudgeStrategyBase::pixelFormatFor(const KoColorSpace *cs)
+{
+    if (!cs || cs->colorModelId() != RGBAColorModelID) return std::nullopt;
+    // a linear-light profile holds linear values; the models would read them as encoded and mix the wrong colours
+    if (!cs->profile() || cs->profile()->isLinear()) return std::nullopt;
+    const KoID depth = cs->colorDepthId();
+    if (depth == Integer8BitsColorDepthID) return KisPaintMix::PixelFormat::Bgra8;
+    if (depth == Integer16BitsColorDepthID) return KisPaintMix::PixelFormat::Bgra16;
+    if (depth == Float32BitsColorDepthID) return KisPaintMix::PixelFormat::RgbaF32;
+    return std::nullopt;
+}
+
+void KisColorSmudgeStrategyBase::blendByModel(const MixByModel &mix, const KoCompositeOp *op, quint8 *dst,
+                                              const quint8 *src, bool srcIsOneColour, int numPixels, qreal opacity)
+{
+    KisPaintMix::blendPixels(mix.model,
+                             op->id() == COMPOSITE_COPY ? KisPaintMix::Blend::Copy : KisPaintMix::Blend::Over,
+                             mix.format, dst, src, srcIsOneColour, numPixels, float(opacity));
+}
+
+void KisColorSmudgeStrategyBase::setMixing(const KisPaintMix::Settings &settings)
+{
+    m_mixing = settings;
+}
+
 /**********************************************************************************/
 /*                 DabColoringStrategyMask                                        */
 /**********************************************************************************/
@@ -51,6 +83,12 @@ void KisColorSmudgeStrategyBase::DabColoringStrategyMask::blendInColorRate(const
 {
     KIS_SAFE_ASSERT_RECOVER_RETURN(*paintColor.colorSpace() == *colorRateOp->colorSpace());
 
+    if (mixByModel) {
+        blendByModel(*mixByModel, colorRateOp, dstDevice->data(), paintColor.data(), true,
+                     dstRect.width() * dstRect.height(), colorRateOpacity);
+        return;
+    }
+
     colorRateOp->composite(dstDevice->data(), dstRect.width() * dstDevice->pixelSize(),
                            paintColor.data(), 0,
                            0, 0,
@@ -77,6 +115,12 @@ void KisColorSmudgeStrategyBase::DabColoringStrategyStamp::blendInColorRate(cons
 
     // TODO: check correctness for composition source device (transparency masks)
     KIS_ASSERT_RECOVER_RETURN(*dstDevice->colorSpace() == *m_origDab->colorSpace());
+
+    if (mixByModel) {
+        blendByModel(*mixByModel, colorRateOp, dstDevice->data(), m_origDab->data(), false,
+                     dstRect.width() * dstRect.height(), colorRateOpacity);
+        return;
+    }
 
     colorRateOp->composite(dstDevice->data(), dstRect.width() * dstDevice->pixelSize(),
                            m_origDab->data(), dstRect.width() * m_origDab->pixelSize(),
@@ -122,6 +166,18 @@ void KisColorSmudgeStrategyBase::initializePaintingImpl(const KoColorSpace *dstC
     m_smearOp = dstColorSpace->compositeOp(smearCompositeOp(smearAlpha));
     m_colorRateOp = dstColorSpace->compositeOp(colorRateCompositeOpId);
     m_preparedDullingColor.convertTo(dstColorSpace);
+
+    // Toska: the model replaces the smear, dulling and colour rate blends only where both ops are Normal or Copy
+    // and the buffer is a layout libpaintmix reads; in every other case the dab is built exactly as upstream
+    m_mixByModel.reset();
+    auto normalOrCopy = [](const KoCompositeOp *op) {
+        return op && (op->id() == COMPOSITE_OVER || op->id() == COMPOSITE_COPY);
+    };
+    const std::optional<KisPaintMix::PixelFormat> format = pixelFormatFor(dstColorSpace);
+    if (m_mixing.model != KisPaintMix::Model::Rgb && m_mixing.mixOnBrush && format &&
+        normalOrCopy(m_smearOp) && normalOrCopy(m_colorRateOp)) {
+        m_mixByModel = MixByModel{m_mixing.model, *format};
+    }
 }
 
 const KoColorSpace *KisColorSmudgeStrategyBase::preciseColorSpace() const
@@ -204,10 +260,12 @@ KisColorSmudgeStrategyBase::blendBrush(const QVector<KisPainter *> dstPainters, 
     m_blendDevice->lazyGrowBufferWithoutInitialization();
 
     DabColoringStrategy &coloringStrategy = this->coloringStrategy();
+    coloringStrategy.mixByModel = m_mixByModel;
 
     const qreal dullingRateOpacity = this->dullingRateOpacity(opacity, smudgeRateValue);
 
     if (colorRateOpacity > 0 &&
+        !m_mixByModel && // Toska: the fused shortcut is Krita's own arithmetic; a model takes the two blends apart
         m_useDullingMode &&
         coloringStrategy.supportsFusedDullingBlending() &&
         ((m_smearOp->id() == COMPOSITE_OVER &&
@@ -275,6 +333,11 @@ void KisColorSmudgeStrategyBase::blendInBackgroundWithSmearing(KisFixedPaintDevi
         tempDevice.lazyGrowBufferWithoutInitialization();
 
         src->readBytes(tempDevice.data(), srcRect);
+        if (m_mixByModel) {
+            blendByModel(*m_mixByModel, m_smearOp, dst->data(), tempDevice.data(), false,
+                         dstRect.width() * dstRect.height(), smudgeRateOpacity);
+            return;
+        }
         m_smearOp->composite(dst->data(), dstRect.width() * dst->pixelSize(),
                              tempDevice.data(), dstRect.width() * tempDevice.pixelSize(), // stride should be random non-zero
                              0, 0,
@@ -293,6 +356,11 @@ void KisColorSmudgeStrategyBase::blendInBackgroundWithDulling(KisFixedPaintDevic
         dst->fill(dst->bounds(), m_preparedDullingColor);
     } else {
         src->readBytes(dst->data(), dstRect);
+        if (m_mixByModel) {
+            blendByModel(*m_mixByModel, m_smearOp, dst->data(), m_preparedDullingColor.data(), true,
+                         dstRect.width() * dstRect.height(), smudgeRateOpacity);
+            return;
+        }
         m_smearOp->composite(dst->data(), dstRect.width() * dst->pixelSize(),
                              m_preparedDullingColor.data(), 0,
                              0, 0,

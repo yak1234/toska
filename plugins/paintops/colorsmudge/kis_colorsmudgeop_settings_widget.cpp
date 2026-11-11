@@ -24,6 +24,7 @@
 #include <KisSmudgeLengthOptionWidget.h>
 #include <KisPaintThicknessOptionWidget.h>
 #include <KisSmudgeOverlayModeOptionWidget.h>
+#include <KisColorSmudgeMixingOptionWidget.h>
 #include <KisBrushPropertiesModel.h>
 #include <KisColorSmudgeStandardOptionData.h>
 #include <KisSmudgeRadiusOptionData.h>
@@ -96,6 +97,8 @@ KisColorSmudgeOpSettingsWidget::KisColorSmudgeOpSettingsWidget(QWidget* parent, 
                          brushOptionWidget()->
                              lightnessModeEnabled()
                              .map(std::logical_not{})));
+
+    addPaintOpOption(kpowu::createOptionWidget<KisColorSmudgeMixingOptionWidget>());
 
     addPaintOpOption(kpowu::createCurveOptionWidget(KisGradientOptionData(), KisPaintOpOption::GENERAL));
 

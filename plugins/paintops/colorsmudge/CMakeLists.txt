@@ -17,6 +17,9 @@ set(kritacolorsmudgepaintop_SOURCES
     KisSmudgeOverlayModeOptionModel.cpp
     KisSmudgeOverlayModeOptionWidget.cpp
     KisSmudgeRadiusOptionData.cpp
+    KisColorSmudgeMixingOptionData.cpp
+    KisColorSmudgeMixingOptionModel.cpp
+    KisColorSmudgeMixingOptionWidget.cpp
     KisGradientOption.cpp
     KisBrushPropertiesModel.cpp
     KisColorSmudgeStrategy.cpp
@@ -31,7 +34,7 @@ set(kritacolorsmudgepaintop_SOURCES
 
 kis_add_library(kritacolorsmudgepaintop MODULE ${kritacolorsmudgepaintop_SOURCES})
 
-target_link_libraries(kritacolorsmudgepaintop kritalibpaintop)
+target_link_libraries(kritacolorsmudgepaintop kritalibpaintop kritapaintmix)
 
 install(TARGETS kritacolorsmudgepaintop DESTINATION ${KRITA_PLUGIN_INSTALL_DIR})
 install( FILES  krita-colorsmudge.png DESTINATION ${KDE_INSTALL_DATADIR}/krita/images)

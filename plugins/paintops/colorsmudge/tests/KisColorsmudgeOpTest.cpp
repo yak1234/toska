@@ -16,6 +16,11 @@
 #include <brushengine/kis_paintop_preset.h>
 #include <brushengine/kis_paintop_settings.h>
 #include <KoCanvasResourcesIds.h>
+#include <KoColorSpaceRegistry.h>
+#include <KoCompositeOpRegistry.h>
+#include <kis_properties_configuration.h>
+
+#include <KisColorSmudgeMixingOptionData.h>
 
 class TestColorsmudgeOp : public TestUtil::QImageBasedTest
 {
@@ -149,6 +154,263 @@ void KisColorsmudgeOpTest::test()
 
     TestColorsmudgeOp t;
     t.test(testName, preset, overlay);
+}
+
+namespace {
+
+/// What one mixing run paints with.
+struct MixingRun {
+    QColor canvas {252, 211, 0};      // the paint already there
+    QColor paint {0, 33, 133};        // the brush's colour
+    QString model;                    // ToskaMixingModel; empty leaves the property out
+    int mixOnBrush {-1};              // ToskaMixOnBrush: -1 leaves it out
+    int mixInWetPaint {-1};           // ToskaMixInWetPaint: -1 leaves it out
+    bool overlay {false};             // paint on an empty layer above the canvas paint, with MergedPaint
+    bool lab {false};                 // a Lab 16-bit image
+    QString compositeOp;              // the brush's blend mode; empty is Normal
+    qreal colorRate {0.15};           // low: a stroke's overlapping dabs add up, and at 0.5 its middle is pure brush colour
+};
+
+class MixingPainter : public TestUtil::QImageBasedTest
+{
+public:
+    MixingPainter() : QImageBasedTest("colorsmudgeop") {}
+
+    /// One stroke across a 200x200 canvas; the painted layer as an image.
+    QImage paint(const MixingRun &run) {
+        KisSurrogateUndoStore *undoStore = new KisSurrogateUndoStore();
+        KisImageSP image = createTrivialImage(undoStore);
+        image->initialRefreshGraph();
+        image->resizeImage(QRect(0, 0, 200, 200));
+        image->waitForDone();
+        if (run.lab) {
+            image->convertImageColorSpace(KoColorSpaceRegistry::instance()->lab16(),
+                                          KoColorConversionTransformation::internalRenderingIntent(),
+                                          KoColorConversionTransformation::internalConversionFlags());
+            image->waitForDone();
+        }
+
+        KisNodeSP paint1 = findNode(image->root(), "paint1");
+        if (!paint1) return QImage();
+        paint1->paintDevice()->fill(QRect(0, 0, 200, 200), KoColor(run.canvas, image->colorSpace()));
+
+        KisNodeSP targetNode = paint1;
+        if (run.overlay) {
+            KisPaintLayerSP paint2 = new KisPaintLayer(image, "paint2", OPACITY_OPAQUE_U8);
+            image->addNode(paint2, paint1->parent(), paint1);
+            targetNode = paint2;
+        }
+        image->initialRefreshGraph();
+        image->waitForDone();
+
+        KisPainter gc(targetNode->paintDevice());
+
+        QScopedPointer<KoCanvasResourceProvider> manager(
+            utils::createResourceManager(image, 0, "test_smudge_20px_dul_nsa_new.0001.kpp"));
+        manager->setResource(KoCanvasResource::ForegroundColor, KoColor(run.paint, image->colorSpace()));
+
+        KisPaintOpPresetSP preset =
+            manager->resource(KoCanvasResource::CurrentPaintOpPreset).value<KisPaintOpPresetSP>();
+        if (!preset) return QImage();
+
+        KisPaintOpSettingsSP settings = preset->settings();
+        settings->setProperty("ColorRateValue", run.colorRate);
+        if (run.overlay) settings->setProperty("MergedPaint", true);
+        if (!run.model.isEmpty()) settings->setProperty("ToskaMixingModel", run.model);
+        if (run.mixOnBrush >= 0) settings->setProperty("ToskaMixOnBrush", bool(run.mixOnBrush));
+        if (run.mixInWetPaint >= 0) settings->setProperty("ToskaMixInWetPaint", bool(run.mixInWetPaint));
+
+        KisResourcesSnapshotSP resources = new KisResourcesSnapshot(image, targetNode, manager.data());
+        resources->setupPainter(&gc);
+        if (!run.compositeOp.isEmpty()) {
+            // the paint op reads the blend mode when it is made: make it again with the mode set
+            gc.setCompositeOpId(run.compositeOp);
+            gc.setPaintOpPreset(preset, targetNode, image);
+        }
+
+        KisDistanceInformation dist;
+        gc.paintLine(KisPaintInformation(QPointF(20, 100), 1.0), KisPaintInformation(QPointF(180, 100), 1.0), &dist);
+
+        return targetNode->paintDevice()->convertToQImage(0, QRect(0, 0, 200, 200));
+    }
+};
+
+QImage paintRun(const MixingRun &run)
+{
+    MixingPainter painter;
+    return painter.paint(run);
+}
+
+/// The mean colour of the stroke's middle (its centre line, away from both ends).
+QColor strokeMiddle(const QImage &image)
+{
+    qreal r = 0, g = 0, b = 0, a = 0;
+    int n = 0;
+    for (int y = 98; y <= 102; y++) {
+        for (int x = 80; x <= 120; x++) {
+            const QColor c = image.pixelColor(x, y);
+            r += c.redF(); g += c.greenF(); b += c.blueF(); a += c.alphaF();
+            n++;
+        }
+    }
+    return QColor::fromRgbF(r / n, g / n, b / n, a / n);
+}
+
+QByteArray describe(const QColor &c)
+{
+    return QString("(%1, %2, %3, a %4)").arg(c.red()).arg(c.green()).arg(c.blue()).arg(c.alpha()).toLatin1();
+}
+
+} // namespace
+
+void KisColorsmudgeOpTest::testMixingOptionRoundTrip()
+{
+    KisColorSmudgeMixingOptionData written;
+    written.model = "spectral";
+    written.mixOnBrush = false;
+    written.mixInWetPaint = true;
+
+    KisPropertiesConfiguration config;
+    written.write(&config);
+    QCOMPARE(config.getString("ToskaMixingModel"), QString("spectral"));
+
+    KisColorSmudgeMixingOptionData read;
+    QVERIFY(read.read(&config));
+    QVERIFY(read == written);
+    QVERIFY(read.settings().model == KisPaintMix::Model::Spectral);
+    QVERIFY(!read.settings().mixOnBrush);
+    QVERIFY(read.settings().mixInWetPaint);
+
+    // a preset that has none of the properties mixes as Krita always has
+    KisPropertiesConfiguration empty;
+    KisColorSmudgeMixingOptionData defaults;
+    QVERIFY(defaults.read(&empty));
+    QCOMPARE(defaults.model, QString("rgb"));
+    QVERIFY(defaults.mixOnBrush);
+    QVERIFY(!defaults.mixInWetPaint);
+    QVERIFY(defaults.settings().model == KisPaintMix::Model::Rgb);
+}
+
+void KisColorsmudgeOpTest::testUnknownModelReadsAsRgb()
+{
+    KisPropertiesConfiguration config;
+    config.setProperty("ToskaMixingModel", "oil");
+    KisColorSmudgeMixingOptionData data;
+    QVERIFY(data.read(&config));
+    QCOMPARE(data.model, QString("rgb"));
+    QVERIFY(data.settings().model == KisPaintMix::Model::Rgb);
+
+    MixingRun unknown;
+    unknown.model = "oil";
+    MixingRun rgb;
+    const QImage a = paintRun(unknown);
+    QVERIFY(!a.isNull());
+    QVERIFY(a == paintRun(rgb));
+}
+
+void KisColorsmudgeOpTest::testSpectralSmudgeBlueIntoYellowIsGreen()
+{
+    MixingRun run;                       // blue (0,33,133) into yellow (252,211,0)
+    const QImage plain = paintRun(run);
+    run.model = "spectral";
+    const QImage spectral = paintRun(run);
+    QVERIFY(!plain.isNull());
+    QVERIFY(!spectral.isNull());
+
+    const QColor mixed = strokeMiddle(spectral);
+    const QColor lerped = strokeMiddle(plain);
+    qInfo() << "blue into yellow: spectral" << describe(mixed).constData() << "rgb" << describe(lerped).constData();
+    QVERIFY2(mixed.green() > mixed.red() && mixed.green() > mixed.blue(), describe(mixed).constData());
+    // Krita's own blend of the same two paints is an olive: green never leads red
+    QVERIFY2(!(lerped.green() > lerped.red()), describe(lerped).constData());
+    // an explicit rgb is Krita's own blend, byte for byte
+    run.model = "rgb";
+    QVERIFY(paintRun(run) == plain);
+}
+
+void KisColorsmudgeOpTest::testPigmentComplementariesBrownOnCanvas()
+{
+    MixingRun run;
+    run.canvas = QColor(25, 0, 89);      // ultramarine
+    run.paint = QColor(255, 105, 0);     // orange
+    run.model = "pigment";
+    const QImage image = paintRun(run);
+    QVERIFY(!image.isNull());
+
+    const QColor mixed = strokeMiddle(image);
+    qInfo() << "orange into ultramarine: pigment" << describe(mixed).constData();
+    QVERIFY2(mixed.red() > mixed.green() && mixed.green() > mixed.blue(), describe(mixed).constData());
+    QVERIFY2(mixed.hsvHue() >= 0 && mixed.hsvHue() <= 60, describe(mixed).constData());
+    QVERIFY2(mixed.valueF() <= 0.7, describe(mixed).constData());
+}
+
+void KisColorsmudgeOpTest::testMixOnBrushOffIsRgb()
+{
+    MixingRun rgb;
+    MixingRun off;
+    off.model = "pigment";
+    off.mixOnBrush = 0;
+    MixingRun on;
+    on.model = "pigment";
+    const QImage plain = paintRun(rgb);
+    QVERIFY(!plain.isNull());
+    QVERIFY(paintRun(off) == plain);
+    QVERIFY(paintRun(on) != plain);
+}
+
+void KisColorsmudgeOpTest::testMixInWetPaintStoredOnly()
+{
+    MixingRun off;
+    off.model = "spectral";
+    off.mixInWetPaint = 0;
+    MixingRun on = off;
+    on.mixInWetPaint = 1;
+    const QImage a = paintRun(off);
+    QVERIFY(!a.isNull());
+    QVERIFY(a == paintRun(on));
+}
+
+void KisColorsmudgeOpTest::testNonRgbColourSpaceFallsBack()
+{
+    MixingRun rgb;
+    rgb.lab = true;
+    MixingRun spectral = rgb;
+    spectral.model = "spectral";
+    const QImage plain = paintRun(rgb);
+    QVERIFY(!plain.isNull());
+    QVERIFY(strokeMiddle(plain) != QColor(252, 211, 0));   // the stroke painted
+    QVERIFY(paintRun(spectral) == plain);
+}
+
+void KisColorsmudgeOpTest::testNonNormalCompositeKeepsKritaOp()
+{
+    MixingRun rgb;
+    rgb.compositeOp = COMPOSITE_MULT;
+    MixingRun spectral = rgb;
+    spectral.model = "spectral";
+    const QImage plain = paintRun(rgb);
+    QVERIFY(!plain.isNull());
+    QVERIFY(strokeMiddle(plain) != QColor(252, 211, 0));
+    QVERIFY(paintRun(spectral) == plain);
+}
+
+void KisColorsmudgeOpTest::testOverlayModeUsesModel()
+{
+    MixingRun run;
+    run.overlay = true;
+    const QImage plain = paintRun(run);
+    run.model = "spectral";
+    const QImage spectral = paintRun(run);
+    QVERIFY(!plain.isNull());
+    QVERIFY(!spectral.isNull());
+
+    // the layer was empty: what it now holds is the brush's paint mixed with the yellow below
+    const QColor mixed = strokeMiddle(spectral);
+    const QColor lerped = strokeMiddle(plain);
+    qInfo() << "overlay, blue over yellow below: spectral" << describe(mixed).constData() << "rgb" << describe(lerped).constData();
+    QVERIFY2(mixed.alpha() > 200, describe(mixed).constData());
+    QVERIFY2(mixed.green() > mixed.red() && mixed.green() > mixed.blue(), describe(mixed).constData());
+    QVERIFY2(!(lerped.green() > lerped.red()), describe(lerped).constData());
 }
 
 KISTEST_MAIN(KisColorsmudgeOpTest)

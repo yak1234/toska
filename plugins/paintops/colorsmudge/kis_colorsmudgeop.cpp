@@ -66,6 +66,7 @@ KisColorSmudgeOp::KisColorSmudgeOp(const KisPaintOpSettingsSP settings, KisPaint
 
     m_airbrushData.read(settings.data());
     m_overlayModeData.read(settings.data());
+    m_mixingData.read(settings.data());
 
     m_gradient = painter->gradient();
 
@@ -108,6 +109,11 @@ KisColorSmudgeOp::KisColorSmudgeOp(const KisPaintOpSettingsSP settings, KisPaint
                                                               useSmearAlpha,
                                                               useDullingMode,
                                                               useOverlayMode));
+    }
+
+    // Toska: every strategy derives from KisColorSmudgeStrategyBase, which mixes the dab
+    if (KisColorSmudgeStrategyBase *base = dynamic_cast<KisColorSmudgeStrategyBase*>(m_strategy.data())) {
+        base->setMixing(m_mixingData.settings());
     }
 
     m_strategy->initializePainting();

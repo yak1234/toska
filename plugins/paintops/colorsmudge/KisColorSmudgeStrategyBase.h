@@ -12,15 +12,38 @@
 #include "KisColorSmudgeStrategy.h"
 #include "KisColorSmudgeSource.h"
 
+#include <optional>
+#include <KisPaintMix.h>
+
 class KisPainter;
 
 
 class KisColorSmudgeStrategyBase : public KisColorSmudgeStrategy
 {
 public:
+    /**
+     * Toska: the mixing model a blend of the dab's buffer runs by (libpaintmix's blendPixels), in place of Krita's
+     * composite op. Set only when the preset names a model other than rgb, mixes on the brush, the buffer is an
+     * sRGB-encoded RGBA layout libpaintmix reads, and the smear and colour rate ops are Normal or Copy.
+     */
+    struct MixByModel {
+        KisPaintMix::Model model;
+        KisPaintMix::PixelFormat format;
+    };
+
+    /// Blends src into dst by the model: op (Normal or Copy) chooses how the opacity weighs the two.
+    static void blendByModel(const MixByModel &mix, const KoCompositeOp *op, quint8 *dst, const quint8 *src,
+                             bool srcIsOneColour, int numPixels, qreal opacity);
+
+    /// The layout libpaintmix reads the colour space as: 8-bit, 16-bit or 32-bit float RGBA with an sRGB-encoded
+    /// (not linear) profile; nothing for any other colour space, which keeps Krita's own mixing.
+    static std::optional<KisPaintMix::PixelFormat> pixelFormatFor(const KoColorSpace *cs);
+
     struct DabColoringStrategy
     {
         virtual ~DabColoringStrategy() = default;
+        /// Toska: set by blendBrush before each dab; empty means Krita's composite ops, as upstream.
+        std::optional<MixByModel> mixByModel;
         virtual bool supportsFusedDullingBlending() const = 0;
         virtual void blendInColorRate(const KoColor &paintColor, const KoCompositeOp *colorRateOp, qreal colorRateOpacity,
                                       KisFixedPaintDeviceSP dstDevice, const QRect &dstRect) const = 0;
@@ -85,6 +108,9 @@ public:
 
     virtual DabColoringStrategy& coloringStrategy() = 0;
 
+    /// Toska: the preset's mixing model (KisColorSmudgeMixingOptionData); call before initializePainting().
+    void setMixing(const KisPaintMix::Settings &settings);
+
     const KoColorSpace* preciseColorSpace() const override;
 
     virtual QString smearCompositeOp(bool smearAlpha) const;
@@ -121,6 +147,8 @@ protected:
 private:
     KisFixedPaintDeviceSP m_blendDevice;
     bool m_useDullingMode {true};
+    KisPaintMix::Settings m_mixing;
+    std::optional<MixByModel> m_mixByModel;
 };
 
 
