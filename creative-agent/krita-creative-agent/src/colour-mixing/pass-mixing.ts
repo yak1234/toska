@@ -119,7 +119,8 @@ export type MixingContext = {
  * paint_recipe and the reference tools capture this execute, so their passes (every pass inside a paint_batch included)
  * get the same handling. With a context, a pass that names no model gets the policy's: its kind is the host's internal
  * `pass_kind` (stated; the reference tools send their own; never sent to the plugin), else the plan step's, else derived
- * from the preset's job. With a context, the decision (preset, kind, kind_source, model, reason) is recorded as a
+ * from the preset's job. With a context, the decision (preset, kind, kind_source, model, reason, and the plugin's
+ * mixed_with_below when it solved a new layer against the paint below) is recorded as a
  * `pass_mixing` diagnostic and returned in the result's details.pass_mixing. */
 export function withMixing<T extends Executable>(tool: T, catalog: () => MixingCatalog, context?: MixingContext): T {
   const inner = tool.execute;
@@ -137,8 +138,10 @@ export function withMixing<T extends Executable>(tool: T, catalog: () => MixingC
     const sent = { ...(decided.mixing_model ? { mixing_model: decided.mixing_model } : {}), ...(below.sample_below ? { sample_below: true } : {}) };
     const result = await inner(id, { ...others, ...sent }, ...rest);
     if (!context || !resolved) return result;
+    // The plugin says when it mixed a new layer's thin paint with the paint below (mixed_with_below: model, status, pixels).
+    const solved = result && typeof result === 'object' ? (result.details as Record<string, unknown> | undefined)?.mixed_with_below : undefined;
     const record = { preset: others.preset, kind: resolved.kind, kind_source: resolved.source, model: decided.mixing_model ?? 'rgb', reason: decided.reason,
-      sample_below: below.sample_below, sample_below_reason: below.reason };
+      sample_below: below.sample_below, sample_below_reason: below.reason, ...(solved ? { mixed_with_below: solved } : {}) };
     context.record?.({ type: 'pass_mixing', ...record });
     return result && typeof result === 'object' ? { ...result, details: { ...(result.details ?? {}), pass_mixing: record } } : result;
   };

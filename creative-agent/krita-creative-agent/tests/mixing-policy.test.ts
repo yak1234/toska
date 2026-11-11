@@ -279,3 +279,15 @@ test('a rule may list models in order of preference: the first the preset has a 
   assert.throws(() => loadMixingPolicy('version: 1\nkinds:\n  blend: []\ndefault: rgb\n'), /kinds\.blend is an empty list/);
   assert.throws(() => loadMixingPolicy('version: 1\nkinds:\n  blend: [pigment, oil]\ndefault: rgb\n'), /kinds\.blend has unknown model "oil"/);
 });
+
+test('the pass_mixing record carries the plugin\'s mixed_with_below when a new layer was solved against the paint below', async () => {
+  const events: any[] = [];
+  const solved = { model: 'pigment', status: 'ok', pixels: 1234 };
+  const tool = withMixing({ async execute(_id: string, args: any) { return { content: [], details: args.mixing_model ? { layer_id: 'l', mixed_with_below: solved } : { layer_id: 'l' } }; } },
+    () => RAW, { policy: () => policy, resolve: resolvePassKind, record: event => events.push(event) });
+  const mixed = await tool.execute('a', { preset: BASIC, pass_kind: 'glaze' });
+  const plain = await tool.execute('b', { preset: BASIC, pass_kind: 'block_in' });
+  assert.deepEqual(events.map(e => [e.model, e.mixed_with_below ?? null]), [['pigment', solved], ['rgb', null]]);
+  assert.deepEqual((mixed as any).details.pass_mixing.mixed_with_below, solved);
+  assert.ok(!('mixed_with_below' in (plain as any).details.pass_mixing));
+});
