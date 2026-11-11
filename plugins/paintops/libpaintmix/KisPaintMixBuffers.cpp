@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -58,7 +59,9 @@ private:
     Pool()
     {
         const unsigned cores = std::thread::hardware_concurrency();
-        const int workers = int(std::min(7u, cores > 1 ? cores - 1 : 0u));
+        int workers = int(std::min(7u, cores > 1 ? cores - 1 : 0u));
+        // TOSKA_PAINTMIX_THREADS: the number of threads a blend may use in all (1: none besides the caller's), for measuring
+        if (const char *asked = std::getenv("TOSKA_PAINTMIX_THREADS")) workers = std::max(0, std::min(workers, std::atoi(asked) - 1));
         for (int i = 0; i < workers; ++i) {
             m_workers.emplace_back([this] { loop(); });
             m_workers.back().detach();
