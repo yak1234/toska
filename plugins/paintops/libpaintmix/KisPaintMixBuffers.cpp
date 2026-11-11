@@ -6,11 +6,109 @@
 #include "KisPaintMixBuffers.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 namespace KisPaintMix {
 
 namespace {
+
+/**
+ * A small pool for parallelFor: the workers are started on first use and never joined (the pool is never destroyed, so
+ * nothing runs at exit). One parallelFor runs at a time; a second caller meanwhile does its work on its own thread.
+ */
+class Pool
+{
+public:
+    static Pool &instance()
+    {
+        static Pool *pool = new Pool();
+        return *pool;
+    }
+
+    void run(int count, int grain, const std::function<void(int, int)> &fn)
+    {
+        std::unique_lock<std::mutex> busy(m_busy, std::try_to_lock);
+        if (!busy.owns_lock() || m_workers.empty() || count <= grain) {
+            fn(0, count);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_fn = &fn;
+            m_count = count;
+            m_grain = grain;
+            m_next.store(0);
+            m_working = int(m_workers.size());
+            ++m_generation;
+        }
+        m_wake.notify_all();
+        work();
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_done.wait(lock, [this] { return m_working == 0; });
+        m_fn = nullptr;
+    }
+
+private:
+    Pool()
+    {
+        const unsigned cores = std::thread::hardware_concurrency();
+        const int workers = int(std::min(7u, cores > 1 ? cores - 1 : 0u));
+        for (int i = 0; i < workers; ++i) {
+            m_workers.emplace_back([this] { loop(); });
+            m_workers.back().detach();
+        }
+    }
+
+    void work()
+    {
+        for (;;) {
+            const int begin = m_next.fetch_add(m_grain);
+            if (begin >= m_count) return;
+            (*m_fn)(begin, std::min(m_count, begin + m_grain));
+        }
+    }
+
+    void loop()
+    {
+        unsigned long seen = 0;
+        for (;;) {
+            {
+                std::unique_lock<std::mutex> lock(m_mutex);
+                m_wake.wait(lock, [&] { return m_generation != seen; });
+                seen = m_generation;
+            }
+            work();
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                --m_working;
+            }
+            m_done.notify_all();
+        }
+    }
+
+    std::vector<std::thread> m_workers;
+    std::mutex m_busy, m_mutex;
+    std::condition_variable m_wake, m_done;
+    const std::function<void(int, int)> *m_fn {nullptr};
+    int m_count {0}, m_grain {1}, m_working {0};
+    std::atomic<int> m_next {0};
+    unsigned long m_generation {0};
+};
+
+/// Two colours this close in every channel (2/255) mix to the same colour by any model as by a plain average, within
+/// rounding: the model's own arithmetic is skipped for them. A blending brush mostly meets such pairs.
+const float NearlyEqual = 2.0f / 255.0f;
+
+inline bool nearlyEqual(Rgb a, Rgb b)
+{
+    return std::fabs(a.r - b.r) <= NearlyEqual && std::fabs(a.g - b.g) <= NearlyEqual && std::fabs(a.b - b.b) <= NearlyEqual;
+}
 
 struct Px {
     Rgb c;
@@ -74,11 +172,11 @@ template<> struct Codec<PixelFormat::RgbaF32> {
 };
 
 template<PixelFormat F>
-void run(Model m, Blend blend, uint8_t *dst, const uint8_t *src, bool one, const uint8_t *mask, int count, float opacity)
+void runRange(Model m, Blend blend, uint8_t *dst, const uint8_t *src, bool one, const uint8_t *mask, int begin, int end, float opacity)
 {
     using C = Codec<F>;
     const Px s0 = C::load(src);
-    for (int i = 0; i < count; ++i) {
+    for (int i = begin; i < end; ++i) {
         uint8_t *d = dst + size_t(i) * C::stride;
         float op = opacity;
         if (mask) {
@@ -104,10 +202,36 @@ void run(Model m, Blend blend, uint8_t *dst, const uint8_t *src, bool one, const
         }
         t = std::min(1.0f, std::max(0.0f, t));
         // A fully transparent dst has no colour of its own: the source colour is taken exactly.
-        const Rgb out = p.a <= 0.0f ? s.c : mix2(m, p.c, s.c, t);
+        const Rgb out = p.a <= 0.0f ? s.c : mix2((m != Model::Rgb && nearlyEqual(p.c, s.c)) ? Model::Rgb : m, p.c, s.c, t);
         C::store(d, out, std::min(a, 1.0f));
     }
 }
+
+/// From this many pixels a model's blend is shared among the pool's threads, in pieces of this size.
+const int ParallelFrom = 4096;
+const int ParallelGrain = 1024;
+
+template<PixelFormat F>
+void run(Model m, Blend blend, uint8_t *dst, const uint8_t *src, bool one, const uint8_t *mask, int count, float opacity)
+{
+    if (m == Model::Rgb || count < ParallelFrom) {
+        runRange<F>(m, blend, dst, src, one, mask, 0, count, opacity);
+        return;
+    }
+    parallelFor(count, ParallelGrain, [=](int begin, int end) {
+        runRange<F>(m, blend, dst, src, one, mask, begin, end, opacity);
+    });
+}
+
+}
+
+void parallelFor(int count, int grain, const std::function<void(int begin, int end)> &fn)
+{
+    if (count <= 0) return;
+    Pool::instance().run(count, std::max(1, grain), fn);
+}
+
+namespace {
 
 }
 

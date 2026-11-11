@@ -6,6 +6,7 @@
 #ifndef KISPAINTMIX_H
 #define KISPAINTMIX_H
 
+#include <functional>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -230,8 +231,17 @@ enum class Blend { Over, Copy };
  * Blends src into dst (count pixels) with the model. Over: a = sa*op + da*(1 - sa*op), t = sa*op / a.
  * Copy: a = da + (sa - da)*op, t = op*sa / (op*sa + (1 - op)*da). Colour is mix2(m, dst, src, t); a < 1e-6 leaves the
  * colour unchanged. With srcIsOneColour, src points at a single pixel used for every dst pixel. opacity is clamped to 0..1.
+ * Two colours within 2/255 of each other in every channel are averaged plainly whatever the model (the models agree
+ * with the average there, within rounding), and from 4,096 pixels a model's blend runs on several threads (parallelFor).
  */
 void blendPixels(Model m, Blend blend, PixelFormat f, uint8_t *dst, const uint8_t *src, bool srcIsOneColour, int count, float opacity);
+
+/**
+ * Runs fn over [0, count) in pieces of grain on a small pool of threads (and the caller's), returning when all are
+ * done. fn must be safe to run on several pieces at once. A call made while another is running, or with count <= grain,
+ * runs fn(0, count) on the caller's thread.
+ */
+void parallelFor(int count, int grain, const std::function<void(int begin, int end)> &fn);
 
 /**
  * blendPixels through a coverage mask: mask holds one byte per pixel (0 leaves the pixel untouched, 255 is the full

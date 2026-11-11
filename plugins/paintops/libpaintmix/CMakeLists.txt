@@ -11,6 +11,8 @@ add_library(kritapaintmix STATIC
 set_target_properties(kritapaintmix PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(kritapaintmix PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(kritapaintmix PUBLIC cxx_std_17)
+find_package(Threads REQUIRED)
+target_link_libraries(kritapaintmix PUBLIC Threads::Threads)   # parallelFor's pool
 
 if(BUILD_TESTING)
     add_subdirectory(tests)

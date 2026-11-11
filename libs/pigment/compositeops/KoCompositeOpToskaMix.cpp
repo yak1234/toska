@@ -139,53 +139,66 @@ void KoCompositeOpToskaMix::composite(const KoCompositeOp::ParameterInfo &params
     }
     const int channelBytes = size / 4;
 
-    const int Chunk = 256;
-    float dstF[Chunk * 4], srcF[Chunk * 4];
-    quint8 kept[Chunk * 16];
+    const quint8 *const srcStart = params.srcRowStart;
+    quint8 *const dstStart = params.dstRowStart;
+    const quint8 *const maskStart = params.maskRowStart;
+    const qint32 cols = params.cols, srcStride = params.srcRowStride, dstStride = params.dstRowStride, maskStride = params.maskRowStride;
+    const float opacity = params.opacity;
+    const QBitArray flags = params.channelFlags;
+    const bool linear = m_linear;
 
-    const quint8 *srcRow = params.srcRowStart;
-    quint8 *dstRow = params.dstRowStart;
-    const quint8 *maskRow = params.maskRowStart;
+    auto rows = [=](int firstRow, int endRow) {
+        const int Chunk = 256;
+        float dstF[Chunk * 4], srcF[Chunk * 4];
+        quint8 kept[Chunk * 16];
+        for (int row = firstRow; row < endRow; row++) {
+            const quint8 *srcRow = oneColour ? srcStart : srcStart + qptrdiff(row) * srcStride;
+            quint8 *dstRow = dstStart + qptrdiff(row) * dstStride;
+            const quint8 *maskRow = maskStart ? maskStart + qptrdiff(row) * maskStride : nullptr;
+            for (qint32 x = 0; x < cols; x += Chunk) {
+                const int n = qMin<qint32>(Chunk, cols - x);
+                quint8 *dst = dstRow + size_t(x) * size;
+                const quint8 *src = oneColour ? srcRow : srcRow + size_t(x) * size;
+                const quint8 *mask = maskRow ? maskRow + x : nullptr;
 
-    for (qint32 row = 0; row < params.rows; row++) {
-        for (qint32 x = 0; x < params.cols; x += Chunk) {
-            const int n = qMin<qint32>(Chunk, params.cols - x);
-            quint8 *dst = dstRow + size_t(x) * size;
-            const quint8 *src = oneColour ? srcRow : srcRow + size_t(x) * size;
-            const quint8 *mask = maskRow ? maskRow + x : nullptr;
+                if (!allChannels) std::memcpy(kept, dst, size_t(n) * size);
 
-            if (!allChannels) std::memcpy(kept, dst, size_t(n) * size);
-
-            if (!m_linear) {
-                KisPaintMix::blendPixelsMasked(model, blend, format, dst, src, oneColour, mask, n, params.opacity);
-            } else {
-                toFloats(format, true, dst, dstF, n);
-                toFloats(format, true, src, srcF, oneColour ? 1 : n);
-                KisPaintMix::blendPixelsMasked(model, blend, KisPaintMix::PixelFormat::RgbaF32, reinterpret_cast<quint8*>(dstF),
-                                               reinterpret_cast<const quint8*>(srcF), oneColour, mask, n, params.opacity);
-                // pixels the mask leaves alone keep their stored bytes exactly
-                for (int i = 0; i < n; i++) {
-                    if (mask && mask[i] == 0) continue;
-                    fromFloats(format, true, dstF + i * 4, dst + size_t(i) * size, 1);
+                if (!linear) {
+                    KisPaintMix::blendPixelsMasked(model, blend, format, dst, src, oneColour, mask, n, opacity);
+                } else {
+                    toFloats(format, true, dst, dstF, n);
+                    toFloats(format, true, src, srcF, oneColour ? 1 : n);
+                    KisPaintMix::blendPixelsMasked(model, blend, KisPaintMix::PixelFormat::RgbaF32, reinterpret_cast<quint8*>(dstF),
+                                                   reinterpret_cast<const quint8*>(srcF), oneColour, mask, n, opacity);
+                    // pixels the mask leaves alone keep their stored bytes exactly
+                    for (int i = 0; i < n; i++) {
+                        if (mask && mask[i] == 0) continue;
+                        fromFloats(format, true, dstF + i * 4, dst + size_t(i) * size, 1);
+                    }
                 }
-            }
 
-            if (!allChannels) {
-                // a locked channel keeps its bytes; where the pixel was fully transparent its colour was hidden, so a
-                // locked colour channel is zeroed, as Krita's own ops do, and never shows through the new alpha
-                static const quint8 zero[4] = {0, 0, 0, 0};
-                for (int i = 0; i < n; i++) {
-                    const quint8 *was = kept + size_t(i) * size;
-                    const bool wasTransparent = std::memcmp(was + 3 * channelBytes, zero, channelBytes) == 0;
-                    for (int c = 0; c < 4; c++) {
-                        if (c < params.channelFlags.size() && params.channelFlags.testBit(c)) continue;
-                        std::memcpy(dst + size_t(i) * size + c * channelBytes, (wasTransparent && c < 3) ? zero : was + c * channelBytes, channelBytes);
+                if (!allChannels) {
+                    // a locked channel keeps its bytes; where the pixel was fully transparent its colour was hidden, so a
+                    // locked colour channel is zeroed, as Krita's own ops do, and never shows through the new alpha
+                    static const quint8 zero[4] = {0, 0, 0, 0};
+                    for (int i = 0; i < n; i++) {
+                        const quint8 *was = kept + size_t(i) * size;
+                        const bool wasTransparent = std::memcmp(was + 3 * channelBytes, zero, channelBytes) == 0;
+                        for (int c = 0; c < 4; c++) {
+                            if (c < flags.size() && flags.testBit(c)) continue;
+                            std::memcpy(dst + size_t(i) * size + c * channelBytes, (wasTransparent && c < 3) ? zero : was + c * channelBytes, channelBytes);
+                        }
                     }
                 }
             }
         }
-        if (!oneColour) srcRow += params.srcRowStride;
-        dstRow += params.dstRowStride;
-        if (maskRow) maskRow += params.maskRowStride;
+    };
+
+    // a dab's worth of pixels is shared among libpaintmix's threads, a few rows each; the chunks themselves are small
+    const qint64 pixels = qint64(params.rows) * cols;
+    if (pixels >= 4096 && params.rows > 1) {
+        KisPaintMix::parallelFor(params.rows, qMax(1, int(1024 / qMax<qint32>(1, cols))), rows);
+    } else {
+        rows(0, params.rows);
     }
 }
