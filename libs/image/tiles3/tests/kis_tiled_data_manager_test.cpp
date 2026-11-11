@@ -932,6 +932,49 @@ void KisTiledDataManagerTest::stressTestLazyCopying()
     pool.waitForDone();
 }
 
+void KisTiledDataManagerTest::testExtentAfterConcurrentTileAdds()
+{
+    // Toska: several threads add tiles of their own rows at once (as a brush stroke's dabs fill a new device); once
+    // all are done the extent must cover every tile. updateExtent() used to store the extent after reading it
+    // unlocked, so the thread that had read the older ranges could store last and the extent stayed too small.
+    struct Job : public QRunnable
+    {
+        Job(KisTiledExtentManager &manager, int row, int columns, QAtomicInt &go) : m_manager(manager), m_row(row), m_columns(columns), m_go(go) {}
+        void run() override {
+            while (!m_go.loadAcquire()) {}          // all threads start adding at the same instant
+            for (int col = 0; col < m_columns; col++) m_manager.notifyTileAdded(col, m_row);
+        }
+        QAtomicInt &m_go;
+        KisTiledExtentManager &m_manager;
+        const int m_row;
+        const int m_columns;
+    };
+
+    const int rows = 8, columns = 3, rounds = 20000;
+    QThreadPool pool;
+    pool.setMaxThreadCount(rows);
+    int tooSmall = 0;
+    QRect smallest;
+    for (int round = 0; round < rounds; round++) {
+        KisTiledExtentManager manager;
+        QAtomicInt go(0);
+        for (int row = 0; row < rows; row++) {
+            Job *job = new Job(manager, row, columns, go);
+            job->setAutoDelete(true);
+            pool.start(job);
+        }
+        go.storeRelease(1);
+        pool.waitForDone();
+        const QRect expected(0, 0, columns * KisTileData::WIDTH, rows * KisTileData::HEIGHT);
+        if (manager.extent() != expected) {
+            if (!tooSmall) smallest = manager.extent();
+            tooSmall++;
+        }
+    }
+    QVERIFY2(tooSmall == 0, qPrintable(QString("the extent was wrong in %1 of %2 rounds (first: %3,%4 %5x%6)")
+                                       .arg(tooSmall).arg(rounds).arg(smallest.x()).arg(smallest.y()).arg(smallest.width()).arg(smallest.height())));
+}
+
 void KisTiledDataManagerTest::stressTestExtentsColumn()
 {
     KisTiledExtentManager::Data column;

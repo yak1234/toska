@@ -52,6 +52,7 @@ private Q_SLOTS:
     void stressTestLazyCopying();
 
     void stressTestExtentsColumn();
+    void testExtentAfterConcurrentTileAdds();
 
     void benchmarkQRegion();
     void benchmarkKisRegion();

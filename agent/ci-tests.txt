@@ -70,3 +70,4 @@ KisMacosFullScreenTest
 KisPaintMixTest
 KisMyPaintOpTest
 KisColorsmudgeOpTest
+kis_tiled_data_manager_test
