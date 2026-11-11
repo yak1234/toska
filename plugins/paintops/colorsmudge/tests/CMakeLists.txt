@@ -2,6 +2,7 @@ kis_add_test(
     KisColorsmudgeOpTest.cpp
      $<TARGET_PROPERTY:kritatestsdk,SOURCE_DIR>/stroke_testing_utils.cpp
      ${CMAKE_CURRENT_SOURCE_DIR}/../KisColorSmudgeMixingOptionData.cpp
+     ${CMAKE_CURRENT_SOURCE_DIR}/../KisColorSmudgeModelMixer.cpp
     TEST_NAME KisColorsmudgeOpTest
     LINK_LIBRARIES kritalibpaintop kritaimage kritatestsdk kritapaintmix
     )

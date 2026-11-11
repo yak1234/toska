@@ -13,6 +13,8 @@
 
 #include <KoColor.h>
 
+#include <functional>
+
 #include "kis_fixed_paint_device.h"
 #include "KisColorSmudgeSource.h"
 
@@ -137,7 +139,10 @@ void sampleColor(const QRect &srcRect,
                  KisColorSmudgeSourceSP sourceDevice,
                  KisFixedPaintDeviceSP tempFixedDevice,
                  KisFixedPaintDeviceSP maskDab,
-                 KoColor *resultColor)
+                 KoColor *resultColor,
+                 // Toska: when set and it returns a mixer, the sampled pixels are averaged by it (a paint-mixing model)
+                 // instead of the colour space's own mixer
+                 const std::function<KoMixColorsOp::Mixer*()> &makeMixer = {})
 
 {
     WeightingModeWrapper::verifySampleRadiusValue(&sampleRadiusValue);
@@ -163,7 +168,8 @@ void sampleColor(const QRect &srcRect,
         KisAlgebra2D::HaltonSequenceGenerator hGen(2);
         KisAlgebra2D::HaltonSequenceGenerator vGen(3);
 
-        QScopedPointer<KoMixColorsOp::Mixer> mixer(cs->mixColorsOp()->createMixer());
+        QScopedPointer<KoMixColorsOp::Mixer> mixer(makeMixer ? makeMixer() : nullptr);
+        if (!mixer) mixer.reset(cs->mixColorsOp()->createMixer());
 
         const int minSamples =
                 qMin(numPixels, qMax(64, qRound(0.02 * numPixels)));

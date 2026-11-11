@@ -11,6 +11,7 @@
 #include "kis_fixed_paint_device.h"
 #include "kis_paint_device.h"
 #include "KisColorSmudgeSampleUtils.h"
+#include "KisColorSmudgeModelMixer.h"
 
 #include <KoColorModelStandardIds.h>
 #include <KoColorProfile.h>
@@ -240,9 +241,15 @@ void KisColorSmudgeStrategyBase::sampleDullingColor(const QRect &srcRect, qreal 
                                                     KisFixedPaintDeviceSP maskDab, KoColor *resultColor)
 {
     using namespace KisColorSmudgeSampleUtils;
+    // Toska: with a spectral or pigment model the picked-up colour is the model's average of the paint under the brush
+    const std::optional<MixByModel> mix = m_mixByModel;
     sampleColor<WeightedSampleWrapper>(srcRect, sampleRadiusValue,
                                        sourceDevice, tempFixedDevice,
-                                       maskDab, resultColor);
+                                       maskDab, resultColor,
+                                       mix ? std::function<KoMixColorsOp::Mixer*()>([mix] () {
+                                                 return KisColorSmudgeModelMixer::create(mix->model, mix->format);
+                                             })
+                                           : std::function<KoMixColorsOp::Mixer*()>());
 }
 
 void

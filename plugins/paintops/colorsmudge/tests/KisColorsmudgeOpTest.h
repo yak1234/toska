@@ -28,6 +28,7 @@ private Q_SLOTS:
     void testNonNormalCompositeKeepsKritaOp();
     void testOverlayModeUsesModel();
     void testBlendingWithoutPaintUsesModel();
+    void testPickedUpColourIsAveragedByTheModel();
 };
 
 #endif // KISCOLORSMUDGEOPTEST_H

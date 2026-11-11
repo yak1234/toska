@@ -21,6 +21,8 @@
 #include <kis_properties_configuration.h>
 
 #include <KisColorSmudgeMixingOptionData.h>
+#include <KisColorSmudgeModelMixer.h>
+#include <KoMixColorsOp.h>
 
 class TestColorsmudgeOp : public TestUtil::QImageBasedTest
 {
@@ -445,6 +447,50 @@ void KisColorsmudgeOpTest::testBlendingWithoutPaintUsesModel()
     const int mixed = greens(spectral), lerped = greens(plain);
     qInfo() << "blender across yellow|blue: green pixels, spectral" << mixed << "rgb" << lerped;
     QVERIFY2(mixed > lerped + 50, qPrintable(QString("%1 vs %2").arg(mixed).arg(lerped)));
+}
+
+void KisColorsmudgeOpTest::testPickedUpColourIsAveragedByTheModel()
+{
+    // The colour a smudge brush picks up is the average of the paint under it: yellow and blue in equal parts are a grey
+    // by Krita's mixer and a green by the spectral and pigment models (the same colour libpaintmix's mixMany gives).
+    const quint8 pixels[8] = {0, 211, 252, 255,   133, 33, 0, 255};        // B,G,R,A: yellow, blue
+    const qint16 weights[2] = {100, 100};
+    const KisPaintMix::Rgb colours[2] = {{252 / 255.0f, 211 / 255.0f, 0.0f}, {0.0f, 33 / 255.0f, 133 / 255.0f}};
+    const float equal[2] = {1.0f, 1.0f};
+
+    quint8 plain[4];
+    QScopedPointer<KoMixColorsOp::Mixer> krita(KoColorSpaceRegistry::instance()->rgb8()->mixColorsOp()->createMixer());
+    krita->accumulate(pixels, weights, 200, 2);
+    krita->computeMixedColor(plain);
+    QVERIFY(!(plain[1] > plain[2] + 8 && plain[1] > plain[0] + 8));
+
+    for (KisPaintMix::Model model : {KisPaintMix::Model::Spectral, KisPaintMix::Model::Pigment}) {
+        QScopedPointer<KoMixColorsOp::Mixer> mixer(KisColorSmudgeModelMixer::create(model, KisPaintMix::PixelFormat::Bgra8));
+        QVERIFY(mixer);
+        mixer->accumulate(pixels, weights, 200, 2);
+        QCOMPARE(mixer->currentWeightsSum(), qint64(200));
+        quint8 mixed[4];
+        mixer->computeMixedColor(mixed);
+        QVERIFY2(mixed[1] > mixed[2] + 8 && mixed[1] > mixed[0] + 8, qPrintable(QString("r %1 g %2 b %3").arg(mixed[2]).arg(mixed[1]).arg(mixed[0])));
+        QCOMPARE(int(mixed[3]), 255);
+        const KisPaintMix::Rgb expected = KisPaintMix::mixMany(model, colours, equal, 2);
+        QVERIFY(qAbs(mixed[2] - expected.r * 255.0f) <= 2.0f);
+        QVERIFY(qAbs(mixed[1] - expected.g * 255.0f) <= 2.0f);
+        QVERIFY(qAbs(mixed[0] - expected.b * 255.0f) <= 2.0f);
+
+        // a second read after more pixels: the running mean, with a transparent pixel adding weight but no colour
+        const quint8 clear[4] = {9, 9, 9, 0};
+        const qint16 one[1] = {200};
+        mixer->accumulate(clear, one, 200, 1);
+        quint8 thinner[4];
+        mixer->computeMixedColor(thinner);
+        QCOMPARE(int(thinner[2]), int(mixed[2]));
+        QCOMPARE(int(thinner[1]), int(mixed[1]));
+        QVERIFY(qAbs(int(thinner[3]) - 128) <= 1);
+    }
+    // the other models keep Krita's mixer
+    QVERIFY(!KisColorSmudgeModelMixer::create(KisPaintMix::Model::Rgb, KisPaintMix::PixelFormat::Bgra8));
+    QVERIFY(!KisColorSmudgeModelMixer::create(KisPaintMix::Model::LinearLight, KisPaintMix::PixelFormat::Bgra8));
 }
 
 KISTEST_MAIN(KisColorsmudgeOpTest)
