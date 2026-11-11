@@ -46,7 +46,10 @@ export const PASS_KINDS: readonly PassKind[] = ['underpainting', 'block_in', 'fi
 /** Model ids, verbatim everywhere (global constraints); pigment is accepted ahead of its card and mixes rgb until it has one. */
 export type PolicyModel = MixModel | 'pigment';
 export const POLICY_MODELS: readonly PolicyModel[] = ['rgb', 'linear', 'perceptual', 'spectral', 'pigment'];
-export type MixingPolicy = { version: 1; kinds: Partial<Record<PassKind, PolicyModel>>; default: PolicyModel };
+/** A kind's rule: one model, or models in order of preference (the first the pass's preset has a measured card for is used:
+ * a MyPaint preset mixes only spectral, a Color Smudge or pixel preset pigment too). */
+export type PolicyRule = PolicyModel | readonly PolicyModel[];
+export type MixingPolicy = { version: 1; kinds: Partial<Record<PassKind, PolicyRule>>; default: PolicyModel };
 
 /** What the companion uses when the file is invalid: rgb for every kind, the upstream behaviour. */
 export const RGB_POLICY: Readonly<MixingPolicy> = Object.freeze({ version: 1, kinds: Object.freeze(Object.fromEntries(PASS_KINDS.map(k => [k, 'rgb']))), default: 'rgb' });
@@ -70,9 +73,16 @@ export function loadMixingPolicy(text?: string): MixingPolicy {
   if (root.version !== 1) throw new Error(`Mixing policy: version must be 1 (found ${root.version === undefined ? 'none' : JSON.stringify(root.version)})`);
   const kinds = root.kinds;
   if (kinds === null || typeof kinds !== 'object' || Array.isArray(kinds)) throw new Error('Mixing policy: kinds must be a mapping of pass kind to model');
-  const out: Partial<Record<PassKind, PolicyModel>> = {};
+  const out: Partial<Record<PassKind, PolicyRule>> = {};
   for (const [kind, model] of Object.entries(kinds as Record<string, unknown>)) {
     if (!isKind(kind)) throw new Error(`Mixing policy: kinds.${kind} is not a pass kind (known: ${PASS_KINDS.join(', ')})`);
+    if (Array.isArray(model)) {
+      if (!model.length) throw new Error(`Mixing policy: kinds.${kind} is an empty list (name at least one model)`);
+      const bad = model.find(m => !isModel(m));
+      if (bad !== undefined) throw new Error(`Mixing policy: kinds.${kind} has unknown model ${JSON.stringify(bad)} (known: ${POLICY_MODELS.join(', ')})`);
+      out[kind] = model.length === 1 ? model[0] as PolicyModel : Object.freeze([...model]) as readonly PolicyModel[];
+      continue;
+    }
     if (!isModel(model)) throw new Error(`Mixing policy: kinds.${kind} has unknown model ${JSON.stringify(model)} (known: ${POLICY_MODELS.join(', ')})`);
     out[kind] = model;
   }

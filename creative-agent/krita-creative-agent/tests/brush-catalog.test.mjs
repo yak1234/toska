@@ -31,7 +31,9 @@ test('list_brushes returns the whole library with a card per preset, within the 
   assert.equal(listed.length, 154, 'not truncated by the result budget');
   assert.match(listed[0].card, /washed out and grainy/);
   assert.equal(listed[1].card, null, 'an unprobed preset says so');
-  assert.deepEqual(brushCards(['b) Basic-1']), [{ name: 'b) Basic-1', card: CATALOG.cards['b) Basic-1'] }]);
+  // a preset with measured mixing cards lists them beside its card
+  const basic = CATALOG.mixing?.presets?.['b) Basic-1'];
+  assert.deepEqual(brushCards(['b) Basic-1']), [{ name: 'b) Basic-1', card: CATALOG.cards['b) Basic-1'], ...(basic ? { mixing: basic } : {}) }]);
 });
 
 test('the painter finds an existing area with a seed instead of measuring it', () => {

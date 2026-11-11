@@ -37,7 +37,7 @@ const err = (a: Rgb, b: Rgb) => Math.max(...[0, 1, 2].map(k => Math.abs(a[k]! - 
 test('coverage: the measured paint share is recorded on the carded presets', () => {
   assert.equal(presetCoverage(WET, RAW), 0.91);
   assert.equal(presetCoverage(KNIFE, RAW), 0.955);
-  assert.equal(presetCoverage(BRISTLES, RAW), null, 'no card: no coverage');
+  assert.equal(presetCoverage(BRISTLES, RAW), null, 'cards but no measured coverage');
   assert.equal(presetCoverage(WET, effectiveCatalog(RAW, { TOSKA_MIXING: 'off' })), null, 'TOSKA_MIXING=off: none');
 });
 
@@ -197,10 +197,11 @@ test('a transfer with mixing spectral and Wet Paint Plus: every chunk carries sp
   } finally { await h.close(); }
 });
 
-test('a transfer with Bristles and spectral is refused, naming the measured pairs; nothing is painted', async () => {
+// Dry Bristles has no measured card (too slow with a model, 2026-11-11); Bristles-2 has cards but no coverage.
+test('a transfer with an uncarded Bristles preset and spectral is refused, naming the measured pairs; nothing is painted', async () => {
   const h = await studio({ through: 'reference' });
   try {
-    await assert.rejects(h.find('paint_from_reference').execute('mix-2', recipe(BRISTLES, { mixing: 'spectral' })),
+    await assert.rejects(h.find('paint_from_reference').execute('mix-2', recipe('g) Dry Bristles', { mixing: 'spectral' })),
       (error: Error) => /Measured pairs: .*Wet Paint Plus.*spectral/.test(error.message) && /Bristles/.test(error.message));
     assert.equal(h.calls.length, 0);
   } finally { await h.close(); }

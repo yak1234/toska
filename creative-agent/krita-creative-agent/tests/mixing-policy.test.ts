@@ -12,15 +12,18 @@ import { effectiveCatalog, CATALOG } from '../src/brush-catalog.mjs';
 import { paintingTools } from '../src/tools.mjs';
 
 const RAW = JSON.parse(readFileSync(new URL('../src/brush-catalog.json', import.meta.url), 'utf8'));
-const WET = 'i) Wet Paint Plus (mypaint)', KNIFE = 'i) Wet Knife Plus (mypaint)', BASIC = 'b) Basic-1';
+const WET = 'i) Wet Paint Plus (mypaint)', KNIFE = 'i) Wet Knife Plus (mypaint)', BASIC = 'b) Basic-1', UNCARDED = 'z) Stamp Water';
+// What a rule gives a preset that has only these cards: the first listed model it has (rgb ends the search), else rgb.
+const first = (rule: unknown, has: string[]) => (Array.isArray(rule) ? rule : [rule]).find(m => m === 'rgb' || has.includes(m)) ?? 'rgb';
 const SHIPPED_TEXT = readFileSync(new URL('../src/colour-mixing/mixing-policy.yaml', import.meta.url), 'utf8');
 const policy = loadMixingPolicy(SHIPPED_TEXT);
 
 test('the shipped YAML loads, every kind mapping as the file says', () => {
   assert.equal(policy.version, 1);
   assert.equal(policy.default, 'rgb');
-  assert.deepEqual(policy.kinds, { underpainting: 'rgb', block_in: 'rgb', finish: 'spectral', refine: 'spectral', blend: 'spectral',
-    glaze: 'spectral', atmosphere: 'spectral', element: 'spectral', details: 'rgb', accents: 'rgb', reference_transfer: 'spectral' });
+  const paint = ['pigment', 'spectral'];
+  assert.deepEqual(policy.kinds, { underpainting: 'rgb', block_in: 'rgb', finish: paint, refine: paint, blend: paint,
+    glaze: paint, atmosphere: 'rgb', element: paint, details: 'rgb', accents: 'rgb', reference_transfer: 'spectral' });
   assert.deepEqual(Object.keys(policy.kinds).sort(), [...PASS_KINDS].sort());
   assert.deepEqual(SHIPPED_POLICY, policy, 'the bundled file is what the companion reads');
   assert.deepEqual(loadMixingPolicy(), policy, 'no text: the bundled file');
@@ -28,8 +31,10 @@ test('the shipped YAML loads, every kind mapping as the file says', () => {
 
 test('the policy model applies only where the preset has a measured card', () => {
   for (const kind of PASS_KINDS) {
-    assert.equal(policyModel(policy, kind, WET, RAW), policy.kinds[kind], `${kind} with Wet Paint Plus (spectral card)`);
-    assert.equal(policyModel(policy, kind, BASIC, RAW), 'rgb', `${kind} with a preset that has no card`);
+    assert.equal(policyModel(policy, kind, WET, RAW), first(policy.kinds[kind], ['spectral']), `${kind} with Wet Paint Plus (spectral card only)`);
+    // a pixel brush has both cards but no measured coverage: every kind's first model, except the reference transfer (rgb)
+    assert.equal(policyModel(policy, kind, BASIC, RAW), kind === 'reference_transfer' ? 'rgb' : first(policy.kinds[kind], ['spectral', 'pigment']), `${kind} with Basic-1 (both cards)`);
+    assert.equal(policyModel(policy, kind, UNCARDED, RAW), 'rgb', `${kind} with a preset that has no card`);
   }
   assert.equal(policyModel(policy, 'finish', 'no such preset', RAW), 'rgb');
   assert.equal(policyModel(policy, undefined, WET, RAW), 'rgb', 'no kind: the default');
@@ -41,11 +46,15 @@ test('the policy model applies only where the preset has a measured card', () =>
 test('passMixing: explicit mixing wins, then the policy for the pass kind, then rgb; rgb sends nothing', () => {
   assert.deepEqual(passMixing({ preset: WET, kind: 'finish' }, RAW, policy), { mixing_model: 'spectral' });
   assert.deepEqual(passMixing({ preset: WET, kind: 'underpainting' }, RAW, policy), {});
-  assert.deepEqual(passMixing({ preset: BASIC, kind: 'finish' }, RAW, policy), {}, 'no card: rgb even for a finish');
+  assert.deepEqual(passMixing({ preset: BASIC, kind: 'finish' }, RAW, policy), { mixing_model: 'pigment' }, 'a pixel brush with both cards: the first listed');
+  assert.deepEqual(passMixing({ preset: BASIC, kind: 'block_in' }, RAW, policy), {}, 'block-in stays rgb whatever the cards');
+  assert.deepEqual(passMixing({ preset: BASIC, kind: 'reference_transfer' }, RAW, policy), {}, 'no measured coverage: the transfer stays rgb');
+  assert.deepEqual(passMixing({ preset: BASIC, kind: 'reference_transfer', mixing: 'pigment' }, RAW, policy), { mixing_model: 'pigment' }, 'a named model is the painter\'s own choice');
+  assert.deepEqual(passMixing({ preset: UNCARDED, kind: 'finish' }, RAW, policy), {}, 'no card: rgb even for a finish');
   assert.deepEqual(passMixing({ preset: WET }, RAW, policy), {}, 'no kind: the default (rgb)');
   assert.deepEqual(passMixing({ preset: WET, kind: 'finish', mixing: 'rgb' }, RAW, policy), {}, 'explicit rgb over the policy');
   assert.deepEqual(passMixing({ preset: WET, kind: 'underpainting', mixing: 'spectral' }, RAW, policy), { mixing_model: 'spectral' }, 'explicit spectral over the policy');
-  const refused = passMixing({ preset: BASIC, kind: 'finish', mixing: 'spectral' }, RAW, policy);
+  const refused = passMixing({ preset: UNCARDED, kind: 'finish', mixing: 'spectral' }, RAW, policy);
   assert.ok('error' in refused, 'explicit mixing is still refused without a card');
 });
 
@@ -59,8 +68,8 @@ test('TOSKA_MIXING=off: rgb for every kind and preset', () => {
 
 test('an invalid policy is an error naming the field, and the companion falls back to rgb everywhere', () => {
   const cases: [string, RegExp][] = [
-    [SHIPPED_TEXT.replace('  glaze: spectral', '  glazing: spectral'), /kinds\.glazing/],
-    [SHIPPED_TEXT.replace('  finish: spectral', '  finish: watercolour'), /kinds\.finish/],
+    [SHIPPED_TEXT.replace('  glaze: [pigment, spectral]', '  glazing: [pigment, spectral]'), /kinds\.glazing/],
+    [SHIPPED_TEXT.replace('  finish: [pigment, spectral]', '  finish: watercolour'), /kinds\.finish/],
     [SHIPPED_TEXT.replace('version: 1\n', ''), /version/],
     [SHIPPED_TEXT.replace('version: 1', 'version: 2'), /version/],
     [SHIPPED_TEXT.replace('default: rgb', 'default: oil'), /default/],
@@ -158,7 +167,9 @@ test('the painting tools apply the shipped policy: a paint_pass in a refine step
   await batch.execute('b1', { actions: [{ tool: 'paint_pass', arguments: { name: 'C', preset: WET, strokes: [stroke] } },
     { tool: 'paint_pass', arguments: { name: 'D', preset: BASIC, strokes: [stroke] } }] }, undefined as any, undefined as any);
   const batched = calls.filter(c => c.operation === 'paint_pass').map(c => c.params);
-  assert.deepEqual(batched.map(p => p.mixing_model), [expected, undefined]);
+  // Basic-1 has both cards (2026-11-11): a finish pass with it mixes pigment, the first model the policy lists
+  const pigment = CATALOG.mixing?.presets?.[BASIC]?.cards?.pigment ? 'pigment' : undefined;
+  assert.deepEqual(batched.map(p => p.mixing_model), [expected, pigment]);
   assert.ok(batched.every(p => !('pass_kind' in p)));
 });
 
@@ -253,4 +264,18 @@ test('sampling the paint below is the pass kind blend or an explicit sample_belo
   assert.match(explicitOn.sample_below_reason, /asked/);
   assert.match(explicitOff.sample_below_reason, /asked/);
   assert.match(spectral.sample_below_reason, /not asked|no/i);
+});
+
+test('a rule may list models in order of preference: the first the preset has a measured card for', () => {
+  const listed = loadMixingPolicy('version: 1\nkinds:\n  blend: [pigment, spectral]\n  glaze: [pigment]\n  details: [rgb, pigment]\ndefault: rgb\n');
+  assert.deepEqual(listed.kinds, { blend: ['pigment', 'spectral'], glaze: 'pigment', details: ['rgb', 'pigment'] });
+  const catalog = { mixing: { models: { spectral: 'spectral card', pigment: 'pigment card' }, presets: {
+    both: { cards: { spectral: 's', pigment: 'p' } }, spectralOnly: { cards: { spectral: 's' } } } } };
+  assert.equal(policyModel(listed, 'blend', 'both', catalog), 'pigment');
+  assert.equal(policyModel(listed, 'blend', 'spectralOnly', catalog), 'spectral', 'a MyPaint preset has no pigment card: the next model');
+  assert.equal(policyModel(listed, 'blend', 'uncarded', catalog), 'rgb');
+  assert.equal(policyModel(listed, 'glaze', 'spectralOnly', catalog), 'rgb');
+  assert.equal(policyModel(listed, 'details', 'both', catalog), 'rgb', 'rgb first ends the search');
+  assert.throws(() => loadMixingPolicy('version: 1\nkinds:\n  blend: []\ndefault: rgb\n'), /kinds\.blend is an empty list/);
+  assert.throws(() => loadMixingPolicy('version: 1\nkinds:\n  blend: [pigment, oil]\ndefault: rgb\n'), /kinds\.blend has unknown model "oil"/);
 });

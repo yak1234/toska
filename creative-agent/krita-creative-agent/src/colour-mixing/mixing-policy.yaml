@@ -3,15 +3,18 @@
 # `mixing` on a pass wins. Painting practice: block in without mixing, mix in the middle layers, finish clean.
 # A kind only derived from the preset's catalog job (no plan step, none stated) yields to the preset's measured card.
 version: 1
+# A rule is one model or a list in order of preference: the first model the pass's preset has a measured card for is used
+# (MyPaint presets mix only spectral; Color Smudge and Normal-mode pixel presets pigment too).
 kinds:
   underpainting: rgb     # reference transfer / block-in: big separate shapes
   block_in: rgb
-  finish: spectral       # finish and refine: transitions, soft edges, skies, water, skin
-  refine: spectral
-  blend: spectral        # blender / wet / smudge passes
-  glaze: spectral        # thin layers over existing paint
-  atmosphere: spectral   # fog, haze, gradients
-  element: spectral      # painting an element over the underpainting
+  finish: [pigment, spectral]    # finish and refine: transitions, soft edges, water, skin
+  refine: [pigment, spectral]
+  blend: [pigment, spectral]     # blender / wet / smudge passes: where two paints are dragged together
+  glaze: [pigment, spectral]     # thin layers over existing paint keep their colour instead of greying
+  atmosphere: rgb        # fog, haze, glow and sky gradients are light, not paint: pigment turns blue into orange grey-green
+                         # (measured 2026-11-11), so these stay rgb
+  element: [pigment, spectral]   # painting an element over the underpainting
   details: rgb           # small crisp marks
   accents: rgb           # highlights and edges must not pick up the colour beneath
   reference_transfer: spectral   # paint_from_reference's dabs blend with the wet paint beneath (each dab's colour is

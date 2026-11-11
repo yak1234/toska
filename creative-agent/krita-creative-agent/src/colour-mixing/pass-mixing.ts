@@ -47,24 +47,36 @@ function measuredPairs(catalog: MixingCatalog): string {
 }
 
 /** What the plugin gets for a pass, and why: `mixing_model`, or nothing (rgb), or the refusal. Order: the pass's explicit
- * `mixing` (refused without a card) > for a kind only derived from the preset's catalog job, the preset's measured card
- * (its default, else its first carded model: the preset was carded to blend wet paint; pilot 5) > the policy's model for
+ * `mixing` (refused without a card) > for a kind only derived from the preset's catalog job, the preset's catalog default
+ * (the preset was carded to blend wet paint; pilot 5) > the policy's model for
  * the pass kind, where the preset has a card for it > rgb. A stated or plan kind always follows the policy table. Without
  * a policy, the preset's default stands in for the policy. A policy never refuses: no card means rgb. */
 export function decidePassMixing(args: { preset: string; mixing?: MixModel | string; kind?: PassKind | string; kind_source?: KindSource }, catalog: MixingCatalog, policy?: MixingPolicy): { mixing_model?: MixModel; reason: string } | { error: string } {
   const named = args.mixing;
+  // A reference transfer solves each dab's colour against the preset's measured coverage (transfer-colours.ts). A preset
+  // with cards but no coverage (the pixel brushes) transfers as it always has unless the pass names a model itself.
+  if (named === undefined && args.kind === 'reference_transfer' && presetCoverage(args.preset, catalog) === null) {
+    return { reason: `reference transfer: ${args.preset} has no measured coverage: rgb` };
+  }
   if (named === undefined) {
     const own = presetMixing(args.preset, catalog);
     if (!policy) return own?.default && own.default !== 'rgb' ? { mixing_model: own.default, reason: 'the preset\'s default (no policy)' } : { reason: 'no policy and no preset default' };
     if (args.kind_source === 'derived' && own) {
-      const card = own.default ?? (Object.keys(own.cards) as MixModel[]).find(m => m !== 'rgb');
+      // Only a preset whose catalog entry names a default: the wet MyPaint presets, carded to blend wet paint (pilot 5). A preset
+      // that merely has cards (every Normal-mode pixel brush since 2026-11-11) follows the policy table for its derived kind.
+      const card = own.default;
       if (card && card !== 'rgb') return { mixing_model: card, reason: `kind derived from the preset's job: the preset's measured ${card} card` };
     }
     const kind = args.kind && Object.hasOwn(policy.kinds, args.kind) ? args.kind : undefined;
-    const model = kind ? policy.kinds[kind as PassKind] ?? policy.default : policy.default;
-    const rule = kind ? `policy ${kind}: ${model}` : `policy default: ${model}`;
-    if (model === 'rgb') return { reason: rule };
-    return isModel(model) && own?.cards[model] ? { mixing_model: model, reason: rule } : { reason: `${rule}, but ${args.preset} has no measured ${model} card: rgb` };
+    // A rule is one model or models in order of preference: the first this preset has a measured card for (rgb ends the search).
+    const wanted = kind ? policy.kinds[kind as PassKind] ?? policy.default : policy.default;
+    const models: readonly string[] = typeof wanted === 'string' ? [wanted] : wanted;
+    const rule = kind ? `policy ${kind}: ${models.join(', then ')}` : `policy default: ${models.join(', then ')}`;
+    for (const model of models) {
+      if (model === 'rgb') return { reason: rule };
+      if (isModel(model) && own?.cards[model]) return { mixing_model: model, reason: models.length > 1 ? `${rule} (${model} is measured for ${args.preset})` : rule };
+    }
+    return { reason: `${rule}, but ${args.preset} has no measured ${models.join(' or ')} card: rgb` };
   }
   if (named === 'rgb') return { reason: 'explicit mixing rgb' };
   const measured = measuredModels(catalog);
