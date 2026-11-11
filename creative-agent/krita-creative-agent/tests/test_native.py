@@ -1159,7 +1159,7 @@ class ForkStrokeJobTests(unittest.TestCase):
         self.assertNotIn('presetProperties', h.job_calls[0][1])
 
     def test_a_mypaint_spectral_pass_does_not_sample_merged_unless_asked(self):
-        h = self.harness(); h._creative_preset_paintop = lambda name: 'mypaintbrush'
+        h = self.harness(); h._creative_preset_engine = lambda name: ('mypaintbrush', None)
         self.assertEqual(self._pass(h, 2, mixing_model='spectral')['status'], 'ok')
         self.assertEqual(self._pass(h, 2, operation_id='op-2', mixing_model='rgb', sample_below=True)['status'], 'ok')
         self.assertEqual(self._pass(h, 2, operation_id='op-3', mixing_model='spectral', sample_below=True)['status'], 'ok')
@@ -1167,10 +1167,22 @@ class ForkStrokeJobTests(unittest.TestCase):
                          [{'ToskaMyPaintPaintMode': 1.0}, {'ToskaMyPaintSampleMerged': True},
                           {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True}])
 
+    def test_a_pixel_brush_pass_mixes_through_the_job_blend_mode(self):
+        # Every engine but Color Smudge and MyPaint: the model is the stroke job's blend mode (the fork's toska_mix_*),
+        # never a preset property; a preset that paints with its own blend mode refuses a model.
+        h = self.harness(); h._creative_preset_engine = lambda name: ('paintbrush', 'normal')
+        self.assertEqual(self._pass(h, 2, mixing_model='pigment')['status'], 'ok')
+        self.assertEqual(self._pass(h, 2, operation_id='op-2', mixing_model='rgb')['status'], 'ok')
+        self.assertEqual([(call[1].get('compositeOp'), call[1].get('presetProperties')) for call in h.job_calls],
+                         [('toska_mix_pigment', None), (None, None)])
+        h._creative_preset_engine = lambda name: ('paintbrush', 'multiply')
+        with self.assertRaisesRegex(ValueError, r'paints with its own blend mode \(multiply\)'):
+            self._pass(h, 2, operation_id='op-3', mixing_model='pigment')
+
     def test_a_mypaint_spectral_transfer_that_asks_samples_merged_on_every_chunk(self):
         # paint_from_reference with mixing (task 7b): the first chunk makes the pass layer, the rest continue it; every
         # chunk's job gets the MyPaint properties, sample-merged included, because the transfer asks (sample_below).
-        h = self.harness(); h._creative_preset_paintop = lambda name: 'mypaintbrush'
+        h = self.harness(); h._creative_preset_engine = lambda name: ('mypaintbrush', None)
         expected = {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True}
         first = self._pass(h, 2, mixing_model='spectral', sample_below=True)
         self.assertEqual(first['status'], 'ok', first.get('error'))

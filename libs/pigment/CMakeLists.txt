@@ -13,6 +13,7 @@ add_subdirectory(tests)
 add_subdirectory(benchmarks)
 
 set(kritapigment_SRCS
+    compositeops/KoCompositeOpToskaMix.cpp
     DebugPigment.cpp
     KoBasicHistogramProducers.cpp
     KoAlphaMaskApplicatorBase.cpp
@@ -110,6 +111,8 @@ target_link_libraries( kritapigment
         Qt${QT_MAJOR_VERSION}::Gui
         Qt${QT_MAJOR_VERSION}::Xml
         Boost::boost
+    PRIVATE
+        kritapaintmix   # Toska: the paint-mixing models behind the toska_mix_* blend modes (plugins/paintops/libpaintmix)
 )
 
 set_target_properties(kritapigment PROPERTIES

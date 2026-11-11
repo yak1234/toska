@@ -709,9 +709,10 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
                 if not on_fork():
                     raise ValueError('mixing_model needs our Krita (the fork).')
                 from .mixing_options import mixing_properties
-                mixing_properties(self._creative_preset_paintop(params['preset']), params['preset'], params['mixing_model'],
+                paintop, composite = self._creative_preset_engine(params['preset'])
+                mixing_properties(paintop, params['preset'], params['mixing_model'],
                                   not params.get('continue_layer_id'), bool(params.get('smudge_overlay')),
-                                  sample_below=bool(params.get('sample_below')))
+                                  sample_below=bool(params.get('sample_below')), composite_op=composite)
             if params.get('continue_layer_id'):
                 if params.get('blend_mode') or params.get('clip_to'):
                     raise ValueError('blend_mode and clip_to make a new layer; leave out continue_layer_id.')
@@ -1307,10 +1308,13 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         visit(doc.rootNode())
         return found
 
-    def _creative_preset_paintop(self, preset_name):
+    def _creative_preset_engine(self, preset_name):
+        """(paintop id, the preset's own blend mode or None when it names none)."""
         from krita import Preset
         import xml.etree.ElementTree as ET
-        return ET.fromstring(Preset(Krita.instance().resources('preset')[preset_name]).toXML()).get('paintopid')
+        root = ET.fromstring(Preset(Krita.instance().resources('preset')[preset_name]).toXML())
+        composite = next((e.text for e in root.iter('param') if e.get('name') == 'CompositeOp'), None)
+        return root.get('paintopid'), (composite or '').strip() or None
 
     def _creative_validate_smudge_overlay(self, preset_name, rate=False):
         # Overlay mode (MergedPaint) exists only in the Color Smudge engine, and Krita ignores it in Lightness mode.
@@ -2187,18 +2191,21 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         properties = {}
         if model is not None or params.get('sample_below'):   # other passes never read the preset XML
             try:
-                paintop = self._creative_preset_paintop(params['preset'])
+                paintop, composite = self._creative_preset_engine(params['preset'])
             except (KeyError, AttributeError, ImportError):
                 if model is not None:
                     raise
-                paintop = None                                               # an unreadable preset is painted as before
+                paintop, composite = None, None                              # an unreadable preset is painted as before
             properties = mixing_properties(paintop, params['preset'], model, new_layer, bool(params.get('smudge_overlay')),
                                            continued=bool(params.get('continue_layer_id')),
-                                           sample_below=bool(params.get('sample_below')))
+                                           sample_below=bool(params.get('sample_below')), composite_op=composite)
         if params.get('smudge_overlay'):
             # Overlay mode on the job's own copy of the saved preset; the view's preset is never touched.
             properties.update({'MergedPaint': True},
                 **({'SmudgeRateValue': params['smudge_rate']} if 'smudge_rate' in params else {}))
+        if 'CompositeOp' in properties:
+            # A blend mode is the stroke job's own option (compositeOp), not a preset setting it reads.
+            options['compositeOp'] = properties.pop('CompositeOp')
         if properties:
             options['presetProperties'] = properties
         if selection is None and params.get('region'):

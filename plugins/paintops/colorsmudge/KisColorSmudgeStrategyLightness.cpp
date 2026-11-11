@@ -71,7 +71,7 @@ void KisColorSmudgeStrategyLightness::initializePainting()
     m_sourceWrapperDevice = toQShared(new KisColorSmudgeSourcePaintDevice(*m_layerOverlayDevice, 1));
 
     m_finalPainter.begin(m_colorOnlyDevice);
-    m_finalPainter.setCompositeOpId(COMPOSITE_COPY);
+    m_finalPainter.setCompositeOpId(mixedFinalCompositeOp(COMPOSITE_COPY));
     m_finalPainter.setSelection(m_initializationPainter->selection());
     m_finalPainter.setChannelFlags(m_initializationPainter->channelFlags());
     m_finalPainter.copyMirrorInformationFrom(m_initializationPainter);

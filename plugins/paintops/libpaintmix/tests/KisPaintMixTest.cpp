@@ -11,6 +11,9 @@
 #include <KoColorSpaceRegistry.h>
 #include <KoCompositeOpRegistry.h>
 #include <KoCompositeOp.h>
+#include <KoColorProfile.h>
+#include <KoColorModelStandardIds.h>
+#include <compositeops/KoCompositeOpToskaMix.h>
 
 #include <QElapsedTimer>
 #include <QFile>
@@ -636,6 +639,175 @@ void KisPaintMixTest::testSettingsDefaults()
     QVERIFY(s.model == Model::Rgb);
     QVERIFY(s.mixOnBrush);
     QVERIFY(!s.mixInWetPaint);
+}
+
+namespace {
+
+// yellow (252,211,0) and blue (0,33,133), the pair the live probes use, as 8-bit B,G,R,A
+const uint8_t yellow8[4] = {0, 211, 252, 255};
+const uint8_t blue8[4] = {133, 33, 0, 255};
+
+void compositeOne(const KoCompositeOp *op, uint8_t *dst, int dstBytes, const uint8_t *src, const uint8_t *mask, int cols,
+                  float opacity, const QBitArray &flags = QBitArray())
+{
+    KoCompositeOp::ParameterInfo params;
+    params.dstRowStart = dst;
+    params.dstRowStride = dstBytes;
+    params.srcRowStart = src;
+    params.srcRowStride = 0;          // one colour for every pixel, as a brush dab's paint colour
+    params.maskRowStart = mask;
+    params.maskRowStride = mask ? cols : 0;
+    params.rows = 1;
+    params.cols = cols;
+    params.opacity = opacity;
+    params.flow = 1.0f;
+    params.channelFlags = flags;
+    op->composite(params);
+}
+
+}
+
+void KisPaintMixTest::testBlendPixelsMaskedFollowsTheMask()
+{
+    for (Model m : allModels) {
+        const uint8_t mask[4] = {0, 255, 128, 64};
+        uint8_t masked[16], plain[16];
+        for (int i = 0; i < 4; i++) { std::memcpy(masked + i * 4, yellow8, 4); std::memcpy(plain + i * 4, yellow8, 4); }
+        blendPixelsMasked(m, Blend::Over, PixelFormat::Bgra8, masked, blue8, true, mask, 4, 0.8f);
+
+        // 0 leaves the pixel untouched; each other pixel is blendPixels at the opacity times its mask
+        QVERIFY(std::memcmp(masked, yellow8, 4) == 0);
+        for (int i = 1; i < 4; i++) {
+            blendPixels(m, Blend::Over, PixelFormat::Bgra8, plain + i * 4, blue8, true, 1, 0.8f * (mask[i] == 255 ? 1.0f : mask[i] / 255.0f));
+            QVERIFY2(std::memcmp(masked + i * 4, plain + i * 4, 4) == 0, modelId(m));
+        }
+        // no mask is blendPixels
+        uint8_t a[4], b[4];
+        std::memcpy(a, yellow8, 4); std::memcpy(b, yellow8, 4);
+        blendPixelsMasked(m, Blend::Over, PixelFormat::Bgra8, a, blue8, true, nullptr, 1, 0.5f);
+        blendPixels(m, Blend::Over, PixelFormat::Bgra8, b, blue8, true, 1, 0.5f);
+        QVERIFY(std::memcmp(a, b, 4) == 0);
+    }
+}
+
+void KisPaintMixTest::testMixBlendModesAreOnRgbaSpacesOnly()
+{
+    const QStringList ids = {"toska_mix_linear", "toska_mix_perceptual", "toska_mix_spectral", "toska_mix_pigment"};
+    const KoColorSpace *rgb8 = KoColorSpaceRegistry::instance()->rgb8();
+    const KoColorSpace *rgb16 = KoColorSpaceRegistry::instance()->rgb16();
+    const KoColorSpace *lab = KoColorSpaceRegistry::instance()->lab16();
+    QVERIFY(rgb8 && rgb16 && lab);
+    for (const QString &id : ids) {
+        QVERIFY2(rgb8->hasCompositeOp(id), qPrintable(id));
+        QVERIFY2(rgb8->hasCompositeOp(id + "_copy"), qPrintable(id));
+        QVERIFY2(rgb16->hasCompositeOp(id), qPrintable(id));
+        QVERIFY2(!lab->hasCompositeOp(id), qPrintable(id));
+    }
+    QCOMPARE(KoCompositeOpToskaMix::idForModel("pigment", false), QString("toska_mix_pigment"));
+    QCOMPARE(KoCompositeOpToskaMix::idForModel("spectral", true), QString("toska_mix_spectral_copy"));
+    QVERIFY(KoCompositeOpToskaMix::idForModel("rgb", false).isEmpty());
+    QVERIFY(KoCompositeOpToskaMix::idForModel("oil", false).isEmpty());
+}
+
+void KisPaintMixTest::testMixBlendModeBlueOverYellowIsGreen()
+{
+    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
+    for (const char *id : {"toska_mix_spectral", "toska_mix_pigment"}) {
+        uint8_t dst[4];
+        std::memcpy(dst, yellow8, 4);
+        compositeOne(cs->compositeOp(id), dst, 4, blue8, nullptr, 1, 0.5f);
+        QVERIFY2(dst[1] > dst[2] && dst[1] > dst[0], qPrintable(QString("%1: r %2 g %3 b %4").arg(id).arg(dst[2]).arg(dst[1]).arg(dst[0])));
+        QCOMPARE(int(dst[3]), 255);
+
+        // the same as the library's own blend
+        uint8_t expected[4];
+        std::memcpy(expected, yellow8, 4);
+        blendPixels(QByteArray(id).endsWith("pigment") ? Model::Pigment : Model::Spectral, Blend::Over, PixelFormat::Bgra8, expected, blue8, true, 1, 0.5f);
+        QVERIFY(std::memcmp(dst, expected, 4) == 0);
+
+        // full strength is the paint colour itself, exactly
+        std::memcpy(dst, yellow8, 4);
+        compositeOne(cs->compositeOp(id), dst, 4, blue8, nullptr, 1, 1.0f);
+        QVERIFY(std::memcmp(dst, blue8, 4) == 0);
+    }
+    // Normal's blend of the same two paints is not green
+    uint8_t plain[4];
+    std::memcpy(plain, yellow8, 4);
+    compositeOne(cs->compositeOp(COMPOSITE_OVER), plain, 4, blue8, nullptr, 1, 0.5f);
+    QVERIFY(!(plain[1] > plain[2]));
+}
+
+void KisPaintMixTest::testMixBlendModeMaskAndChannelFlags()
+{
+    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
+    const KoCompositeOp *op = cs->compositeOp("toska_mix_pigment");
+
+    // 300 pixels: more than one of the op's chunks
+    const int n = 300;
+    std::vector<uint8_t> dst(n * 4), mask(n);
+    for (int i = 0; i < n; i++) { std::memcpy(&dst[i * 4], yellow8, 4); mask[i] = i % 3 == 0 ? 0 : (i % 3 == 1 ? 255 : 128); }
+    compositeOne(op, dst.data(), n * 4, blue8, mask.data(), n, 1.0f);
+    for (int i = 0; i < n; i++) {
+        const uint8_t *p = &dst[i * 4];
+        if (mask[i] == 0) QVERIFY(std::memcmp(p, yellow8, 4) == 0);
+        else if (mask[i] == 255) QVERIFY(std::memcmp(p, blue8, 4) == 0);
+        else QVERIFY2(p[1] > p[2], qPrintable(QString::number(i)));     // half coverage: a green, not an olive
+    }
+
+    // only the red channel may be written: green, blue and alpha keep their bytes
+    uint8_t one[4];
+    std::memcpy(one, yellow8, 4);
+    QBitArray flags(4, false);
+    flags.setBit(2);                                                     // B,G,R,A: index 2 is red
+    compositeOne(op, one, 4, blue8, nullptr, 1, 0.5f, flags);
+    QCOMPARE(int(one[0]), int(yellow8[0]));
+    QCOMPARE(int(one[1]), int(yellow8[1]));
+    QCOMPARE(int(one[3]), 255);
+    QVERIFY(one[2] != yellow8[2]);
+}
+
+void KisPaintMixTest::testMixBlendModeCopyForm()
+{
+    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
+    // Copy at half strength onto a half-transparent pixel: alpha moves halfway to the source's, the colour is mixed by the model
+    uint8_t dst[4] = {0, 211, 252, 128};
+    uint8_t expected[4];
+    std::memcpy(expected, dst, 4);
+    compositeOne(cs->compositeOp("toska_mix_spectral_copy"), dst, 4, blue8, nullptr, 1, 0.5f);
+    blendPixels(Model::Spectral, Blend::Copy, PixelFormat::Bgra8, expected, blue8, true, 1, 0.5f);
+    QVERIFY(std::memcmp(dst, expected, 4) == 0);
+    QVERIFY(dst[3] > 128 && dst[3] < 255);
+}
+
+void KisPaintMixTest::testMixBlendModeOnALinearProfile()
+{
+    // Krita's 32-bit float RGBA defaults to a linear-light profile: the op mixes in sRGB encoding and stores linear again.
+    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->colorSpace(RGBAColorModelID.id(), Float32BitsColorDepthID.id(), QString());
+    QVERIFY(cs);
+    if (!cs->profile() || !cs->profile()->isLinear()) QSKIP("the default float RGBA profile is not linear here");
+    QVERIFY(cs->hasCompositeOp("toska_mix_pigment"));
+
+    auto lin = [](float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); };
+    auto enc = [](float v) { return v <= 0.0031308f ? 12.92f * v : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f; };
+    float dst[4] = {lin(252 / 255.0f), lin(211 / 255.0f), 0.0f, 1.0f};
+    const float src[4] = {0.0f, lin(33 / 255.0f), lin(133 / 255.0f), 1.0f};
+    const float untouched[4] = {dst[0], dst[1], dst[2], dst[3]};
+
+    // a zero mask leaves the stored floats bit for bit
+    const uint8_t none = 0;
+    compositeOne(cs->compositeOp("toska_mix_pigment"), reinterpret_cast<uint8_t *>(dst), 16, reinterpret_cast<const uint8_t *>(src), &none, 1, 1.0f);
+    QVERIFY(std::memcmp(dst, untouched, 16) == 0);
+
+    compositeOne(cs->compositeOp("toska_mix_pigment"), reinterpret_cast<uint8_t *>(dst), 16, reinterpret_cast<const uint8_t *>(src), nullptr, 1, 0.5f);
+    for (float v : dst) QVERIFY(std::isfinite(v));
+
+    // the same mix as the 8-bit sRGB op gives, within rounding
+    uint8_t expected[4];
+    std::memcpy(expected, yellow8, 4);
+    blendPixels(Model::Pigment, Blend::Over, PixelFormat::Bgra8, expected, blue8, true, 1, 0.5f);
+    QVERIFY2(std::abs(enc(dst[0]) * 255.0f - expected[2]) <= 1.5f, qPrintable(QString::number(enc(dst[0]) * 255.0f)));
+    QVERIFY2(std::abs(enc(dst[1]) * 255.0f - expected[1]) <= 1.5f, qPrintable(QString::number(enc(dst[1]) * 255.0f)));
+    QVERIFY2(std::abs(enc(dst[2]) * 255.0f - expected[0]) <= 1.5f, qPrintable(QString::number(enc(dst[2]) * 255.0f)));
 }
 
 SIMPLE_TEST_MAIN(KisPaintMixTest)

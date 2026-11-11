@@ -168,6 +168,7 @@ struct MixingRun {
     bool overlay {false};             // paint on an empty layer above the canvas paint, with MergedPaint
     bool lab {false};                 // a Lab 16-bit image
     QString compositeOp;              // the brush's blend mode; empty is Normal
+    QColor second;                    // when valid: the right half of the canvas (x >= 100) holds this paint
     qreal colorRate {0.15};           // low: a stroke's overlapping dabs add up, and at 0.5 its middle is pure brush colour
 };
 
@@ -193,6 +194,9 @@ public:
         KisNodeSP paint1 = findNode(image->root(), "paint1");
         if (!paint1) return QImage();
         paint1->paintDevice()->fill(QRect(0, 0, 200, 200), KoColor(run.canvas, image->colorSpace()));
+        if (run.second.isValid()) {
+            paint1->paintDevice()->fill(QRect(100, 0, 100, 200), KoColor(run.second, image->colorSpace()));
+        }
 
         KisNodeSP targetNode = paint1;
         if (run.overlay) {
@@ -411,6 +415,36 @@ void KisColorsmudgeOpTest::testOverlayModeUsesModel()
     QVERIFY2(mixed.alpha() > 200, describe(mixed).constData());
     QVERIFY2(mixed.green() > mixed.red() && mixed.green() > mixed.blue(), describe(mixed).constData());
     QVERIFY2(!(lerped.green() > lerped.red()), describe(lerped).constData());
+}
+
+void KisColorsmudgeOpTest::testBlendingWithoutPaintUsesModel()
+{
+    // A blender lays no colour: the brush only drags yellow into blue. The colours meet when the smeared dab is put
+    // back on the layer through its soft mask, so that step has to mix by the model too.
+    MixingRun run;
+    run.second = QColor(0, 33, 133);
+    run.colorRate = 0.0;
+    const QImage plain = paintRun(run);
+    run.model = "spectral";
+    const QImage spectral = paintRun(run);
+    QVERIFY(!plain.isNull());
+    QVERIFY(!spectral.isNull());
+    QVERIFY(spectral != plain);
+
+    // where the two paints were dragged together: count the pixels that read as green
+    auto greens = [](const QImage &image) {
+        int n = 0;
+        for (int y = 85; y <= 115; y++) {
+            for (int x = 60; x <= 180; x++) {
+                const QColor c = image.pixelColor(x, y);
+                if (c.green() > c.red() + 8 && c.green() > c.blue() + 8) n++;
+            }
+        }
+        return n;
+    };
+    const int mixed = greens(spectral), lerped = greens(plain);
+    qInfo() << "blender across yellow|blue: green pixels, spectral" << mixed << "rgb" << lerped;
+    QVERIFY2(mixed > lerped + 50, qPrintable(QString("%1 vs %2").arg(mixed).arg(lerped)));
 }
 
 KISTEST_MAIN(KisColorsmudgeOpTest)

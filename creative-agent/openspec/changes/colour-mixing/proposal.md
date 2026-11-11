@@ -182,3 +182,24 @@ plain RGB dabs, so mixing elsewhere barely matters.
 2. For the A/B scene: one you choose, or a known test scene (New Moscow, or a simpler still life)?
 3. Should the agent's blending presets switch to the new model by default once measured, or stay opt-in per preset?
 4. Should `pigment-mixing` be deleted, or kept as a one-line pointer here?
+
+
+## Amendment (3), 2026-11-11: mixing as blend modes, for every engine
+
+Found live after Task 10 (probes on test documents in Toska): on the four blender presets `rgb`, `spectral` and
+`pigment` gave byte-identical results. Task 10's hooks sit on the smear, dulling and colour rate blends, but a blender
+lays no colour: its colours meet when the smeared dab is copied back onto the layer through the dab's soft mask, a
+step the plan had left as Krita's RGB interpolation (the last "assumption not confirmed"). The scan also showed that
+only 6 of the 49 presets in the catalog's jobs run on Color Smudge and 3 on MyPaint; the rest paint with the pixel
+brush and other engines, which had no mixing model at all.
+
+So the models become blend modes, the one mechanism every engine, layer and fill already uses:
+
+- `KoCompositeOpToskaMix` (libs/pigment): `toska_mix_<model>` lays the source with Normal's coverage and the model's
+  colour; `toska_mix_<model>_copy` does the same for Copy. RGBA 8-bit, 16-bit and float; a linear-light profile is
+  mixed in sRGB encoding. Mask, opacity and channel flags are honoured. Listed under Mix in the blend-mode lists.
+- Color Smudge's final copy of the dab onto the layer uses the `_copy` form when a model mixes the stroke.
+- A paint pass with a `mixing_model` on any other engine sets the stroke job's blend mode to `toska_mix_<model>`.
+  A preset that paints with its own blend mode (Dodge, Multiply) refuses a model.
+
+The catalog gate is unchanged: a (preset, model) pair still needs a measured card before the painter may use it.

@@ -14,6 +14,7 @@
 
 #include <KoColorModelStandardIds.h>
 #include <KoColorProfile.h>
+#include <compositeops/KoCompositeOpToskaMix.h>
 
 /**********************************************************************************/
 /*                 Toska: mixing by a model                                       */
@@ -42,6 +43,14 @@ void KisColorSmudgeStrategyBase::blendByModel(const MixByModel &mix, const KoCom
 void KisColorSmudgeStrategyBase::setMixing(const KisPaintMix::Settings &settings)
 {
     m_mixing = settings;
+}
+
+QString KisColorSmudgeStrategyBase::mixedFinalCompositeOp(const QString &kritaOpId) const
+{
+    if (!m_mixByModel || (kritaOpId != COMPOSITE_COPY && kritaOpId != COMPOSITE_OVER)) return kritaOpId;
+    const QString id = KoCompositeOpToskaMix::idForModel(QLatin1String(KisPaintMix::modelId(m_mixByModel->model)),
+                                                         kritaOpId == COMPOSITE_COPY);
+    return id.isEmpty() ? kritaOpId : id;
 }
 
 /**********************************************************************************/

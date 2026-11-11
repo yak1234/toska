@@ -15,6 +15,7 @@
 #include <KoColorSpaceMaths.h>
 #include <KoCompositeOpFunctions.h>
 
+#include "compositeops/KoCompositeOpToskaMix.h"
 #include "compositeops/KoCompositeOpGeneric.h"
 #include "compositeops/KoCompositeOpOver.h"
 #include "compositeops/KoCompositeOpCopyChannel.h"
@@ -325,6 +326,8 @@ struct AddRGBOps<Traits, true>
     }
 
     static void add(KoColorSpace* cs) {
+
+        KoCompositeOpToskaMix::addTo(cs);   // Toska: blend modes that mix by a paint-mixing model
 
         cs->addCompositeOp(new KoCompositeOpCopyChannel<Traits,red_pos  >(cs, COMPOSITE_COPY_RED  , KoCompositeOp::categoryMisc()));
         cs->addCompositeOp(new KoCompositeOpCopyChannel<Traits,green_pos>(cs, COMPOSITE_COPY_GREEN, KoCompositeOp::categoryMisc()));

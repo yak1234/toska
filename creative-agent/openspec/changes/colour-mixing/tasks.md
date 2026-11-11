@@ -278,3 +278,10 @@ Build order follows the proposal (MyPaint spectral → module → Mixbox → Col
 - [ ] **Step 4: Write the cards** for every measured (preset, model) pair and every model card; commit `Catalog: measured mixing cards for Color Smudge presets`.
 - [ ] **Step 5: Gate 2** as in Task 8: A is RGB; B uses `pigment` on the blending presets (and `spectral` if Task 8's winner differs). Expected: Luna and the artist both prefer B; otherwise stop and report.
 - [ ] **Step 6: Set defaults** only for presets that won: `mixing.presets[<name>].default` = the winning model (Done 3, 7). `npm run test:unit`; commit `Blending presets default to the measured mixing model that won the blind A/B`.
+
+
+### Task 12: Mixing as blend modes (proposal amendment 3)
+
+- [x] `blendPixelsMasked` in libpaintmix; `KoCompositeOpToskaMix` registered on RGBA spaces; Color Smudge's final copy by the model; pixel-engine passes mix through the stroke job's blend mode.
+- [x] Tests: `KisPaintMixTest` 33 passed (6 new), `KisColorsmudgeOpTest` 28 (a blender dragged across yellow|blue: 377 green pixels with `spectral`, 0 with `rgb`), `KoRgbU8ColorSpaceTester` 7, `TestCompositeOpInversion` 598, `TestStrokeJobs` 36, plugin suite 1,261 (3 skipped). `KoRgbU8ColorSpaceTester::testCompositeOpsWithChannelFlags` failed on the first version (a locked channel under a fully transparent pixel was not zeroed) and passes after the fix.
+- [ ] Live probes of every catalog preset with `spectral` and `pigment`; cards; timing.

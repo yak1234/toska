@@ -233,6 +233,13 @@ enum class Blend { Over, Copy };
  */
 void blendPixels(Model m, Blend blend, PixelFormat f, uint8_t *dst, const uint8_t *src, bool srcIsOneColour, int count, float opacity);
 
+/**
+ * blendPixels through a coverage mask: mask holds one byte per pixel (0 leaves the pixel untouched, 255 is the full
+ * opacity), as Krita's composite ops take a brush dab's or a selection's mask. A null mask is blendPixels.
+ */
+void blendPixelsMasked(Model m, Blend blend, PixelFormat f, uint8_t *dst, const uint8_t *src, bool srcIsOneColour,
+                       const uint8_t *mask, int count, float opacity);
+
 }
 
 #endif // KISPAINTMIX_H

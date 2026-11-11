@@ -74,12 +74,17 @@ template<> struct Codec<PixelFormat::RgbaF32> {
 };
 
 template<PixelFormat F>
-void run(Model m, Blend blend, uint8_t *dst, const uint8_t *src, bool one, int count, float op)
+void run(Model m, Blend blend, uint8_t *dst, const uint8_t *src, bool one, const uint8_t *mask, int count, float opacity)
 {
     using C = Codec<F>;
     const Px s0 = C::load(src);
     for (int i = 0; i < count; ++i) {
         uint8_t *d = dst + size_t(i) * C::stride;
+        float op = opacity;
+        if (mask) {
+            if (mask[i] == 0) continue;            // nothing of the source reaches this pixel
+            if (mask[i] != 255) op *= mask[i] / 255.0f;
+        }
         const Px s = one ? s0 : C::load(src + size_t(i) * C::stride);
         const Px p = C::load(d);
 
@@ -106,14 +111,27 @@ void run(Model m, Blend blend, uint8_t *dst, const uint8_t *src, bool one, int c
 
 }
 
+void blendPixelsMasked(Model m, Blend blend, PixelFormat f, uint8_t *dst, const uint8_t *src, bool srcIsOneColour,
+                       const uint8_t *mask, int count, float opacity)
+{
+    if (!dst || !src || count <= 0) return;
+    const float op = std::min(1.0f, std::max(0.0f, opacity));
+    if (op <= 0.0f) return;
+    switch (f) {
+    case PixelFormat::Bgra8: run<PixelFormat::Bgra8>(m, blend, dst, src, srcIsOneColour, mask, count, op); break;
+    case PixelFormat::Bgra16: run<PixelFormat::Bgra16>(m, blend, dst, src, srcIsOneColour, mask, count, op); break;
+    case PixelFormat::RgbaF32: run<PixelFormat::RgbaF32>(m, blend, dst, src, srcIsOneColour, mask, count, op); break;
+    }
+}
+
 void blendPixels(Model m, Blend blend, PixelFormat f, uint8_t *dst, const uint8_t *src, bool srcIsOneColour, int count, float opacity)
 {
     if (!dst || !src || count <= 0) return;
     const float op = std::min(1.0f, std::max(0.0f, opacity));
     switch (f) {
-    case PixelFormat::Bgra8: run<PixelFormat::Bgra8>(m, blend, dst, src, srcIsOneColour, count, op); break;
-    case PixelFormat::Bgra16: run<PixelFormat::Bgra16>(m, blend, dst, src, srcIsOneColour, count, op); break;
-    case PixelFormat::RgbaF32: run<PixelFormat::RgbaF32>(m, blend, dst, src, srcIsOneColour, count, op); break;
+    case PixelFormat::Bgra8: run<PixelFormat::Bgra8>(m, blend, dst, src, srcIsOneColour, nullptr, count, op); break;
+    case PixelFormat::Bgra16: run<PixelFormat::Bgra16>(m, blend, dst, src, srcIsOneColour, nullptr, count, op); break;
+    case PixelFormat::RgbaF32: run<PixelFormat::RgbaF32>(m, blend, dst, src, srcIsOneColour, nullptr, count, op); break;
     }
 }
 

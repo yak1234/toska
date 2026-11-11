@@ -66,10 +66,20 @@ class MixingOptionsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'MyPaint presets mix by rgb or spectral'):
                 mixing.mixing_properties(MYPAINT, 'Ramon', model, True, False)
 
-    def test_other_engine_with_model_names_the_engine(self):
-        with self.assertRaisesRegex(ValueError, 'paintbrush'):
-            mixing.mixing_properties('paintbrush', 'b) Basic-1', 'spectral', True, False)
+    def test_other_engines_mix_through_a_blend_mode(self):
+        # The pixel brush and every other engine: the fork's toska_mix_<model> blend mode lays the dab by the model.
+        self.assertEqual(mixing.mixing_properties('paintbrush', 'b) Basic-3 Flow', 'pigment', True, False), {'CompositeOp': 'toska_mix_pigment'})
+        self.assertEqual(mixing.mixing_properties('paintbrush', 'b) Basic-3 Flow', 'spectral', True, False, composite_op='normal'),
+                         {'CompositeOp': 'toska_mix_spectral'})
+        self.assertEqual(mixing.mixing_properties('roundmarker', 'b) Basic-1', 'linear', True, False), {'CompositeOp': 'toska_mix_linear'})
         self.assertEqual(mixing.mixing_properties('paintbrush', 'b) Basic-1', None, True, False), {})
+        self.assertEqual(mixing.mixing_properties('paintbrush', 'b) Basic-1', 'rgb', True, False), {})
+
+    def test_a_preset_with_its_own_blend_mode_keeps_it(self):
+        # Dodge, Multiply and the like are their blend mode: a model cannot replace it.
+        with self.assertRaisesRegex(ValueError, r'l\) Adjust Multiply paints with its own blend mode \(multiply\)'):
+            mixing.mixing_properties('paintbrush', 'l) Adjust Multiply', 'pigment', True, False, composite_op='multiply')
+        self.assertEqual(mixing.mixing_properties('paintbrush', 'l) Adjust Multiply', None, True, False, composite_op='multiply'), {})
 
     def test_unknown_model_refused_by_validation(self):
         params = {'name': 'Sky', 'preset': 'b) Basic-1', 'mixing_model': 'oil',

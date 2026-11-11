@@ -41,6 +41,14 @@ private Q_SLOTS:
     void testPigmentComplementariesMakeBrown();
     void testPigmentLatentRoundTrip();
     void testSettingsDefaults();
+
+    // blendPixelsMasked and the toska_mix_* blend modes (libs/pigment/compositeops/KoCompositeOpToskaMix)
+    void testBlendPixelsMaskedFollowsTheMask();
+    void testMixBlendModesAreOnRgbaSpacesOnly();
+    void testMixBlendModeBlueOverYellowIsGreen();
+    void testMixBlendModeMaskAndChannelFlags();
+    void testMixBlendModeCopyForm();
+    void testMixBlendModeOnALinearProfile();
 };
 
 #endif // KISPAINTMIXTEST_H

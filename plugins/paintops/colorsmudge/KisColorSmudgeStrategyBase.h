@@ -111,6 +111,12 @@ public:
     /// Toska: the preset's mixing model (KisColorSmudgeMixingOptionData); call before initializePainting().
     void setMixing(const KisPaintMix::Settings &settings);
 
+    /// Toska: the blend mode the finished dab goes onto the layer with. Krita's own (Copy, or Normal for the legacy
+    /// mask strategy) unless a model mixes this stroke: then the same coverage with the colour mixed by the model
+    /// (KoCompositeOpToskaMix), because for a blending brush that copy through the dab's soft mask is where colours meet.
+    /// Valid after initializePaintingImpl().
+    QString mixedFinalCompositeOp(const QString &kritaOpId) const;
+
     const KoColorSpace* preciseColorSpace() const override;
 
     virtual QString smearCompositeOp(bool smearAlpha) const;
