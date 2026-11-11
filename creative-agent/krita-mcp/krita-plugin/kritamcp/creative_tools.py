@@ -2207,7 +2207,10 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         # paint in Normal, which is faster than a mixing blend mode and gives the same picture once solved.
         # Not when the brush itself reads the paint below (sample_below, or a blender's overlay mode): its dabs already
         # hold the mix, and solving them again would mix twice.
-        reads_below = bool(params.get('sample_below') or params.get('smudge_overlay'))
+        # Only Color Smudge (overlay mode) and MyPaint (sample merged) can read it: for any other engine sample_below
+        # changes nothing in the brush, and the solve is how its paint meets the paint below.
+        reads_below = bool((params.get('sample_below') or params.get('smudge_overlay'))
+                           and (model is None or paintop in ('colorsmudge', 'mypaintbrush')))
         solve_below = bool(new_layer and model not in (None, 'rgb') and not reads_below and hasattr(node, 'rememberPaintBelow'))
         if 'CompositeOp' in properties:
             # The pixel brush and the other engines without a mixing setting of their own mix through the stroke's blend

@@ -1209,6 +1209,12 @@ class ForkStrokeJobTests(unittest.TestCase):
         self.assertEqual(sampled['status'], 'ok')
         self.assertEqual(calls, [])
         self.assertNotIn('mixed_with_below', sampled)
+        # a pixel brush cannot read the paint below: a blend pass with it is solved like any other new layer
+        h._creative_preset_engine = lambda name: ('paintbrush', 'normal')
+        blended = self._pass(h, 2, operation_id='op-5', mixing_model='pigment', sample_below=True)
+        self.assertEqual(blended['status'], 'ok')
+        self.assertEqual([c[0] for c in calls], ['remember', 'solve'])
+        self.assertEqual(blended['mixed_with_below']['model'], 'pigment')
 
     def test_a_mypaint_spectral_transfer_that_asks_samples_merged_on_every_chunk(self):
         # paint_from_reference with mixing (task 7b): the first chunk makes the pass layer, the rest continue it; every
