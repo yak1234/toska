@@ -2208,10 +2208,13 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         # merges it onto the layer (measured 2026-11-11, stock Multiply included; never with Normal).
         solve_below = bool(new_layer and model not in (None, 'rgb') and hasattr(node, 'rememberPaintBelow'))
         if 'CompositeOp' in properties:
-            # A blend mode is the stroke job's own option (compositeOp), not a preset setting it reads.
-            blend = properties.pop('CompositeOp')
+            # The pixel brush and the other engines without a mixing setting of their own would mix through the stroke's
+            # blend mode (toska_mix_<model>), the unreliable path: on a new layer the solve does the mixing instead, and on
+            # a continued layer the strokes paint as they always have, which the result says.
+            properties.pop('CompositeOp')
             if not solve_below:
-                options['compositeOp'] = blend
+                out['mixing_skipped'] = ('This brush mixes only on a new layer: on a continued layer its strokes paint as usual (rgb).'
+                                         if not new_layer else 'This Krita cannot mix a new layer with the paint below.')
         if properties:
             options['presetProperties'] = properties
         if selection is None and params.get('region'):

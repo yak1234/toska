@@ -223,3 +223,25 @@ mix is baked into the layer's pixels instead, and every layer stays Normal:
 - Merging, flattening and saving keep the look, since nothing depends on a blend mode. Painting under the layer later
   does not re-solve it (as dry paint would not).
 - A continued layer is not solved again: its new strokes mix with its own paint through the blend mode.
+
+### Amendment (4), addendum: strokes never paint with a mixing blend mode
+
+Measured the same night on test documents in Toska (repeating one deterministic probe 16 to 24 times): a stroke job
+whose brush paints with any blend mode other than Normal sometimes loses a strip of a stroke's paint, tile-aligned and
+as long as the stroke, with differences up to 150/255. It happened in 3 to 7 of every 20 to 24 runs with
+`toska_mix_pigment`, in 4 of 16 with a stock Multiply brush (`l) Adjust Multiply`), and in none of 24 with Normal.
+Ruled out: libpaintmix's thread pool (the same rate with `TOSKA_PAINTMIX_THREADS=1`), the order of the merge's pieces
+(the same rate with the pieces of `KisIndirectPaintingSupport::mergeToLayerImpl` run one after another), and a stale
+projection (the same rate after hiding and showing every layer). The lost paint is in the layer's own pixels. The
+cause is not found; it predates this change (the Dodge and Multiply brushes have it).
+
+So the pixel brush and the other engines without a mixing setting of their own never get a `toska_mix_*` blend mode
+from a pass:
+
+- On a new layer the strokes paint in Normal and the solve of amendment (4) does the mixing (24 of 24 runs identical;
+  pass time 1.03 to 1.14 times rgb on the seven heavy presets that were 1.6 to 4 times before).
+- On a continued layer the strokes paint as they always have, and the result carries `mixing_skipped`.
+- Color Smudge mixes inside its own engine (16 of 16 blender runs identical) and MyPaint through its paint mode.
+
+The `toska_mix_*` blend modes stay in the fork for Color Smudge's final copy and for the artist's own use as a
+layer or brush blend mode.

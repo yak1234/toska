@@ -1167,14 +1167,16 @@ class ForkStrokeJobTests(unittest.TestCase):
                          [{'ToskaMyPaintPaintMode': 1.0}, {'ToskaMyPaintSampleMerged': True},
                           {'ToskaMyPaintPaintMode': 1.0, 'ToskaMyPaintSampleMerged': True}])
 
-    def test_a_pixel_brush_pass_mixes_through_the_job_blend_mode(self):
-        # Every engine but Color Smudge and MyPaint: the model is the stroke job's blend mode (the fork's toska_mix_*),
-        # never a preset property; a preset that paints with its own blend mode refuses a model.
+    def test_a_pixel_brush_never_paints_with_a_mixing_blend_mode(self):
+        # Every engine but Color Smudge and MyPaint mixes only through the solve of a new layer (the next test). A stroke
+        # with a blend mode other than Normal now and then loses a strip of its paint, so the job never gets one: without
+        # the solve the pass paints as usual and says so. A preset with its own blend mode still refuses a model.
         h = self.harness(); h._creative_preset_engine = lambda name: ('paintbrush', 'normal')
-        self.assertEqual(self._pass(h, 2, mixing_model='pigment')['status'], 'ok')
+        first = self._pass(h, 2, mixing_model='pigment')
+        self.assertEqual(first['status'], 'ok')
+        self.assertIn('cannot mix a new layer', first['mixing_skipped'])
         self.assertEqual(self._pass(h, 2, operation_id='op-2', mixing_model='rgb')['status'], 'ok')
-        self.assertEqual([(call[1].get('compositeOp'), call[1].get('presetProperties')) for call in h.job_calls],
-                         [('toska_mix_pigment', None), (None, None)])
+        self.assertEqual([(call[1].get('compositeOp'), call[1].get('presetProperties')) for call in h.job_calls], [(None, None), (None, None)])
         h._creative_preset_engine = lambda name: ('paintbrush', 'multiply')
         with self.assertRaisesRegex(ValueError, r'paints with its own blend mode \(multiply\)'):
             self._pass(h, 2, operation_id='op-3', mixing_model='pigment')
@@ -1195,8 +1197,10 @@ class ForkStrokeJobTests(unittest.TestCase):
         self.assertEqual(first['mixed_with_below'], {'model': 'pigment', 'status': 'ok', 'pixels': 12})
         self.assertIsNone(h.job_calls[0][1].get('compositeOp'), 'the strokes of a solved layer paint in Normal')
         del calls[:]
-        self.assertEqual(self._pass(h, 2, operation_id='op-2', mixing_model='pigment', continue_layer_id=layer)['status'], 'ok')
-        self.assertEqual(h.job_calls[1][1].get('compositeOp'), 'toska_mix_pigment', 'a continued layer mixes with its own paint through the blend mode')
+        continued = self._pass(h, 2, operation_id='op-2', mixing_model='pigment', continue_layer_id=layer)
+        self.assertEqual(continued['status'], 'ok')
+        self.assertIn('only on a new layer', continued['mixing_skipped'])
+        self.assertIsNone(h.job_calls[1][1].get('compositeOp'), 'a continued layer paints as usual')
         plain = self._pass(h, 2, operation_id='op-3', mixing_model='rgb')
         self.assertEqual(plain['status'], 'ok')
         self.assertEqual(calls, [])

@@ -197,11 +197,11 @@ test('a transfer with mixing spectral and Wet Paint Plus: every chunk carries sp
   } finally { await h.close(); }
 });
 
-// Dry Bristles has no measured card (too slow with a model, 2026-11-11); Bristles-2 has cards but no coverage.
+// Wet Bristles has no measured card (a model made no visible change, 2026-11-11); Bristles-2 has cards but no coverage.
 test('a transfer with an uncarded Bristles preset and spectral is refused, naming the measured pairs; nothing is painted', async () => {
   const h = await studio({ through: 'reference' });
   try {
-    await assert.rejects(h.find('paint_from_reference').execute('mix-2', recipe('g) Dry Bristles', { mixing: 'spectral' })),
+    await assert.rejects(h.find('paint_from_reference').execute('mix-2', recipe('i) Wet Bristles', { mixing: 'spectral' })),
       (error: Error) => /Measured pairs: .*Wet Paint Plus.*spectral/.test(error.message) && /Bristles/.test(error.message));
     assert.equal(h.calls.length, 0);
   } finally { await h.close(); }

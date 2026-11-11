@@ -295,3 +295,7 @@ Build order follows the proposal (MyPaint spectral → module → Mixbox → Col
 
 - [x] `solveOverBelow` (libpaintmix), `Node::rememberPaintBelow` / `mixWithPaintBelow` (libkis, sip), the plugin's stroke job calls them for a new-layer pass with a model.
 - [x] Tests: `KisPaintMixTest` 35 passed (a solved layer through Krita's Normal blend is within 1/255 of the model's mix over 6 colour pairs and 6 alphas, both models); `TestNodeAgentTools::testMixWithPaintBelow` (olive before, green after, one undo, refusals); plugin `test_native` 98 passed (the hook keeps before the job, solves after, skips continued layers and rgb).
+- [x] Live, test documents in Toska: thin blue (Basic-4 Flow Opacity, opacity 0.35) on a new layer over opaque yellow reads (79,133,51) with `pigment`, (88,108,30) with `spectral`, (146,126,71) with `rgb`; about 590,000 pixels solved per pass; 24 of 24 repeats identical.
+- [x] Strokes never paint with a mixing blend mode (proposal amendment 4, addendum); cards for seven more presets measured on the new-layer route (28 presets carded in all). Plugin suite 1,262 passed (3 skipped); `npm run test:unit` 1,415 passed (1 skipped).
+- [ ] Open defect, not fixed: a stroke with a non-Normal blend mode sometimes loses a strip of its paint (stock Multiply and Dodge brushes included). Evidence and what was ruled out are in the proposal's addendum.
+- [ ] Not done: mixing on a continued layer for pixel brushes; a coverage measurement for pixel brushes so reference transfers can mix.
