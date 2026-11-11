@@ -1193,8 +1193,10 @@ class ForkStrokeJobTests(unittest.TestCase):
         layer = first['layer_id']
         self.assertEqual(calls, [('remember', layer, 0), ('solve', layer, 'pigment', 1)], 'kept before the job, solved after it')
         self.assertEqual(first['mixed_with_below'], {'model': 'pigment', 'status': 'ok', 'pixels': 12})
+        self.assertIsNone(h.job_calls[0][1].get('compositeOp'), 'the strokes of a solved layer paint in Normal')
         del calls[:]
         self.assertEqual(self._pass(h, 2, operation_id='op-2', mixing_model='pigment', continue_layer_id=layer)['status'], 'ok')
+        self.assertEqual(h.job_calls[1][1].get('compositeOp'), 'toska_mix_pigment', 'a continued layer mixes with its own paint through the blend mode')
         plain = self._pass(h, 2, operation_id='op-3', mixing_model='rgb')
         self.assertEqual(plain['status'], 'ok')
         self.assertEqual(calls, [])

@@ -2203,9 +2203,15 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             # Overlay mode on the job's own copy of the saved preset; the view's preset is never touched.
             properties.update({'MergedPaint': True},
                 **({'SmudgeRateValue': params['smudge_rate']} if 'smudge_rate' in params else {}))
+        # A new layer with a model is solved against the paint below once its strokes are down (see below), so its
+        # strokes paint in Normal: a stroke with any other blend mode now and then loses a strip of its paint when Krita
+        # merges it onto the layer (measured 2026-11-11, stock Multiply included; never with Normal).
+        solve_below = bool(new_layer and model not in (None, 'rgb') and hasattr(node, 'rememberPaintBelow'))
         if 'CompositeOp' in properties:
             # A blend mode is the stroke job's own option (compositeOp), not a preset setting it reads.
-            options['compositeOp'] = properties.pop('CompositeOp')
+            blend = properties.pop('CompositeOp')
+            if not solve_below:
+                options['compositeOp'] = blend
         if properties:
             options['presetProperties'] = properties
         if selection is None and params.get('region'):
@@ -2225,8 +2231,7 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         # model the picture is kept now and the layer's thin paint is re-solved against it when the strokes are down
         # (the fork's Node.mixWithPaintBelow), so the Normal layer shows the model's mix. A continued layer already
         # holds paint: its strokes mix with that through the blend mode, and it is never solved twice.
-        mix_below = (model if new_layer and model not in (None, 'rgb') and hasattr(node, 'rememberPaintBelow')
-                     and node.rememberPaintBelow() else None)
+        mix_below = model if solve_below and node.rememberPaintBelow() else None
         job = node.paintStrokes(strokes, options, selection)
         if started:
             started()
