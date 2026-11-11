@@ -306,6 +306,14 @@ void KisTiledExtentManager::updateExtent()
 {
     qint32 minX, width, minY, height;
 
+    // Toska: the extent is read and published under one lock. Upstream read the column and row ranges first and
+    // locked only to store the result, so of two threads adding tiles at once the one that had read the older ranges
+    // could store last: the extent then stayed too small until the next tile was added or removed, and whatever is
+    // clipped to it (KisPainter::bitBlt's source rect, exactBounds) lost the tiles outside. A Wash-mode stroke painted
+    // by several threads lost strips of its paint that way when its temporary layer was merged (TestStrokeJobs
+    // testWashStrokesAreRepeatable: about 3 jobs in 100 before, none after).
+    QWriteLocker lock(&m_extentLock);
+
     {
         QReadLocker cl(&m_colsData.m_extentLock);
 
@@ -330,6 +338,5 @@ void KisTiledExtentManager::updateExtent()
         }
     }
 
-    QWriteLocker lock(&m_extentLock);
     m_currentExtent = QRect(minX, minY, width, height);
 }

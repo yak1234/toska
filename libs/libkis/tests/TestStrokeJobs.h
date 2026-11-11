@@ -50,6 +50,7 @@ private Q_SLOTS:
     void testPaintsTheSavedBrushNotTheViewsTweaks();
     void testAgentPassLeavesStoredTweaksAlone();
     void testPresetPropertiesApplyToTheJobsCopyOnly();
+    void testWashStrokesAreRepeatable();
 };
 
 #endif

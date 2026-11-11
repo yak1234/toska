@@ -2203,21 +2203,19 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             # Overlay mode on the job's own copy of the saved preset; the view's preset is never touched.
             properties.update({'MergedPaint': True},
                 **({'SmudgeRateValue': params['smudge_rate']} if 'smudge_rate' in params else {}))
-        # A new layer with a model is solved against the paint below once its strokes are down (see below), so its
-        # strokes paint in Normal: a stroke with any other blend mode now and then loses a strip of its paint when Krita
-        # merges it onto the layer (measured 2026-11-11, stock Multiply included; never with Normal).
+        # A new layer with a model is solved against the paint below once its strokes are down (see below): its strokes
+        # paint in Normal, which is faster than a mixing blend mode and gives the same picture once solved.
         # Not when the brush itself reads the paint below (sample_below, or a blender's overlay mode): its dabs already
         # hold the mix, and solving them again would mix twice.
         reads_below = bool(params.get('sample_below') or params.get('smudge_overlay'))
         solve_below = bool(new_layer and model not in (None, 'rgb') and not reads_below and hasattr(node, 'rememberPaintBelow'))
         if 'CompositeOp' in properties:
-            # The pixel brush and the other engines without a mixing setting of their own would mix through the stroke's
-            # blend mode (toska_mix_<model>), the unreliable path: on a new layer the solve does the mixing instead, and on
-            # a continued layer the strokes paint as they always have, which the result says.
-            properties.pop('CompositeOp')
+            # The pixel brush and the other engines without a mixing setting of their own mix through the stroke's blend
+            # mode (the job's own compositeOp option, not a preset setting): on a continued layer, where the strokes meet
+            # the layer's own paint. A solved new layer does not need it.
+            blend = properties.pop('CompositeOp')
             if not solve_below:
-                out['mixing_skipped'] = ('This brush mixes only on a new layer: on a continued layer its strokes paint as usual (rgb).'
-                                         if not new_layer else 'This Krita cannot mix a new layer with the paint below.')
+                options['compositeOp'] = blend
         if properties:
             options['presetProperties'] = properties
         if selection is None and params.get('region'):

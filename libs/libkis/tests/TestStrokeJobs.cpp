@@ -49,6 +49,10 @@
 #include <kis_paint_layer.h>
 #include <kis_painter.h>
 #include <QCryptographicHash>
+#include <QScopeGuard>
+#include <kis_image_config.h>
+#include <KisImageConfigNotifier.h>
+#include <KisLodPreferences.h>
 #include <kis_group_layer.h>
 #include <kis_simple_stroke_strategy.h>
 #include <kundo2stack.h>
@@ -705,6 +709,87 @@ void TestStrokeJobs::testWindowRespondsWhileAJobPaints()
                                                     .arg(ticksWhileRunning).arg(ticks).arg(clock.elapsed())));
     qDebug() << "job of" << job->strokesTotal() << "strokes:" << job->elapsedMs() << "ms; call" << callMs << "ms;"
              << ticks << "timer ticks, longest gap" << longestGap << "ms";
+}
+
+void TestStrokeJobs::testWashStrokesAreRepeatable()
+{
+    // Toska, 2026-11-11: a Wash-mode stroke paints on a temporary layer that several threads fill at once, and the
+    // merge onto the layer is clipped to that layer's extent. KisTiledExtentManager published the extent after reading
+    // it without a lock, so it was now and then too small and a strip of the stroke (whole tile rows, sometimes the
+    // whole stroke) never reached the layer: about 3 jobs in 100, with any blend mode. The same job painted again and
+    // again must give the same pixels. Knobs for hunting: TOSKA_BLEND_ROUNDS, TOSKA_BLEND_MODE, TOSKA_BLEND_FLOW and
+    // TOSKA_BLEND_OPACITY (percent), TOSKA_BLEND_EMPTY, TOSKA_BLEND_BUILDUP, TOSKA_BLEND_SINGLE, TOSKA_BLEND_THREADS,
+    // TOSKA_BLEND_LOD.
+    const QString preset = presetName("b) Basic-4 Flow Opacity");
+    QVERIFY2(!preset.isEmpty(), "Krita's preset b) Basic-4 Flow Opacity is in the resource database");
+    const int rounds = qEnvironmentVariableIsSet("TOSKA_BLEND_ROUNDS") ? qEnvironmentVariableIntValue("TOSKA_BLEND_ROUNDS") : 150;
+    const QString mode = qEnvironmentVariableIsSet("TOSKA_BLEND_MODE") ? qEnvironmentVariable("TOSKA_BLEND_MODE") : QString("normal");
+    // TOSKA_BLEND_THREADS: Krita's worker thread limit for the rounds (for hunting); put back afterwards
+    KisImageConfig config(false);
+    const int threadsBefore = config.maxNumberOfThreads();
+    if (qEnvironmentVariableIsSet("TOSKA_BLEND_THREADS")) {
+        config.setMaxNumberOfThreads(qEnvironmentVariableIntValue("TOSKA_BLEND_THREADS"));
+        KisImageConfigNotifier::instance()->notifyConfigChanged();
+    }
+    auto restoreThreads = qScopeGuard([&] () {
+        if (qEnvironmentVariableIsSet("TOSKA_BLEND_THREADS")) {
+            config.setMaxNumberOfThreads(threadsBefore);
+            KisImageConfigNotifier::instance()->notifyConfigChanged();
+        }
+    });
+    QHash<QByteArray, int> results;
+    QByteArray first;
+    QImage firstImage;
+    for (int round = 0; round < rounds; round++) {
+        JobDocument d(3000, 2000);
+        // TOSKA_BLEND_EMPTY=1: the layer starts empty, so its tiles are made while the strokes paint (for hunting)
+        if (qEnvironmentVariableIntValue("TOSKA_BLEND_EMPTY") <= 0) {
+            d.layer->paintDevice()->fill(QRect(0, 0, 3000, 2000), KoColor(QColor(245, 196, 0), d.image->colorSpace()));
+        }
+        // TOSKA_BLEND_LOD=1: Instant Preview on, as a document with a view has it (it made no difference)
+        if (qEnvironmentVariableIntValue("TOSKA_BLEND_LOD") > 0) {
+            d.image->setLodPreferences(KisLodPreferences(2));
+        }
+        d.image->initialRefreshGraph();
+        d.image->waitForDone();
+        QVariantList strokes;
+        for (int i = 0; i < 10; i++) {
+            QVariantMap stroke = line({{1100, 100 + 65 * i}, {1900, 100 + 65 * i}}, 100, i % 2 ? "#f07a14" : "#10206b");
+            // TOSKA_BLEND_FLOW / TOSKA_BLEND_OPACITY: percent, for hunting (35 each by default)
+            stroke.insert("opacity", (qEnvironmentVariableIsSet("TOSKA_BLEND_OPACITY") ? qEnvironmentVariableIntValue("TOSKA_BLEND_OPACITY") : 35) / 100.0);
+            stroke.insert("flow", (qEnvironmentVariableIsSet("TOSKA_BLEND_FLOW") ? qEnvironmentVariableIntValue("TOSKA_BLEND_FLOW") : 35) / 100.0);
+            strokes << stroke;
+        }
+        // TOSKA_BLEND_SINGLE=1: every stroke as a job of its own, each waited for (for hunting)
+        const bool single = qEnvironmentVariableIntValue("TOSKA_BLEND_SINGLE") > 0;
+        for (int at = 0; at < (single ? strokes.size() : 1); at++) {
+            QVariantMap options {{"preset", preset}, {"compositeOp", mode}};
+            // TOSKA_BLEND_BUILDUP=1: the brush paints straight onto the layer (Build Up), with no temporary layer to merge
+            if (qEnvironmentVariableIntValue("TOSKA_BLEND_BUILDUP") > 0) options.insert("presetProperties", QVariantMap{{"PaintOpAction", 1}});
+            QScopedPointer<StrokeJob> job(d.paint->paintStrokes(single ? QVariantList{strokes[at]} : strokes, options));
+            QVERIFY(job);
+            QVERIFY2(job->state() != "failed", qPrintable(job->errorString()));
+            QVERIFY(settle(job.data(), 60000));
+            d.image->waitForDone();
+        }
+        const QImage image = d.layer->paintDevice()->convertToQImage(nullptr, 1000, 0, 1000, 900);
+        const QByteArray hash = QCryptographicHash::hash(QByteArray::fromRawData(reinterpret_cast<const char *>(image.constBits()), int(image.sizeInBytes())), QCryptographicHash::Md5);
+        if (round == 0) { first = hash; firstImage = image.copy(); }
+        else if (hash != first && results.value(hash) == 0) {
+            int top = image.height(), bottom = -1, left = image.width(), right = -1, worst = 0;
+            for (int y = 0; y < image.height(); y++) for (int x = 0; x < image.width(); x++) {
+                const QRgb a = image.pixel(x, y), b = firstImage.pixel(x, y);
+                const int diff = qMax(qAbs(qRed(a) - qRed(b)), qMax(qAbs(qGreen(a) - qGreen(b)), qAbs(qBlue(a) - qBlue(b))));
+                if (diff) { top = qMin(top, y); bottom = qMax(bottom, y); left = qMin(left, x); right = qMax(right, x); worst = qMax(worst, diff); }
+            }
+            const QColor odd = image.pixelColor((left + right) / 2, (top + bottom) / 2), usual = firstImage.pixelColor((left + right) / 2, (top + bottom) / 2);
+            qInfo() << "round" << round << "differs from round 0: x" << left + 1000 << "-" << right + 1000 << "y" << top << "-" << bottom << "largest difference" << worst
+                    << "middle pixel here" << odd.red() << odd.green() << odd.blue() << odd.alpha() << "round 0" << usual.red() << usual.green() << usual.blue() << usual.alpha();
+        }
+        results[hash]++;
+    }
+    qInfo() << mode << rounds << "rounds," << results.size() << "distinct results";
+    QCOMPARE(results.size(), 1);
 }
 
 void TestStrokeJobs::testWashBrushLandsBeforeTheJobEnds()

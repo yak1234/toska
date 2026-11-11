@@ -224,24 +224,31 @@ mix is baked into the layer's pixels instead, and every layer stays Normal:
   does not re-solve it (as dry paint would not).
 - A continued layer is not solved again: its new strokes mix with its own paint through the blend mode.
 
-### Amendment (4), addendum: strokes never paint with a mixing blend mode
+### Amendment (4), addendum: the lost strips were Krita's tile extent, not blend modes
 
-Measured the same night on test documents in Toska (repeating one deterministic probe 16 to 24 times): a stroke job
-whose brush paints with any blend mode other than Normal sometimes loses a strip of a stroke's paint, tile-aligned and
-as long as the stroke, with differences up to 150/255. It happened in 3 to 7 of every 20 to 24 runs with
-`toska_mix_pigment`, in 4 of 16 with a stock Multiply brush (`l) Adjust Multiply`), and in none of 24 with Normal.
-Ruled out: libpaintmix's thread pool (the same rate with `TOSKA_PAINTMIX_THREADS=1`), the order of the merge's pieces
-(the same rate with the pieces of `KisIndirectPaintingSupport::mergeToLayerImpl` run one after another), and a stale
-projection (the same rate after hiding and showing every layer). The lost paint is in the layer's own pixels. The
-cause is not found; it predates this change (the Dodge and Multiply brushes have it).
+Measured the same night. Repeating one deterministic probe on test documents in Toska gave a different picture in 3
+to 7 of every 20 to 24 runs with `toska_mix_pigment` and in 4 of 16 with a stock Multiply brush: a strip of one
+stroke, tile-aligned and as long as the stroke, was lighter or missing. It first looked like a blend-mode problem.
+It was not: reproduced headless (`TestStrokeJobs::testWashStrokesAreRepeatable`), plain Normal lost strips as often,
+about 3 jobs in 100.
 
-So the pixel brush and the other engines without a mixing setting of their own never get a `toska_mix_*` blend mode
-from a pass:
+Ruled out on the way, each with a measurement: libpaintmix's thread pool, the order of the merge's pieces, a stale
+projection, Instant Preview, the forced update at a stroke's end, interaction between consecutive strokes, flow and
+opacity, tile creation on the layer itself. What decided it: Build Up mode never lost paint and Wash mode did; one or
+two worker threads never did and more did; and the temporary layer's extent was smaller than its tiles when the merge
+was planned (tiles 192 rows high, extent 128).
 
-- On a new layer the strokes paint in Normal and the solve of amendment (4) does the mixing (24 of 24 runs identical;
-  pass time 1.03 to 1.14 times rgb on the seven heavy presets that were 1.6 to 4 times before).
-- On a continued layer the strokes paint as they always have, and the result carries `mixing_skipped`.
-- Color Smudge mixes inside its own engine (16 of 16 blender runs identical) and MyPaint through its paint mode.
+Cause: `KisTiledExtentManager::updateExtent()` read the column and row ranges and only then locked to store the
+extent. Two threads adding tiles at once could store in the wrong order, and the extent stayed too small. A Wash-mode
+stroke fills a new temporary layer from several threads, and `KisPainter::bitBlt` clips the merge to the source
+extent, so the tiles outside it never reached the layer. Fixed by taking the lock before reading (1,000 rounds each
+in three configurations: one result). It is an upstream Krita bug and affected every agent stroke with a Wash-mode
+brush, reference transfers included.
 
-The `toska_mix_*` blend modes stay in the fork for Color Smudge's final copy and for the artist's own use as a
-layer or brush blend mode.
+What a pass does now:
+
+- A new layer with a model: Normal strokes, then the solve of amendment (4) (faster than a mixing blend mode).
+- A continued layer with a model, pixel brush: the stroke's blend mode `toska_mix_<model>`, so the strokes mix with
+  the layer's own paint.
+- A pass whose brush reads the paint below (`sample_below`, a blender's overlay mode) is never solved again.
+- Color Smudge mixes inside its own engine and MyPaint through its paint mode, as before.
