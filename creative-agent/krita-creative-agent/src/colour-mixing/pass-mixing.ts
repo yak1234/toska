@@ -103,6 +103,17 @@ export function decideSampleBelow(asked: unknown, kind?: string): { sample_below
   return { sample_below: false, reason: 'not asked: only a blend pass or sample_below reads the paint below' };
 }
 
+/** From this opacity times flow down a stroke is thin: it lets the paint beneath show through. */
+export const THIN_STROKE = 0.6;
+
+/** Whether a pass's strokes are thin: the median of opacity times flow (each 1 when absent) is at most THIN_STROKE. */
+export function thinStrokes(strokes: unknown): boolean {
+  if (!Array.isArray(strokes) || !strokes.length) return false;
+  const number = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+  const strengths = strokes.map(stroke => stroke && typeof stroke === 'object' ? number((stroke as Record<string, unknown>).opacity) * number((stroke as Record<string, unknown>).flow) : 1).sort((a, b) => a - b);
+  return strengths[Math.floor((strengths.length - 1) / 2)]! <= THIN_STROKE;
+}
+
 type Executable = { parameters?: unknown; execute: (id: string, args: any, signal?: AbortSignal, ...rest: any[]) => Promise<any> };
 
 /** Where withMixing finds the policy and the pass kind: the policy, the kind of the plan step painting now (FolderStepKind,
@@ -127,8 +138,12 @@ export function withMixing<T extends Executable>(tool: T, catalog: () => MixingC
   tool.execute = async (id, args, ...rest) => {
     const { mixing, pass_kind, sample_below, ...others } = args ?? {};
     const current = catalog();
-    const resolved = context ? context.resolve({ tool: 'paint_pass', stated: typeof pass_kind === 'string' && pass_kind ? pass_kind : null,
+    const found = context ? context.resolve({ tool: 'paint_pass', stated: typeof pass_kind === 'string' && pass_kind ? pass_kind : null,
       step: context.stepKind?.() ?? null, preset: others.preset }, current) : undefined;
+    // A kind only guessed from the preset's catalog job says block-in for any ordinary brush, yet thin strokes with one
+    // are a glaze: paint laid thinly over what is there, which is where mixing shows (thinStrokes).
+    const resolved = found && found.source === 'derived' && found.kind === 'block_in' && thinStrokes(others.strokes)
+      ? { kind: 'glaze' as PassKind, source: found.source } : found;
     const decided = decidePassMixing({ preset: others.preset, ...(mixing === undefined ? {} : { mixing }),
       ...(resolved ? { kind: resolved.kind, kind_source: resolved.source } : {}) }, current, context?.policy());
     if ('error' in decided) throw new Error(decided.error);

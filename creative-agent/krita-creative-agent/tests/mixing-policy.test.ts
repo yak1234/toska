@@ -291,3 +291,20 @@ test('the pass_mixing record carries the plugin\'s mixed_with_below when a new l
   assert.deepEqual((mixed as any).details.pass_mixing.mixed_with_below, solved);
   assert.ok(!('mixed_with_below' in (plain as any).details.pass_mixing));
 });
+
+test('thin strokes with a block-in brush are a glaze: they mix where the brush has a card; full-strength strokes stay block-in', async () => {
+  const { thinStrokes } = await import('../src/colour-mixing/pass-mixing.ts');
+  const stroke = (opacity?: number, flow?: number) => ({ start: [1, 1], segments: [], color: '#123456', size: 8, ...(opacity === undefined ? {} : { opacity }), ...(flow === undefined ? {} : { flow }) });
+  assert.equal(thinStrokes([stroke(0.35)]), true);
+  assert.equal(thinStrokes([stroke(0.9, 0.6)]), true, 'opacity times flow');
+  assert.equal(thinStrokes([stroke(), stroke(1, 1), stroke(0.3)]), false, 'the median decides');
+  assert.equal(thinStrokes([]), false);
+  assert.equal(thinStrokes(undefined), false);
+  const events: any[] = [];
+  const tool = withMixing({ async execute(_id: string, args: any) { return { content: [], details: { sent: args.mixing_model ?? null } }; } },
+    () => RAW, { policy: () => policy, resolve: resolvePassKind, record: event => events.push(event) });
+  await tool.execute('thin', { preset: BASIC, strokes: [stroke(0.35), stroke(0.4)] });
+  await tool.execute('full', { preset: BASIC, strokes: [stroke(), stroke(1)] });
+  await tool.execute('stated', { preset: BASIC, pass_kind: 'accents', strokes: [stroke(0.3)] });
+  assert.deepEqual(events.map(e => [e.kind, e.kind_source, e.model]), [['glaze', 'derived', 'pigment'], ['block_in', 'derived', 'rgb'], ['accents', 'stated', 'rgb']]);
+});
