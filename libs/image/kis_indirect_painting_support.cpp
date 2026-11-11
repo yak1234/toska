@@ -193,21 +193,28 @@ void KisIndirectPaintingSupport::mergeToLayerImpl(KisPaintDeviceSP dst, KUndo2Co
     );
 
     KisPaintDeviceSP src = d->temporaryTarget;
+    // Toska: with a blend mode other than Normal, parts of a stroke were lost in this merge now and then (strips of
+    // the stroke's region left without its paint; measured 2026-11-11 with a stock Multiply brush and the toska_mix_*
+    // modes, about one stroke job in five, never with Normal). The pieces are merged one after another for those modes.
+    const bool oneAtATime = d->compositeOp != COMPOSITE_OVER;
     Q_FOREACH (const QRect &rc, src->region().rects()) {
-        KritaUtils::addJobConcurrent(*jobs,
-            [this, rc, src, dst, sharedState, sharedWriteLock] () {
-                Q_UNUSED(sharedWriteLock); // just a RAII holder object for the lock
+        auto mergePiece = [this, rc, src, dst, sharedState, sharedWriteLock] () {
+            Q_UNUSED(sharedWriteLock); // just a RAII holder object for the lock
 
-                /**
-                 * Brushes don't apply the selection, we apply that during the indirect
-                 * painting merge operation. It is cheaper calculation-wise.
-                 */
+            /**
+             * Brushes don't apply the selection, we apply that during the indirect
+             * painting merge operation. It is cheaper calculation-wise.
+             */
 
-                KisPainter gc(dst);
-                setupTemporaryPainter(&gc);
-                this->writeMergeData(&gc, src, rc);
-            }
-        );
+            KisPainter gc(dst);
+            setupTemporaryPainter(&gc);
+            this->writeMergeData(&gc, src, rc);
+        };
+        if (oneAtATime) {
+            KritaUtils::addJobSequential(*jobs, mergePiece);
+        } else {
+            KritaUtils::addJobConcurrent(*jobs, mergePiece);
+        }
     }
 
     KritaUtils::addJobSequential(*jobs,
