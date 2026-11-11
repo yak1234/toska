@@ -2206,7 +2206,10 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         # A new layer with a model is solved against the paint below once its strokes are down (see below), so its
         # strokes paint in Normal: a stroke with any other blend mode now and then loses a strip of its paint when Krita
         # merges it onto the layer (measured 2026-11-11, stock Multiply included; never with Normal).
-        solve_below = bool(new_layer and model not in (None, 'rgb') and hasattr(node, 'rememberPaintBelow'))
+        # Not when the brush itself reads the paint below (sample_below, or a blender's overlay mode): its dabs already
+        # hold the mix, and solving them again would mix twice.
+        reads_below = bool(params.get('sample_below') or params.get('smudge_overlay'))
+        solve_below = bool(new_layer and model not in (None, 'rgb') and not reads_below and hasattr(node, 'rememberPaintBelow'))
         if 'CompositeOp' in properties:
             # The pixel brush and the other engines without a mixing setting of their own would mix through the stroke's
             # blend mode (toska_mix_<model>), the unreliable path: on a new layer the solve does the mixing instead, and on
