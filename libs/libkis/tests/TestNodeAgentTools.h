@@ -16,6 +16,7 @@ class TestNodeAgentTools : public QObject
 {
     Q_OBJECT
 private Q_SLOTS:
+    void testMixWithPaintBelow();
     void testFillStopsAtContour();
     void testFillThresholdChangesTheArea();
     void testFillSamplesAllLayers();

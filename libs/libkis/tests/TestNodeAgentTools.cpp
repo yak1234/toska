@@ -22,6 +22,8 @@
 #include <KisResourceModel.h>
 #include <KisResourceTypes.h>
 #include <KoColor.h>
+#include <KoCompositeOpRegistry.h>
+#include <kundo2stack.h>
 #include <KoAbstractGradient.h>
 #include <KoCanvasResourcesIds.h>
 #include <KoLocalStrokeCanvasResources.h>
@@ -124,6 +126,52 @@ QString describe(const QColor &c)
              qPrintable(QString("%1 is %2, expected %3").arg(#actual, describe(actual), describe(expected))))
 
 } // namespace
+
+void TestNodeAgentTools::testMixWithPaintBelow()
+{
+    // Toska colour mixing: thin blue on its own layer over yellow. Krita's layer blending shows an olive grey; after
+    // mixWithPaintBelow("pigment") the same Normal layer shows green, and one undo brings the layer back.
+    ToolDocument t;
+    const KoColorSpace *cs = t.image->colorSpace();
+    t.background->paintDevice()->fill(t.image->bounds(), KoColor(QColor(252, 211, 0), cs));
+    t.render();
+
+    QVERIFY(t.paintNode->rememberPaintBelow());
+    KoColor thin(QColor(0, 33, 133), cs);
+    thin.setOpacity(quint8(100));
+    t.paint->paintDevice()->fill(QRect(20, 20, 60, 40), thin);
+    t.paint->paintDevice()->fill(QRect(90, 20, 10, 10), KoColor(QColor(0, 33, 133), cs));      // opaque paint: untouched
+    t.render();
+
+    QColor shown;
+    t.image->projection()->pixel(40, 40, &shown);
+    QVERIFY2(!(shown.green() > shown.red()), qPrintable(describe(shown)));                      // the plain blend is not green
+    const QByteArray painted = t.bytes(t.paint);
+
+    const QVariantMap result = t.paintNode->mixWithPaintBelow("pigment");
+    QCOMPARE(result.value("status").toString(), QString("ok"));
+    QCOMPARE(result.value("pixels").toInt(), 60 * 40);
+    t.render();
+    QCOMPARE(t.paint->compositeOpId(), COMPOSITE_OVER);
+    t.image->projection()->pixel(40, 40, &shown);
+    QVERIFY2(shown.green() > shown.red() && shown.green() > shown.blue(), qPrintable(describe(shown)));
+    QVERIFY_NEAR(t.at(95, 25), QColor(0, 33, 133), 0);
+    QVERIFY(t.at(40, 40).alpha() >= 100);
+    QCOMPARE(t.at(5, 5).alpha(), 0);
+
+    // one undo step
+    t.kisdoc->undoStack()->undo();
+    t.settle();
+    QVERIFY(t.bytes(t.paint) == painted);
+
+    // the kept picture is used once; without it, with rgb or with an unknown model nothing is touched
+    QCOMPARE(t.paintNode->mixWithPaintBelow("pigment").value("status").toString(), QString("refused"));
+    QVERIFY(t.paintNode->rememberPaintBelow());
+    QCOMPARE(t.paintNode->mixWithPaintBelow("rgb").value("status").toString(), QString("refused"));
+    QVERIFY(t.paintNode->rememberPaintBelow());
+    QCOMPARE(t.paintNode->mixWithPaintBelow("oil").value("status").toString(), QString("refused"));
+    QVERIFY(t.bytes(t.paint) == painted);
+}
 
 void TestNodeAgentTools::testFillStopsAtContour()
 {

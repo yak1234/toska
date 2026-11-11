@@ -49,6 +49,8 @@ private Q_SLOTS:
     void testMixBlendModeMaskAndChannelFlags();
     void testMixBlendModeCopyForm();
     void testMixBlendModeOnALinearProfile();
+    void testSolveOverBelowShowsTheModelsMixThroughNormal();
+    void testSolveOverBelowLeavesWhatItShould();
 };
 
 #endif // KISPAINTMIXTEST_H

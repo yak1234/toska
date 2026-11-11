@@ -93,6 +93,8 @@ public Q_SLOTS:
     void paintEllipse(const QRectF &rect, const QString strokeStyle = "ForegroundColor", const QString fillStyle = "None", const QString &name = QString());
     void paintPath(const QPainterPath &path, const QString strokeStyle = "ForegroundColor", const QString fillStyle = "None", const QString &name = QString());
     StrokeJob *paintStrokes(const QList<QVariant> &strokes, const QMap<QString, QVariant> &options = QMap<QString, QVariant>(), Selection *selection = 0) /Factory/;
+    bool rememberPaintBelow();
+    QMap<QString, QVariant> mixWithPaintBelow(const QString &model);
     QString paintAbility();
 Q_SIGNALS:
 private:

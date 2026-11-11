@@ -250,6 +250,17 @@ void parallelFor(int count, int grain, const std::function<void(int begin, int e
 void blendPixelsMasked(Model m, Blend blend, PixelFormat f, uint8_t *dst, const uint8_t *src, bool srcIsOneColour,
                        const uint8_t *mask, int count, float opacity);
 
+/**
+ * Re-solves thin paint on a layer so that a plain Normal blend of the layer over the paint below shows what the model
+ * would mix: for each layer pixel of colour C and alpha a (0 < a < 1) over an opaque below pixel B, the wanted colour
+ * is R = mix2(m, B, C, a); the pixel becomes colour X and alpha a' with B + (X - B) * a' = R, a' the smallest alpha
+ * from a up that keeps X in 0..1. Fully opaque or transparent layer pixels, pixels over a below that is not opaque, and
+ * pixels where the model agrees with the plain blend (within half an 8-bit level) are left as they are. The layer stays
+ * an ordinary Normal layer: merging or flattening keeps the look. layer and below hold count pixels of format f.
+ * Returns how many pixels were changed.
+ */
+int solveOverBelow(Model m, PixelFormat f, uint8_t *layer, const uint8_t *below, int count);
+
 }
 
 #endif // KISPAINTMIX_H

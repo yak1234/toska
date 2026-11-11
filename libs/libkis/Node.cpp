@@ -1110,3 +1110,84 @@ void Node::paintPath(const QPainterPath &path, const QString strokeStyle, const 
     KisFigurePaintingToolHelper helper = PaintingResources::createHelper(d->image, node(), strokeStyle, fillStyle, name);
     helper.paintPainterPath(path);
 }
+
+/*
+ * Toska colour mixing: a pass painted on its own new layer meets the paint below through Krita's layer blending, a
+ * plain RGB average. rememberPaintBelow() and mixWithPaintBelow() re-solve the layer's thin paint so a Normal layer
+ * shows the model's mix (libpaintmix's solveOverBelow).
+ */
+#include <KisPaintMix.h>
+#include <KoColorModelStandardIds.h>
+#include <KoColorProfile.h>
+#include <QHash>
+#include <QMutex>
+#include <optional>
+
+namespace {
+struct KeptBelow {
+    QMutex mutex;
+    QHash<QUuid, KisPaintDeviceSP> pictures;
+};
+Q_GLOBAL_STATIC(KeptBelow, keptBelow)
+
+std::optional<KisPaintMix::PixelFormat> mixFormatOf(const KoColorSpace *cs)
+{
+    if (!cs || cs->colorModelId() != RGBAColorModelID) return std::nullopt;
+    if (!cs->profile() || cs->profile()->isLinear()) return std::nullopt;
+    const KoID depth = cs->colorDepthId();
+    if (depth == Integer8BitsColorDepthID) return KisPaintMix::PixelFormat::Bgra8;
+    if (depth == Integer16BitsColorDepthID) return KisPaintMix::PixelFormat::Bgra16;
+    if (depth == Float32BitsColorDepthID) return KisPaintMix::PixelFormat::RgbaF32;
+    return std::nullopt;
+}
+}
+
+bool Node::rememberPaintBelow()
+{
+    KisImageSP image = d->image;
+    if (!image || !d->node || !d->node->paintDevice() || !d->node->inherits("KisPaintLayer")) return false;
+    image->waitForDone();
+    KisPaintDeviceSP picture = new KisPaintDevice(*image->projection());
+    QMutexLocker lock(&keptBelow->mutex);
+    if (keptBelow->pictures.size() > 16) keptBelow->pictures.clear();   // never grows: a pass that died left its copy
+    keptBelow->pictures.insert(d->node->uuid(), picture);
+    return true;
+}
+
+QVariantMap Node::mixWithPaintBelow(const QString &model)
+{
+    auto refused = [](const QString &why) {
+        return QVariantMap{{QStringLiteral("status"), QStringLiteral("refused")}, {QStringLiteral("reason"), why}, {QStringLiteral("pixels"), 0}};
+    };
+    KisImageSP image = d->image;
+    if (!image || !d->node || !d->node->paintDevice()) return refused(QStringLiteral("not a paint layer in an image"));
+    KisPaintDeviceSP below;
+    {
+        QMutexLocker lock(&keptBelow->mutex);
+        below = keptBelow->pictures.take(d->node->uuid());
+    }
+    if (!below) return refused(QStringLiteral("rememberPaintBelow() was not called for this layer"));
+    const QByteArray id = model.toLatin1();
+    const std::optional<KisPaintMix::Model> mix = KisPaintMix::modelFromId(std::string_view(id.constData(), size_t(id.size())));
+    if (!mix || *mix == KisPaintMix::Model::Rgb) return refused(QStringLiteral("\"%1\" is not a mixing model").arg(model));
+
+    image->waitForDone();
+    KisPaintDeviceSP device = d->node->paintDevice();
+    const std::optional<KisPaintMix::PixelFormat> format = mixFormatOf(device->colorSpace());
+    if (!format || !(*device->colorSpace() == *below->colorSpace())) {
+        return refused(QStringLiteral("the layer is not RGBA 8-bit, 16-bit or float with an sRGB-encoded profile in the image's colour space"));
+    }
+    const QRect rect = device->exactBounds() & image->bounds();
+    if (rect.isEmpty()) return QVariantMap{{QStringLiteral("status"), QStringLiteral("nothing")}, {QStringLiteral("pixels"), 0}};
+
+    const int size = int(device->pixelSize());
+    QByteArray layer(rect.width() * rect.height() * size, 0), under(rect.width() * rect.height() * size, 0);
+    device->readBytes(reinterpret_cast<quint8 *>(layer.data()), rect);
+    below->readBytes(reinterpret_cast<quint8 *>(under.data()), rect);
+    const int changed = KisPaintMix::solveOverBelow(*mix, *format, reinterpret_cast<uint8_t *>(layer.data()),
+                                                    reinterpret_cast<const uint8_t *>(under.constData()), rect.width() * rect.height());
+    const QVariantList box = {rect.x(), rect.y(), rect.width(), rect.height()};
+    if (changed == 0) return QVariantMap{{QStringLiteral("status"), QStringLiteral("nothing")}, {QStringLiteral("pixels"), 0}, {QStringLiteral("rect"), box}};
+    if (!setPixelData(layer, rect.x(), rect.y(), rect.width(), rect.height())) return refused(QStringLiteral("the layer could not be written"));
+    return QVariantMap{{QStringLiteral("status"), QStringLiteral("ok")}, {QStringLiteral("pixels"), changed}, {QStringLiteral("rect"), box}};
+}

@@ -289,3 +289,9 @@ Build order follows the proposal (MyPaint spectral → module → Mixbox → Col
 - [x] Cards for 20 presets (19 with both models where each passed, Blender Basic among them). Not carded: 10 presets above 1.5x the rgb pass time (Dry Bristles, Chalk Details, Charcoal Pencil Medium, Wet Textured Soft, Texture Hair, Texture Wood Fiber, Stamp Vegetal, Blender Smear at 1.60/1.65, Blender Blur, and pigment on RGBA 02 Thickpaint), 7 with no visible change, Texture Starfield (its own blend mode).
 - [x] Policy: a rule may list models in order of preference; finish, refine, blend, glaze and element are `[pigment, spectral]`; atmosphere is rgb (blue into orange turns grey-green with both models); a reference transfer keeps rgb for a preset without a measured coverage unless the pass names a model. `npm run test:unit` 1,415 passed, 1 skipped; typecheck clean.
 - [ ] Not done: the blind A/B gates (Tasks 8 and 11) on the benchmark scenes; a painting made end to end by the agent with the new policy in live Toska; the dulling colour average by the model; the heavy textured presets' speed.
+
+
+### Task 13: A new layer mixes with the paint below (proposal amendment 4)
+
+- [x] `solveOverBelow` (libpaintmix), `Node::rememberPaintBelow` / `mixWithPaintBelow` (libkis, sip), the plugin's stroke job calls them for a new-layer pass with a model.
+- [x] Tests: `KisPaintMixTest` 35 passed (a solved layer through Krita's Normal blend is within 1/255 of the model's mix over 6 colour pairs and 6 alphas, both models); `TestNodeAgentTools::testMixWithPaintBelow` (olive before, green after, one undo, refusals); plugin `test_native` 98 passed (the hook keeps before the job, solves after, skips continued layers and rgb).

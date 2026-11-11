@@ -203,3 +203,23 @@ So the models become blend modes, the one mechanism every engine, layer and fill
   A preset that paints with its own blend mode (Dodge, Multiply) refuses a model.
 
 The catalog gate is unchanged: a (preset, model) pair still needs a measured card before the painter may use it.
+
+
+## Amendment (4), 2026-11-11: a new layer mixes with the paint below
+
+Found right after amendment (3): the painter lays most passes on their own new layer, and a layer meets the paint
+below through Krita's layer blending, a plain RGB average. A glaze pass with `pigment` on a new layer therefore looked
+the same as with `rgb` (the blend mode only acts where a dab lands on paint of its own layer).
+
+Making the layer's blend mode `toska_mix_<model>` would work only while the layer sits directly on the paint: the
+painter's layers live in stage groups (Normal), and tidy and merge flatten them, which would change the look. So the
+mix is baked into the layer's pixels instead, and every layer stays Normal:
+
+- Before a pass paints on a new layer with a model, the fork keeps the picture as it is (`Node.rememberPaintBelow`).
+- When the strokes are down, each thin layer pixel (alpha between 0 and 1, over opaque paint) is re-solved: the model's
+  mix of the below colour and the paint at that alpha is the wanted colour, and the pixel gets the colour and the
+  smallest alpha (never less than painted) that show it through a Normal blend (`Node.mixWithPaintBelow`, libpaintmix
+  `solveOverBelow`). Opaque paint, empty pixels and paint over transparent canvas are untouched.
+- Merging, flattening and saving keep the look, since nothing depends on a blend mode. Painting under the layer later
+  does not re-solve it (as dry paint would not).
+- A continued layer is not solved again: its new strokes mix with its own paint through the blend mode.

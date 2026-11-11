@@ -793,6 +793,26 @@ public Q_SLOTS:
                             Selection *selection = nullptr);
 
     /**
+     * @brief rememberPaintBelow keep the picture as it is now (the image's projection), for mixWithPaintBelow()
+     * (Toska colour mixing). Call it on a new, empty paint layer before painting on it. Waits for the image to be
+     * idle. The copy shares its pixels with the image until they change, and is dropped by mixWithPaintBelow().
+     * @return false when the node has no image or is not a paint layer.
+     */
+    bool rememberPaintBelow();
+
+    /**
+     * @brief mixWithPaintBelow re-solve this layer's thin paint against the picture kept by rememberPaintBelow(), so
+     * that the layer, still in Normal mode, shows what the mixing model gives where its paint lies thinly over the
+     * paint below: blue glazed over yellow reads green, not grey. Opaque and empty pixels are untouched. One undo
+     * step, or part of the open macro or agent move.
+     * @param model "spectral", "pigment", "linear" or "perceptual" (libpaintmix's ids).
+     * @return a map: "status" ("ok", "nothing": no thin paint to solve, or "refused"), "pixels" (how many changed),
+     * "rect" ([x, y, w, h] solved), "reason" when refused (no kept picture, an unknown model, a colour space the
+     * models do not read: not RGBA 8/16-bit/float with an sRGB-encoded profile).
+     */
+    QVariantMap mixWithPaintBelow(const QString &model);
+
+    /**
      * @brief paint a rectangle on the canvas. Uses current brush preset
      * @param rect QRect with x, y, width, and height
      * @param strokeStyle appearance of the outline, one of:

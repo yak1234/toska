@@ -2221,6 +2221,12 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         peak = start[0]
         # Pen input goes as the pass gives it: paintStrokes reads per-point pressure, tilt, rotation, speed and time_ms
         # lists in validate_pass's units and ranges, with validate_pass's margin (one brush size), well inside its caps.
+        # A pass on its own new layer meets the paint below through Krita's layer blending (plain RGB): with a mixing
+        # model the picture is kept now and the layer's thin paint is re-solved against it when the strokes are down
+        # (the fork's Node.mixWithPaintBelow), so the Normal layer shows the model's mix. A continued layer already
+        # holds paint: its strokes mix with that through the blend mode, and it is never solved twice.
+        mix_below = (model if new_layer and model not in (None, 'rgb') and hasattr(node, 'rememberPaintBelow')
+                     and node.rememberPaintBelow() else None)
         job = node.paintStrokes(strokes, options, selection)
         if started:
             started()
@@ -2267,6 +2273,10 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         if state == 'cancelled':
             out.update(stopped=('The pass took too long and was stopped.' if cancelled and timed_out else 'Stopped by the artist.'),
                        stopped_after_strokes=done, strokes_total=len(strokes))
+        if mix_below and done:
+            solved = node.mixWithPaintBelow(mix_below)
+            out['mixed_with_below'] = {'model': mix_below, 'status': str(solved.get('status')), 'pixels': int(solved.get('pixels') or 0),
+                                       **({'reason': str(solved['reason'])} if solved.get('reason') else {})}
         # The job records what its strokes redrew on the layer: recomposite that, nothing more (empty: nothing).
         rect = job.changedRect()
         if rect.width() > 0 and rect.height() > 0:

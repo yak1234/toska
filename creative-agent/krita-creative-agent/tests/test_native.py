@@ -1179,6 +1179,27 @@ class ForkStrokeJobTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r'paints with its own blend mode \(multiply\)'):
             self._pass(h, 2, operation_id='op-3', mixing_model='pigment')
 
+    def test_a_new_layer_pass_with_a_model_is_solved_against_the_paint_below(self):
+        # A new layer meets the paint below through Krita's plain layer blending: the fork keeps the picture before the
+        # strokes and re-solves the layer's thin paint after them. A continued layer is never solved; rgb never asks.
+        h = self.harness(); h._creative_preset_engine = lambda name: ('paintbrush', 'normal')
+        calls = []
+        def remember(node): calls.append(('remember', node.identity, len(h.job_calls))); return True
+        def solve(node, model): calls.append(('solve', node.identity, model, len(h.job_calls))); return {'status': 'ok', 'pixels': 12}
+        JobLayer.rememberPaintBelow, JobLayer.mixWithPaintBelow = remember, solve
+        self.addCleanup(lambda: (delattr(JobLayer, 'rememberPaintBelow'), delattr(JobLayer, 'mixWithPaintBelow')))
+        first = self._pass(h, 2, mixing_model='pigment')
+        self.assertEqual(first['status'], 'ok', first.get('error'))
+        layer = first['layer_id']
+        self.assertEqual(calls, [('remember', layer, 0), ('solve', layer, 'pigment', 1)], 'kept before the job, solved after it')
+        self.assertEqual(first['mixed_with_below'], {'model': 'pigment', 'status': 'ok', 'pixels': 12})
+        del calls[:]
+        self.assertEqual(self._pass(h, 2, operation_id='op-2', mixing_model='pigment', continue_layer_id=layer)['status'], 'ok')
+        plain = self._pass(h, 2, operation_id='op-3', mixing_model='rgb')
+        self.assertEqual(plain['status'], 'ok')
+        self.assertEqual(calls, [])
+        self.assertNotIn('mixed_with_below', plain)
+
     def test_a_mypaint_spectral_transfer_that_asks_samples_merged_on_every_chunk(self):
         # paint_from_reference with mixing (task 7b): the first chunk makes the pass layer, the rest continue it; every
         # chunk's job gets the MyPaint properties, sample-merged included, because the transfer asks (sample_below).

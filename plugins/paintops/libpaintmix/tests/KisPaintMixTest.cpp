@@ -810,4 +810,60 @@ void KisPaintMixTest::testMixBlendModeOnALinearProfile()
     QVERIFY2(std::abs(enc(dst[2]) * 255.0f - expected[0]) <= 1.5f, qPrintable(QString::number(enc(dst[2]) * 255.0f)));
 }
 
+void KisPaintMixTest::testSolveOverBelowShowsTheModelsMixThroughNormal()
+{
+    // Thin paint on a layer, re-solved against the paint below: Krita's own Normal blend of the layer over the below
+    // must then show what the model mixes, for every alpha and for colours whose mix lies outside the plain blend's reach.
+    const KoColorSpace *cs = KoColorSpaceRegistry::instance()->rgb8();
+    const KoCompositeOp *normal = cs->compositeOp(COMPOSITE_OVER);
+    const uint8_t pairs[][2][3] = {{{0, 211, 252}, {133, 33, 0}}, {{133, 33, 0}, {0, 211, 252}}, {{20, 122, 240}, {107, 32, 16}},
+                                   {{58, 154, 31}, {28, 28, 212}}, {{255, 255, 255}, {0, 0, 0}}, {{10, 10, 10}, {250, 250, 250}}};
+    for (Model m : {Model::Spectral, Model::Pigment}) {
+        int worst = 0;
+        for (const auto &pair : pairs) {
+            for (int alpha : {8, 40, 89, 128, 200, 250}) {
+                const uint8_t below[4] = {pair[0][0], pair[0][1], pair[0][2], 255};
+                uint8_t layer[4] = {pair[1][0], pair[1][1], pair[1][2], uint8_t(alpha)};
+
+                uint8_t wanted[4];
+                std::memcpy(wanted, below, 4);
+                blendPixels(m, Blend::Over, PixelFormat::Bgra8, wanted, layer, true, 1, 1.0f);
+
+                solveOverBelow(m, PixelFormat::Bgra8, layer, below, 1);
+                QVERIFY(layer[3] >= alpha);                       // never thinner than it was painted
+
+                uint8_t shown[4];
+                std::memcpy(shown, below, 4);
+                compositeOne(normal, shown, 4, layer, nullptr, 1, 1.0f);
+                for (int c = 0; c < 3; c++) worst = std::max(worst, std::abs(int(shown[c]) - int(wanted[c])));
+                QCOMPARE(int(shown[3]), 255);
+            }
+        }
+        qInfo() << modelId(m) << "solved layer through Normal: largest difference from the model's mix" << worst << "/255";
+        QVERIFY2(worst <= 2, qPrintable(QString("%1: %2").arg(modelId(m)).arg(worst)));
+    }
+}
+
+void KisPaintMixTest::testSolveOverBelowLeavesWhatItShould()
+{
+    const uint8_t yellow[4] = {0, 211, 252, 255};
+    // opaque paint, an empty pixel, the same colour as below, paint over a transparent below: all untouched
+    uint8_t layer[4 * 4] = {133, 33, 0, 255,   133, 33, 0, 0,   0, 211, 252, 100,   133, 33, 0, 100};
+    const uint8_t below[4 * 4] = {0, 211, 252, 255,   0, 211, 252, 255,   0, 211, 252, 255,   0, 211, 252, 0};
+    uint8_t before[16];
+    std::memcpy(before, layer, 16);
+    QCOMPARE(solveOverBelow(Model::Pigment, PixelFormat::Bgra8, layer, below, 4), 0);
+    QVERIFY(std::memcmp(layer, before, 16) == 0);
+    // rgb is the plain blend already
+    uint8_t thin[4] = {133, 33, 0, 100};
+    QCOMPARE(solveOverBelow(Model::Rgb, PixelFormat::Bgra8, thin, yellow, 1), 0);
+    QCOMPARE(solveOverBelow(Model::Pigment, PixelFormat::Bgra8, thin, yellow, 1), 1);
+    // a large buffer goes through the threads and gives the same pixels
+    const int n = 20000;
+    std::vector<uint8_t> many(size_t(n) * 4), under(size_t(n) * 4);
+    for (int i = 0; i < n; i++) { const uint8_t t[4] = {133, 33, 0, 100}; std::memcpy(&many[i * 4], t, 4); std::memcpy(&under[i * 4], yellow, 4); }
+    QCOMPARE(solveOverBelow(Model::Pigment, PixelFormat::Bgra8, many.data(), under.data(), n), n);
+    for (int i = 0; i < n; i += 997) QVERIFY(std::memcmp(&many[i * 4], thin, 4) == 0);
+}
+
 SIMPLE_TEST_MAIN(KisPaintMixTest)

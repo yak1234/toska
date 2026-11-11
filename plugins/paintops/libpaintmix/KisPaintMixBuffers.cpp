@@ -248,6 +248,69 @@ void blendPixelsMasked(Model m, Blend blend, PixelFormat f, uint8_t *dst, const 
     }
 }
 
+namespace {
+
+template<PixelFormat F>
+int solveRange(Model m, uint8_t *layer, const uint8_t *below, int begin, int end)
+{
+    using C = Codec<F>;
+    const float agree = 0.5f / 255.0f;
+    int changed = 0;
+    for (int i = begin; i < end; ++i) {
+        uint8_t *l = layer + size_t(i) * C::stride;
+        const Px top = C::load(l);
+        if (!(top.a > 0.0f) || top.a >= 1.0f) continue;
+        const Px under = C::load(below + size_t(i) * C::stride);
+        if (under.a < 0.999f) continue;
+        if (nearlyEqual(top.c, under.c)) continue;
+        const Rgb b = under.c;
+        const Rgb want = mix2(m, b, top.c, top.a);
+        const Rgb plain = mix2(Model::Rgb, b, top.c, top.a);
+        if (std::fabs(want.r - plain.r) <= agree && std::fabs(want.g - plain.g) <= agree && std::fabs(want.b - plain.b) <= agree) continue;
+        // the smallest alpha that reaches the wanted colour with a layer colour inside 0..1
+        float a = top.a;
+        const float wantC[3] = {want.r, want.g, want.b}, bC[3] = {b.r, b.g, b.b};
+        for (int c = 0; c < 3; ++c) {
+            const float d = std::min(1.0f, std::max(0.0f, wantC[c])) - bC[c];
+            if (d > 0.0f && bC[c] < 1.0f) a = std::max(a, d / (1.0f - bC[c]));
+            else if (d < 0.0f && bC[c] > 0.0f) a = std::max(a, -d / bC[c]);
+        }
+        a = std::min(1.0f, a);
+        float x[3];
+        for (int c = 0; c < 3; ++c) {
+            const float w = std::min(1.0f, std::max(0.0f, wantC[c]));
+            x[c] = std::min(1.0f, std::max(0.0f, bC[c] + (w - bC[c]) / a));
+        }
+        C::store(l, Rgb{x[0], x[1], x[2]}, a);
+        ++changed;
+    }
+    return changed;
+}
+
+template<PixelFormat F>
+int solve(Model m, uint8_t *layer, const uint8_t *below, int count)
+{
+    if (count < ParallelFrom) return solveRange<F>(m, layer, below, 0, count);
+    std::atomic<int> changed {0};
+    parallelFor(count, ParallelGrain, [&](int begin, int end) {
+        changed.fetch_add(solveRange<F>(m, layer, below, begin, end));
+    });
+    return changed.load();
+}
+
+}
+
+int solveOverBelow(Model m, PixelFormat f, uint8_t *layer, const uint8_t *below, int count)
+{
+    if (!layer || !below || count <= 0 || m == Model::Rgb) return 0;
+    switch (f) {
+    case PixelFormat::Bgra8: return solve<PixelFormat::Bgra8>(m, layer, below, count);
+    case PixelFormat::Bgra16: return solve<PixelFormat::Bgra16>(m, layer, below, count);
+    case PixelFormat::RgbaF32: return solve<PixelFormat::RgbaF32>(m, layer, below, count);
+    }
+    return 0;
+}
+
 void blendPixels(Model m, Blend blend, PixelFormat f, uint8_t *dst, const uint8_t *src, bool srcIsOneColour, int count, float opacity)
 {
     if (!dst || !src || count <= 0) return;
