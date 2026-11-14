@@ -109,6 +109,9 @@
 #include <KisUsageLogger.h>
 #include <brushengine/kis_paintop_settings.h>
 #include "dialogs/KisAboutAgent.h"
+#ifdef Q_OS_MACOS
+#include "osx.h"
+#endif
 #include "dialogs/kis_about_application.h"
 #include "dialogs/kis_delayed_save_dialog.h"
 #include "dialogs/kis_dlg_preferences.h"
@@ -566,6 +569,19 @@ KisMainWindow::KisMainWindow(QUuid uuid)
         if (aboutKdeAction) {
             actions->addAction(aboutKdeAction->objectName(), aboutKdeAction);
         }
+
+#ifdef Q_OS_MACOS
+        // Toska: "Check for Updates…" in the application menu (the role moves it there), only in an app that has an
+        // update feed. An update that would relaunch the app waits while the agent paints: the Creative Agent plugin
+        // sets the application's toskaAgentBusy property for the length of a move.
+        if (startMacosUpdater([]() { return qApp && qApp->property("toskaAgentBusy").toBool(); })) {
+            QAction *checkForUpdates = new QAction(i18nc("@action:inmenu", "Check for Updates…"), this);
+            checkForUpdates->setObjectName(QStringLiteral("toska_check_for_updates"));
+            checkForUpdates->setMenuRole(QAction::ApplicationSpecificRole);
+            connect(checkForUpdates, &QAction::triggered, this, []() { macosCheckForUpdates(); });
+            d->helpMenu->menu()->addAction(checkForUpdates);
+        }
+#endif
 
         connect(d->helpMenu, SIGNAL(showAboutApplication()), SLOT(showAboutApplication()));
     }

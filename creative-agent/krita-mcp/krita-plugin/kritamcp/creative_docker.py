@@ -1406,6 +1406,21 @@ class PassReviewDialog(QDialog):
 
 
 class CreativeAgentDocker(DockWidget):
+    # A run in progress. Setting it also tells the app, so an app update never relaunches Toska under a painting the
+    # agent is working on (update_hold.py).
+    @property
+    def busy(self):
+        return getattr(self, '_busy', False)
+
+    @busy.setter
+    def busy(self, value):
+        self._busy = bool(value)
+        try:
+            from .update_hold import set_busy
+            set_busy(self, self._busy)
+        except Exception:
+            pass
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Creative Agent')

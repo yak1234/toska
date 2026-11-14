@@ -578,6 +578,7 @@ if(APPLE)
         ${kritaui_LIB_SRCS}
         input/kis_extended_modifiers_mapper_osx.mm
         osx.mm
+        osx_updater.mm
     )
 endif()
 
