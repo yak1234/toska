@@ -1432,7 +1432,7 @@ class UpdateFeedTests(unittest.TestCase):
 
     def test_a_feed_and_the_public_key_go_into_the_plist(self):
         plist = package_app.updater_keys({'CFBundleName': 'Toska'}, package_app.UPDATE_FEED, sparkle=True)
-        self.assertEqual(plist['SUFeedURL'], 'https://github.com/yak1234/toska/releases/latest/download/appcast.xml')
+        self.assertEqual(plist['SUFeedURL'], 'https://github.com/yak1234/toska/releases/download/updates/appcast.xml')
         self.assertEqual(plist['SUPublicEDKey'], package_app.UPDATE_PUBLIC_KEY)
         self.assertEqual(len(__import__('base64').b64decode(package_app.UPDATE_PUBLIC_KEY)), 32)     # an Ed25519 public key
         self.assertEqual(plist['CFBundleName'], 'Toska')
@@ -1453,6 +1453,38 @@ class UpdateFeedTests(unittest.TestCase):
         text = (AGENT / 'package-app.sh').read_text()
         self.assertRegex(text, r'--packages\|[^)]*--feed[^)]*\) extra\+=')                # passed through with its value
         self.assertIn("'--feed'", (AGENT / 'package_app.py').read_text())
+
+
+class ReleaseScriptTests(unittest.TestCase):
+    """agent/release.sh (openspec app-updates, task 5.1): what can be checked without publishing anything."""
+
+    def setUp(self):
+        self.text = (AGENT / 'release.sh').read_text()
+
+    def test_it_parses_and_never_skips_the_tests_or_reads_a_secret(self):
+        self.assertEqual(run('bash', '-n', AGENT / 'release.sh').returncode, 0)
+        code = '\n'.join(line for line in self.text.splitlines() if not line.lstrip().startswith('#'))
+        for word in ('--skip-ci', '--allow-dirty', '--allow-unpublished', '--allow-stale-build', '--no-sign', 'password'):
+            self.assertNotIn(word, code)
+        self.assertNotRegex(code, r'generate_keys[^\n]* -[xf]\b')       # the private key is never exported or imported here
+        self.assertIn('agent/publish.sh --push', code)               # publishing runs CI and the pre-publish check itself
+        self.assertIn('--notarize --dmg --feed "$feed"', code)
+
+    def test_the_feed_it_uploads_is_the_one_the_app_reads(self):
+        tag = re.search(r'^feed_tag=(\S+)$', self.text, re.M).group(1)
+        repo = re.search(r'^repo=(\S+)$', self.text, re.M).group(1)
+        self.assertEqual(package_app.UPDATE_FEED, 'https://github.com/%s/releases/download/%s/appcast.xml' % (repo, tag))
+
+    def test_without_push_it_changes_nothing(self):
+        before, _, after = self.text.partition('if [ "$push" = 0 ]; then')
+        self.assertTrue(after)
+        for word in ('publish.sh', 'gh release create', 'gh release upload', 'build-macos.sh', 'package-app.sh', 'generate_appcast --'):
+            self.assertNotIn(word, '\n'.join(line for line in before.splitlines() if not line.lstrip().startswith('#')), word)
+
+    def test_the_version_being_released_has_notes_for_users(self):
+        notes = REPO / 'creative-agent' / 'release-notes' / (package_app.read_version(AGENT) + '.md')
+        self.assertTrue(notes.is_file(), notes)
+        self.assertGreater(len(notes.read_text()), 200)
 
 
 class OutputFolderTests(unittest.TestCase):

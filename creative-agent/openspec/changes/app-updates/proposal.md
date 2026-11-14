@@ -34,9 +34,10 @@ Two things are missing: one command that makes a release, and a way for an insta
 4. **The updater in the app.** One small Objective-C++ file beside `libs/ui/osx.mm` creates Sparkle's standard updater
    and adds **Check for Updates…** to the application menu. It does nothing in a build whose Info.plist has no feed URL,
    so developer builds and upstream-style builds are untouched.
-5. **The feed.** `appcast.xml` is made by Sparkle's `generate_appcast` from the notarized DMG and uploaded as a release
-   asset. The app reads `https://github.com/yak1234/toska/releases/latest/download/appcast.xml`, a stable address that
-   always points at the newest release, so no extra hosting is needed.
+5. **The feed.** `appcast.xml` is made by Sparkle's `generate_appcast` from the notarized DMG. The app reads
+   `https://github.com/yak1234/toska/releases/download/updates/appcast.xml`: a GitHub release tagged `updates` that holds
+   only this file, replaced at every release. The address never changes and no extra hosting is needed. (Not
+   `releases/latest/...`: GitHub's "latest" skips releases marked pre-release, which every Toska release is so far.)
 6. **A second signature on every update.** Sparkle checks an EdDSA signature besides Apple's. The key pair is made once
    with Sparkle's `generate_keys`, which keeps the private key in the login keychain; only the public key goes in
    Info.plist (`SUPublicEDKey`). The private key is never printed, logged or committed.

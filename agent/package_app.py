@@ -54,10 +54,11 @@ BUNDLE_ID = 'local.kritaagent'
 MINIMUM_MACOS = '14'
 # Toska's own version, written once in agent/VERSION: three numbers and an optional stage ("0.2.0-prealpha").
 VERSION_PATTERN = r'^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$'
-# Updates (openspec app-updates). The feed is a file of the newest GitHub release, so the address never changes. The key
+# Updates (openspec app-updates). The feed is a file of the GitHub release tagged `updates`, replaced at every release
+# (agent/release.sh), so the address never changes; "releases/latest" would skip a pre-release. The key
 # is the public half of the update-signing key (Sparkle's generate_keys --account toska, 2026-11-14); the private half
 # lives only in the releasing Mac's login keychain. An installed Toska accepts an update only if it is signed with it.
-UPDATE_FEED = 'https://github.com/yak1234/toska/releases/latest/download/appcast.xml'
+UPDATE_FEED = 'https://github.com/yak1234/toska/releases/download/updates/appcast.xml'
 UPDATE_PUBLIC_KEY = 'gcCKUa9MSYhMa2cW+n6sJ88LDPAimWB8Lux1dO9wM1M='
 SETTINGS_FOLDER = 'KritaAgent'
 PLUGIN_KEY = 'enable_kritamcp'
