@@ -69,8 +69,14 @@ fi
 echo "== 1/5 publish"
 bash agent/publish.sh --push
 echo "== 2/5 build"
+# The build's commit stamp (kritagitversion.h) is written when CMake configures, and a build with nothing to compile does
+# not configure: the stamp stayed at the previous commit and the package step refused the build (first release,
+# 2026-11-14). A newer CMakeLists.txt makes the build's own ninja configure again; git does not see a touch.
+touch libs/version/CMakeLists.txt
 nice -n 19 env CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-8}" zsh agent/build-macos.sh > "$root/_release-build.log" 2>&1 \
     || { tail -40 "$root/_release-build.log" >&2; fail "the build failed (log: _release-build.log)"; }
+stamp="$(sed -n 's/^#define KRITA_GIT_SHA1_STRING "\(.*\)"$/\1/p' _build/libs/version/kritagitversion.h)"
+case "$(git rev-parse HEAD)" in "$stamp"*) ;; *) fail "the build is stamped $stamp, not HEAD $(git rev-parse --short HEAD)" ;; esac
 echo "== 3/5 package, notarize, disk image"
 zsh agent/package-app.sh --out "$out" --notarize --dmg --feed "$feed"
 dmg="$out/Toska-$version.dmg"

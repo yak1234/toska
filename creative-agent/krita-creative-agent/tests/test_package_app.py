@@ -1428,7 +1428,16 @@ class SparkleInTheAppTests(unittest.TestCase):
 
 
 class UpdateFeedTests(unittest.TestCase):
-    """The app looks for updates only when the package step is given a feed (openspec app-updates, task 3.3)."""
+    """The app looks for updates at Toska's feed unless the package step says otherwise (openspec app-updates, task 3.3)."""
+
+    def test_a_package_has_the_updater_unless_it_is_refused_or_sparkle_is_missing(self):
+        own = package_app.UPDATE_FEED
+        self.assertEqual(package_app.chosen_feed(None, False, sparkle=True), own)                    # nothing asked: Toska's feed
+        self.assertEqual(package_app.chosen_feed('https://example.org/a.xml', False, sparkle=True), 'https://example.org/a.xml')
+        self.assertIsNone(package_app.chosen_feed(None, True, sparkle=True))                         # --no-feed
+        self.assertIsNone(package_app.chosen_feed('https://example.org/a.xml', True, sparkle=True))  # --no-feed wins
+        self.assertIsNone(package_app.chosen_feed(None, False, sparkle=False))                       # no Sparkle, not a fault
+        self.assertEqual(package_app.chosen_feed(own, False, sparkle=False), own)                    # asked for: updater_keys refuses it
 
     def test_a_feed_and_the_public_key_go_into_the_plist(self):
         plist = package_app.updater_keys({'CFBundleName': 'Toska'}, package_app.UPDATE_FEED, sparkle=True)
@@ -1452,7 +1461,11 @@ class UpdateFeedTests(unittest.TestCase):
     def test_the_package_command_takes_the_feed(self):
         text = (AGENT / 'package-app.sh').read_text()
         self.assertRegex(text, r'--packages\|[^)]*--feed[^)]*\) extra\+=')                # passed through with its value
-        self.assertIn("'--feed'", (AGENT / 'package_app.py').read_text())
+        self.assertRegex(text, r'--no-sign\|[^)]*--no-feed[^)]*\) extra\+=')                # a flag, no value
+        code = (AGENT / 'package_app.py').read_text()
+        self.assertIn("'--feed'", code)
+        self.assertIn("'--no-feed'", code)
+        self.assertIn("chosen_feed(self.options.get('feed'), self.options.get('no_feed', False), sparkle)", code)
 
 
 class ReleaseScriptTests(unittest.TestCase):
@@ -1469,6 +1482,12 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertNotRegex(code, r'generate_keys[^\n]* -[xf]\b')       # the private key is never exported or imported here
         self.assertIn('agent/publish.sh --push', code)               # publishing runs CI and the pre-publish check itself
         self.assertIn('--notarize --dmg --feed "$feed"', code)
+
+    def test_the_build_is_stamped_again_before_it_is_packaged(self):
+        build = self.text.index('zsh agent/build-macos.sh')
+        self.assertLess(self.text.index('touch libs/version/CMakeLists.txt'), build)      # makes the build configure again
+        self.assertTrue((AGENT.parent / 'libs/version/CMakeLists.txt').is_file())
+        self.assertIn('kritagitversion.h', self.text[build:self.text.index('== 3/5')])    # and the stamp is checked after it
 
     def test_the_feed_it_uploads_is_the_one_the_app_reads(self):
         tag = re.search(r'^feed_tag=(\S+)$', self.text, re.M).group(1)

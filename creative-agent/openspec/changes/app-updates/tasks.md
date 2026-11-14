@@ -1,7 +1,7 @@
 # App updates: tasks
 
-Spec: `proposal.md` in this folder. Sections 1 to 5 are built (2026-11-14). Section 6, the proof in a running app, is not started: nothing here has
-run inside Toska yet.
+Spec: `proposal.md` in this folder. Sections 1 to 5 are built and 0.2.0-prealpha is released (2026-11-14). Section 6, the proof of an update from one
+version to the next, is not started.
 
 ## 1. Version
 
@@ -51,6 +51,18 @@ run inside Toska yet.
       Tests: `ReleaseScriptTests` (4; the file's 156 pass). **`--push` has never been run.**
 - [x] 5.2 Notes are a file per version, `creative-agent/release-notes/<version>.md`, required by the script and shown in
       Sparkle's window. `0.2.0-prealpha.md` is a draft for the artist to read.
+
+## 5b. After the first release (2026-11-14)
+
+- [x] 5.3 Released: `v0.2.0-prealpha` (published 2fcd10ba; notarization 1e8eda14 accepted; DMG 415 MB; feed live on the
+      `updates` release, build 202611141333). `release.sh --push` stopped twice and was finished by hand with its own
+      commands: the build kept the previous commit's stamp (fixed in 5.4), then Apple answered 403 until the artist
+      accepted an updated developer agreement.
+- [x] 5.4 `release.sh` touches `libs/version/CMakeLists.txt` before the build so it configures and stamps again, and
+      checks the stamp is HEAD before packaging. Test: `ReleaseScriptTests` (5). Not yet run in a release.
+- [x] 5.5 The updater is the default: `package-app.sh` gives the app Toska's feed whenever Sparkle was fetched;
+      `--no-feed` makes an app without it (a development package made without `--feed` had lost Check for Updates…).
+      Tests: `UpdateFeedTests` (5; the file's 158 pass).
 
 ## 6. Proof
 

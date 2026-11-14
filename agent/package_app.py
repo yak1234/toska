@@ -599,6 +599,17 @@ def toska_versions(plist, version, build):
     return plist
 
 
+def chosen_feed(feed, no_feed, sparkle):
+    """The appcast address a package gets: none with --no-feed, the one given with --feed, else Toska's own (UPDATE_FEED)
+    whenever Sparkle is in the bundle, so a package made without thinking about it still has Check for Updates… .
+    Without Sparkle (agent/fetch-sparkle.sh not run) and without --feed there is no updater, and that is not a fault."""
+    if no_feed:
+        return None
+    if feed:
+        return feed
+    return UPDATE_FEED if sparkle else None
+
+
 def updater_keys(plist, feed, sparkle):
     """What makes the app look for updates, on an Info.plist dict: SUFeedURL and SUPublicEDKey when `feed` is given,
     neither when it is not (the app then never starts its updater: libs/ui/osx_updater.mm). `sparkle`: is the framework
@@ -950,7 +961,10 @@ class Packager:
         system_requirements(plist)
         toska_versions(plist, read_version(ROOT / 'agent'), build_number(self.source))
         try:
-            updater_keys(plist, self.options.get('feed'), (self.frameworks / 'Sparkle.framework').is_dir())
+            sparkle = (self.frameworks / 'Sparkle.framework').is_dir()
+            feed = chosen_feed(self.options.get('feed'), self.options.get('no_feed', False), sparkle)
+            self.log('updates: %s' % (feed or 'no updater in this app (%s)' % ('--no-feed' if self.options.get('no_feed') else 'Sparkle was not fetched: agent/fetch-sparkle.sh')))
+            updater_keys(plist, feed, sparkle)
         except ValueError as error:
             self.problems.append(str(error))
         with open(path, 'wb') as stream:
@@ -1869,8 +1883,9 @@ def main(argv=None):
     pack.add_argument('--allow-unpublished', action='store_true', help='package a commit that is not in public/main yet (stamped)')
     pack.add_argument('--overlay-plugin', help='use this checkout\'s plugin folder (kritamcp) instead of the installed one (stamped)')
     pack.add_argument('--no-sign', action='store_true')
-    pack.add_argument('--feed', help='make the app look for updates at this appcast address (a release: %s); '
-                                     'without it the app has no updater' % UPDATE_FEED)
+    pack.add_argument('--feed', help='make the app look for updates at this appcast address (default, when Sparkle is in '
+                                     'the bundle: %s)' % UPDATE_FEED)
+    pack.add_argument('--no-feed', action='store_true', help='package an app with no updater and no Check for Updates… item')
     pack.add_argument('--notarize', action='store_true', help='notarize and staple the signed app (needs KRITA_AGENT_SIGN_IDENTITY, a Developer ID)')
     pack.add_argument('--dmg', action='store_true', help='also make Toska-<version>.dmg in --out (notarized too with --notarize)')
     pack.add_argument('--profile', default=NOTARY_PROFILE, help='the notarytool keychain profile (default: %s)' % NOTARY_PROFILE)
@@ -1947,7 +1962,7 @@ def main(argv=None):
         Path(args.out).mkdir(parents=True, exist_ok=True)
         options = {'allow_dirty': args.allow_dirty, 'allow_stale': args.allow_stale_build,
                    'allow_unpublished': args.allow_unpublished, 'source_url': args.source_url,
-                   'overlay_plugin': args.overlay_plugin, 'feed': args.feed, 'sign_identity': None if args.no_sign else identity}
+                   'overlay_plugin': args.overlay_plugin, 'feed': args.feed, 'no_feed': args.no_feed, 'sign_identity': None if args.no_sign else identity}
         packager = Packager(install, args.out, args.packages, source, options=options, release=args.release)
         print('Packaging %s' % install)
         problems = packager.package()
