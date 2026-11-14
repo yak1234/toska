@@ -1,6 +1,6 @@
 # App updates: tasks
 
-Spec: `proposal.md` in this folder. Section 1 and task 2.1 are done (2026-11-14); nothing else is started.
+Spec: `proposal.md` in this folder. Sections 1 and 2 are done (2026-11-14); nothing else is started.
 
 ## 1. Version
 
@@ -17,8 +17,12 @@ Spec: `proposal.md` in this folder. Section 1 and task 2.1 are done (2026-11-14)
       run is a no-op. Run once on this Mac 2026-11-14. Found: the framework is universal (x86_64 + arm64; the package step
       must thin it to arm64) and ad-hoc signed (to be re-signed with the Developer ID). Its licence text goes into the
       notices with 2.2.
-- [ ] 2.2 `package_app.py` copies the framework, removes the XPC services, signs its helpers inside-out; the bundle check
-      names them; `codesign --verify --deep --strict` and `spctl` pass on the result.
+- [x] 2.2 `Packager.copy_sparkle` copies the framework without headers and XPC services, links kept; its files are thinned
+      and signed with the rest (helper app, then framework, no app entitlements); licence in `LICENSES/Sparkle-LICENSE.txt`.
+      Tests: `SparkleInTheAppTests` (3; the file's 148 pass). Seen in a real package 2026-11-14 (`_package/Toska.app`, signed
+      with the Developer ID, from a dirty tree with `--allow-dirty`): framework, `Autoupdate` and `Updater.app` are arm64,
+      hardened runtime, team HL7397DF7W, timestamped; `codesign --verify --deep --strict` ok; the app says
+      `0.2.0-prealpha` / `202611141316`. Not run yet: notarization and `spctl` on a bundle with Sparkle (task 6.1).
 
 ## 3. Updater in the app
 
