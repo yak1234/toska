@@ -1,6 +1,6 @@
 # App updates: tasks
 
-Spec: `proposal.md` in this folder. Section 1 is done (2026-11-14); nothing else is started.
+Spec: `proposal.md` in this folder. Section 1 and task 2.1 are done (2026-11-14); nothing else is started.
 
 ## 1. Version
 
@@ -13,7 +13,10 @@ Spec: `proposal.md` in this folder. Section 1 is done (2026-11-14); nothing else
 
 ## 2. Sparkle in the bundle
 
-- [ ] 2.1 Fetch the official Sparkle release with a pinned checksum (`agent/fetch-deps.sh`); licence text into the notices.
+- [x] 2.1 `agent/fetch-sparkle.sh` fetches Sparkle 2.10.1 into `_sparkle/` (git-ignored) with a pinned SHA-256; a second
+      run is a no-op. Run once on this Mac 2026-11-14. Found: the framework is universal (x86_64 + arm64; the package step
+      must thin it to arm64) and ad-hoc signed (to be re-signed with the Developer ID). Its licence text goes into the
+      notices with 2.2.
 - [ ] 2.2 `package_app.py` copies the framework, removes the XPC services, signs its helpers inside-out; the bundle check
       names them; `codesign --verify --deep --strict` and `spctl` pass on the result.
 

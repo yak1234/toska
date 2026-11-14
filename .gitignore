@@ -64,3 +64,4 @@ krita-deps-management/
 /branch-corrected-deps.yml
 /*.log
 /_package
+/_sparkle
