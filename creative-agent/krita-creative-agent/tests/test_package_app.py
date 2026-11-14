@@ -1317,6 +1317,56 @@ class ProductNameTests(unittest.TestCase):
         self.assertTrue(any('"Toska.app"' in line for line in lines), lines)
 
 
+class ToskaVersionTests(unittest.TestCase):
+    """The app carries Toska's version, not Krita's (openspec app-updates, task 1.1): the updater decides "newer" by
+    CFBundleVersion, so it is a number that rises with every commit."""
+
+    def test_the_plist_gets_toskas_version_and_a_build_number(self):
+        plist = package_app.toska_versions({'CFBundleShortVersionString': '6.1.0', 'CFBundleVersion': '6.1.0', 'CFBundleName': 'x'},
+                                           '0.2.0-prealpha', 1234)
+        self.assertEqual((plist['CFBundleShortVersionString'], plist['CFBundleVersion'], plist['CFBundleName']), ('0.2.0-prealpha', '1234', 'x'))
+
+    def test_a_build_number_that_cannot_rise_or_a_malformed_version_is_refused(self):
+        for version, build in (('0.2.0', 0), ('0.2.0', -3), ('0.2.0', '12'), ('0.2.0', True), ('0.2', 5), ('v0.2.0', 5), ('', 5),
+                               ('0.2.0 beta', 5)):
+            with self.assertRaises(ValueError, msg=(version, build)):
+                package_app.toska_versions({}, version, build)
+
+    def test_the_version_file_is_the_one_place_the_version_is_written(self):
+        version = package_app.read_version(AGENT)
+        self.assertRegex(version, package_app.VERSION_PATTERN)
+        self.assertEqual(version, (AGENT / 'VERSION').read_text().strip())
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError):
+                package_app.read_version(folder)                     # no file: never a guessed version
+            pathlib.Path(folder, 'VERSION').write_text('six point one\n')
+            with self.assertRaises(ValueError):
+                package_app.read_version(folder)
+
+    def test_the_build_number_is_the_commits_time_and_rises_with_later_commits(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = dict(os.environ, GIT_AUTHOR_NAME='t', GIT_AUTHOR_EMAIL='t@example.org', GIT_COMMITTER_NAME='t',
+                       GIT_COMMITTER_EMAIL='t@example.org', GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+            self.assertEqual(run('git', 'init', '-q', folder, env=env).returncode, 0)
+            with self.assertRaises(ValueError):
+                package_app.build_number(folder)                     # no commit yet: nothing to date
+            numbers = []
+            for when in ('2026-11-14T23:59:00+00:00', '2026-11-15T01:30:00+02:00', '2026-11-15T00:01:00+00:00'):
+                dated = dict(env, GIT_AUTHOR_DATE=when, GIT_COMMITTER_DATE=when)
+                self.assertEqual(run('git', '-C', folder, 'commit', '-q', '--allow-empty', '-m', 'c', env=dated).returncode, 0)
+                numbers.append(package_app.build_number(folder))
+            # UTC whatever zone the commit was made in: 01:30 at +02:00 is 23:30 the day before
+            self.assertEqual(numbers, [202611142359, 202611142330, 202611150001])
+
+    def test_the_disk_image_is_named_by_toskas_version(self):
+        with tempfile.TemporaryDirectory() as folder:
+            contents = pathlib.Path(folder, 'Toska.app', 'Contents')
+            contents.mkdir(parents=True)
+            with open(contents / 'Info.plist', 'wb') as stream:
+                plistlib.dump(package_app.toska_versions({}, '0.2.0-prealpha', 7), stream)
+            self.assertEqual(package_app.app_version(contents.parent), '0.2.0-prealpha')
+
+
 class OutputFolderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='krita-agent-test-')

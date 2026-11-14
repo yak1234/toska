@@ -52,6 +52,8 @@ BUNDLE_ID = 'local.kritaagent'
 # would not load on 12 or 13), and every Apple Silicon Mac can install 14. Krita itself is still compiled for 12
 # (build-macos.sh): raising that would rebuild everything for no gain. check_bundle holds every binary to this.
 MINIMUM_MACOS = '14'
+# Toska's own version, written once in agent/VERSION: three numbers and an optional stage ("0.2.0-prealpha").
+VERSION_PATTERN = r'^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$'
 SETTINGS_FOLDER = 'KritaAgent'
 PLUGIN_KEY = 'enable_kritamcp'
 SYSTEM_PREFIXES = ('/usr/lib/', '/System/Library/', '/Library/Apple/')
@@ -557,6 +559,40 @@ def user_visible_strings(plist):
     return plist
 
 
+def read_version(agent_folder):
+    """Toska's version from <agent_folder>/VERSION. Never guessed: a missing or malformed file is an error."""
+    path = Path(agent_folder) / 'VERSION'
+    try:
+        text = path.read_text().strip()
+    except OSError as error:
+        raise ValueError('no Toska version: %s' % error)
+    if not re.match(VERSION_PATTERN, text):
+        raise ValueError('%s holds %r, not a version like 0.2.0 or 0.2.0-prealpha' % (path, text[:40]))
+    return text
+
+
+def build_number(source):
+    """The time of HEAD's commit in `source` as YYYYMMDDHHMM (UTC), a whole number: later commits give a larger one, which is
+    what an updater compares. Not a count of commits: the checkout is shallow, and a count changes with a clone's depth."""
+    result = subprocess.run(['git', '-C', str(source), 'log', '-1', '--format=%ct'], capture_output=True, text=True)
+    if result.returncode != 0 or not result.stdout.strip().isdigit():
+        raise ValueError('no build number: %s has no commit to date (%s)' % (source, result.stderr.strip()[-200:]))
+    return int(time.strftime('%Y%m%d%H%M', time.gmtime(int(result.stdout))))
+
+
+def toska_versions(plist, version, build):
+    """Set the app's version on an Info.plist dict: CFBundleShortVersionString is what people read (Toska's version),
+    CFBundleVersion is what an updater compares (the build number). Krita's own version stays compiled into the program
+    and is still what `krita --version` and About report."""
+    if not isinstance(version, str) or not re.match(VERSION_PATTERN, version):
+        raise ValueError('not a Toska version: %r' % (version,))
+    if isinstance(build, bool) or not isinstance(build, int) or build < 1:
+        raise ValueError('the build number must be a whole number above 0, not %r' % (build,))
+    plist['CFBundleShortVersionString'] = version
+    plist['CFBundleVersion'] = str(build)
+    return plist
+
+
 class Packager:
     def __init__(self, install, out, packages=None, source=None, log=print, options=None, release=None):
         self.install = Path(install).resolve()
@@ -888,6 +924,7 @@ class Packager:
         plist.update(notices.plist_entries(self.record))
         user_visible_strings(plist)
         system_requirements(plist)
+        toska_versions(plist, read_version(ROOT / 'agent'), build_number(self.source))
         with open(path, 'wb') as stream:
             plistlib.dump(plist, stream)
         return plist
