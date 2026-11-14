@@ -32,8 +32,21 @@ batch.
 - [x] M.6 (part) The tool's description names `follow_form`, `inside_shape` and one call per area. The painter's
       prompt is unchanged: it is at its size cap (`tests/prompt.test`), and the guidance belongs to the tool. Not done:
       a tool-choice scenario in `scripts/tool-choice-scenarios.json`.
-- [ ] M.7 Live, in Toska, on a copy: the Degas move 2 prompt again. Pass: Luna keeps at least the floor and one dress
-      area, and the close-ups show directional hatching. Say exactly what ran.
+- [ ] M.7 Live, in Toska: the Degas move 2 prompt again. First run 2026-11-14 (test chat be88ca00, 4576 x 6000, Luna
+      on Guide, build of 590129be): **not passed.**
+      - The painter used the new fields unprompted: 7 recipes, 1,720 strokes, all `colour_from form` and `pressure
+        taper`, 4 of 7 `follow_form` (the floor and the seated dress), words for the wall and the skirt, no
+        `inside_shape`, boxes as before. The form was read from the goal image (0.80 to 0.92 of it directed).
+      - Luna undid the batch: "hard graphic look" and "texture over forms". No "mechanical stripes" this time.
+      - The undo was right. The strokes were 200 to 480 px long, 50 to 100 px wide and 0.5 to 0.9 opaque: the wall's
+        sweeps carried its pink across the picture frames and the standing woman's arm.
+      - Before the recipes the painter called `paint_finish` (it did not in the baseline), which Luna kept: the
+        canvas now has pleats in the skirt and hatching on the floor, the best brushwork result so far, from a tool
+        that already existed.
+      - Still one `paint_batch`, so one verdict; after the undo the move ended ("Luna sees little left to add"), so
+        the correction was never acted on.
+      Fix after the run: a stroke ends where the image's colour changes from its seed's (`COLOUR_CHANGE`), and takes
+      the seed's colour; test added. Not yet rerun.
 - [ ] M.8 The same on Shishkin (leaf stipple) and one painting with smooth blending (Rembrandt), so the fix is not
       fitted to one picture.
 

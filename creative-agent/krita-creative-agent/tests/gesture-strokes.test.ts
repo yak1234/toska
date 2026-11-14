@@ -131,3 +131,16 @@ test('the recipe schema takes the new fields and still refuses unknown ones', ()
   assert.ok(!Value.Check(recipeSchema, { ...full, unexpected: true }));
   assert.ok(gestureRecipe({ direction: 'follow_form' }) && gestureRecipe({ angle: 10 }) && !gestureRecipe({ direction: 'diagonal' }));
 });
+
+test('where the image is known, a stroke stays in its own patch of colour', () => {
+  // Vertical bands 100 canvas px wide, alternating pink and ochre with a soft step between (no hard edge to stop at).
+  const width = 600, height = 450, data = new Uint8Array(width * height * 4);
+  for (let i = 0; i < width * height; i++) { const x = i % width, t = 0.5 + 0.5 * Math.tanh(Math.sin(x * Math.PI / 50) * 3); data.set([200 - 40 * t, 130 + 40 * t, 140 - 80 * t, 255], i * 4); }
+  const field = directionField({ width, height, data }, { source: [0, 0, width, height], target: [0, 0, 1200, 900] }, recipe.region)!;
+  const strokes = gestureStrokes({ ...recipe, angle: 0, length: [250, 400], colour_from: 'form' }, canvas, { colour: field.colour });
+  const run = (s: GestureStroke) => { const xs = [s.start[0], ...s.segments.map(g => g[4]!)]; return Math.max(...xs) - Math.min(...xs); };
+  assert.ok(strokes.length > 200);
+  assert.ok(Math.max(...strokes.map(run)) < 110, `no stroke runs across a band (${Math.max(...strokes.map(run)).toFixed(0)} px)`);
+  // Without the image the same recipe paints its full length.
+  assert.ok(Math.max(...gestureStrokes({ ...recipe, angle: 0, length: [250, 400] }, canvas).map(run)) > 240);
+});

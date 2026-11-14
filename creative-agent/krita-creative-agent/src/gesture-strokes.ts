@@ -14,7 +14,8 @@
 // - an area that is the part itself (a mask) and not a box: seeds inside it, strokes end at its boundary, and paint thins
 //   out toward the boundary instead of being cut by it;
 // - a pressure shape on every stroke (taper: light in, press, lift; swell; even), with jitter;
-// - colour from the image at each stroke, or from the palette.
+// - colour from the image at each stroke, or from the palette; where the image's colours are known a stroke ends where
+//   the colour under it changes, so no mark carries one patch's colour across another (a wall across a picture frame).
 // Length, angle, bend, spacing and pressure always vary: MIN_LOOSENESS is the floor however tidy the recipe asks.
 // Pure functions, no file or studio access, no .mjs imports. A seed reproduces a batch.
 
@@ -49,6 +50,10 @@ export const EDGE_FEATHER = 0.08;
 const TURN_LIMIT = 0.7;
 /** Canvas px between the checks for an edge or the area's boundary along one step of a stroke. */
 const EDGE_PROBE = 2;
+/** A stroke ends where the image's colour has moved this far (RGB distance, 0-441) from the colour at its seed: a mark
+ * belongs to one patch of colour. Live on the Degas (2026-11-14): 300 px wall strokes carried the wall's pink across
+ * picture frames and an arm, and Luna undid the batch for texture over forms. */
+export const COLOUR_CHANGE = 42;
 /** Rounds of seeds tried to reach the asked stroke count. */
 const SEED_ROUNDS = 6;
 /** The long side of the grid a direction field is computed on: marks of 10-20 px on a 6000 px canvas stay 2-3 cells wide. */
@@ -178,6 +183,12 @@ export function gestureStrokes(recipe: GestureRecipe, canvas: { width: number; h
     let path: [number, number][] = [[x0, y0]];
     const fallback = mainAngle ?? random() * Math.PI;
     const turn = bell() * loose * (follow ? 0.14 : 0.42);              // radians: 8 or 24 degrees at full looseness
+    const own = context.colour ? context.colour(x0, y0) : null;
+    const offColour = (x: number, y: number) => {
+      if (!own) return false;
+      const c = context.colour!(x, y);
+      return !c || Math.hypot(c[0] - own[0], c[1] - own[1], c[2] - own[2]) > COLOUR_CHANGE;
+    };
     const first = follow ? context.flow!(x0, y0) : null;
     const heading: [number, number] = first ?? [Math.cos(fallback), Math.sin(fallback)];
     const cos = Math.cos(turn), sin = Math.sin(turn), start: [number, number] = [heading[0] * cos - heading[1] * sin, heading[0] * sin + heading[1] * cos];
@@ -187,7 +198,7 @@ export function gestureStrokes(recipe: GestureRecipe, canvas: { width: number; h
       let px = x0, py = y0, dx = start[0] * way, dy = start[1] * way;
       for (let n = 0; n < length / 2 / step; n++) {
         const nx = px + dx * step, ny = py + dy * step;
-        if (blocked(nx, ny, px, py)) break;
+        if (blocked(nx, ny, px, py) || offColour(nx, ny)) break;
         let next: [number, number] = [dx, dy];
         if (follow) {
           const f = context.flow!(nx, ny);
@@ -207,7 +218,7 @@ export function gestureStrokes(recipe: GestureRecipe, canvas: { width: number; h
     const middle = path[Math.floor(path.length / 2)]!;
     let rgb: [number, number, number];
     if (recipe.colour_from === 'form') {
-      const seen = context.colour!(middle[0], middle[1]);
+      const seen = own ?? context.colour!(middle[0], middle[1]);
       if (!seen) continue;
       // A stick or a loaded brush never lays exactly the local colour: a small shift in lightness, a smaller one in hue.
       const light = 1 + bell() * loose * 0.12;
