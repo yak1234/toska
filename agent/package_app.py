@@ -602,6 +602,7 @@ class Packager:
         self.release = Path(release) if release else None
         self.options = dict(options or {})
         self.record = None
+        self.sparkle_licence = None
         self.release_info = None
         self.log = log
         self.bundle = self.out / APP_NAME
@@ -1023,6 +1024,7 @@ class Packager:
         self.copy_python()
         self.copy_agent_packages()
         self.copy_release()
+        self.copy_sparkle()
         self.log('closing the dependency set and rewriting rpaths ...')
         self.rewrite_all()
         self.seal_frameworks()
@@ -1038,6 +1040,24 @@ class Packager:
         self.compile_python()
         self.finish_permissions()
         return self.problems
+
+    # Left out of the app's copy of Sparkle: what only a build needs, and the services only a sandboxed app uses.
+    SPARKLE_LEFT_OUT = ('Headers', 'PrivateHeaders', 'Modules', 'XPCServices')
+
+    def copy_sparkle(self, sparkle=None):
+        """The updater (openspec app-updates): Frameworks/Sparkle.framework from the tree agent/fetch-sparkle.sh fetched,
+        its version links kept. Returns False, copying nothing, when Sparkle was not fetched (the app then has no updater).
+        Its files are thinned and signed with every other file of the bundle; Autoupdate and Updater.app take no
+        entitlements (sign_bundle gives those to the app's own executables only), as Sparkle's instructions ask."""
+        sparkle = Path(sparkle) if sparkle else ROOT / '_sparkle'
+        source = sparkle / 'Sparkle.framework'
+        if not source.is_dir():
+            self.log('  no Sparkle in %s: this app will not look for updates (agent/fetch-sparkle.sh)' % sparkle)
+            return False
+        shutil.copytree(source, self.frameworks / 'Sparkle.framework', symlinks=True,
+                        ignore=shutil.ignore_patterns(*self.SPARKLE_LEFT_OUT, '.DS_Store'))
+        self.sparkle_licence = sparkle / 'LICENSE'
+        return True
 
     def copy_release(self):
         """The Node companion of a release (krita-creative-agent/scripts/build-release.py): pure JS, JSON and wasm, copied to
@@ -1163,6 +1183,8 @@ def write_notices(packager):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(file, target)
 
+    if getattr(packager, 'sparkle_licence', None) and Path(packager.sparkle_licence).is_file():
+        shutil.copy2(packager.sparkle_licence, licences / 'Sparkle-LICENSE.txt')
     companion_licences = packager.resources / 'creative-agent-bundle' / 'companion' / 'THIRD_PARTY_LICENSES.txt'
     if companion_licences.is_file():
         shutil.copy2(companion_licences, licences / 'Creative-Agent-companion-THIRD-PARTY-LICENSES.txt')

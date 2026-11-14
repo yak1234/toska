@@ -1367,6 +1367,66 @@ class ToskaVersionTests(unittest.TestCase):
             self.assertEqual(package_app.app_version(contents.parent), '0.2.0-prealpha')
 
 
+class SparkleInTheAppTests(unittest.TestCase):
+    """Packager.copy_sparkle (openspec app-updates, task 2.2): the updater framework goes into Frameworks without the parts
+    an app outside the sandbox does not use, its version links kept."""
+
+    class Stub(package_app.Packager):
+        def __init__(self, frameworks):
+            self.frameworks, self.log, self.sparkle_licence = pathlib.Path(frameworks), (lambda *_: None), None
+
+    def fake(self, root):
+        version = root / 'Sparkle.framework' / 'Versions' / 'B'
+        for folder in ('Resources', 'Headers', 'PrivateHeaders', 'Modules', 'XPCServices/Installer.xpc/Contents/MacOS',
+                       'XPCServices/Downloader.xpc/Contents/MacOS', 'Updater.app/Contents/MacOS'):
+            (version / folder).mkdir(parents=True)
+        for file in ('Sparkle', 'Autoupdate', 'Resources/Info.plist', 'Headers/Sparkle.h', 'XPCServices/Installer.xpc/Contents/MacOS/Installer',
+                     'Updater.app/Contents/MacOS/Updater'):
+            (version / file).write_text(file)
+        os.symlink('B', version.parent / 'Current')
+        for name in ('Sparkle', 'Autoupdate', 'Resources', 'Headers', 'PrivateHeaders', 'Modules', 'XPCServices', 'Updater.app'):
+            os.symlink('Versions/Current/' + name, root / 'Sparkle.framework' / name)
+        (root / 'LICENSE').write_text('MIT')
+        (root / 'Sparkle Test App.app').mkdir()
+        return root
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='krita-agent-test-')
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+        (self.root / 'Frameworks').mkdir()
+
+    def test_the_framework_is_copied_without_the_sandbox_services_and_headers(self):
+        stub = self.Stub(self.root / 'Frameworks')
+        self.assertTrue(stub.copy_sparkle(self.fake(self.root / '_sparkle')))
+        framework = stub.frameworks / 'Sparkle.framework'
+        self.assertEqual(sorted(p.name for p in framework.iterdir()), ['Autoupdate', 'Resources', 'Sparkle', 'Updater.app', 'Versions'])
+        self.assertEqual(sorted(p.name for p in (framework / 'Versions' / 'B').iterdir()), ['Autoupdate', 'Resources', 'Sparkle', 'Updater.app'])
+        self.assertEqual(os.readlink(framework / 'Versions' / 'Current'), 'B')
+        self.assertEqual(os.readlink(framework / 'Sparkle'), 'Versions/Current/Sparkle')
+        self.assertEqual((framework / 'Updater.app' / 'Contents' / 'MacOS' / 'Updater').read_text(), 'Updater.app/Contents/MacOS/Updater')
+        dangling = [str(p) for p in framework.rglob('*') if p.is_symlink() and not p.exists()]
+        self.assertEqual(dangling, [])
+        self.assertEqual(stub.sparkle_licence, self.root / '_sparkle' / 'LICENSE')
+        self.assertFalse((stub.frameworks / 'Sparkle Test App.app').exists())
+
+    def test_without_a_fetched_sparkle_nothing_is_copied(self):
+        stub = self.Stub(self.root / 'Frameworks')
+        self.assertFalse(stub.copy_sparkle(self.root / 'absent'))
+        self.assertEqual(list(stub.frameworks.iterdir()), [])
+        self.assertIsNone(stub.sparkle_licence)
+
+    def test_the_updaters_helpers_are_sealed_inside_out(self):
+        # sign_bundle's order for what copy_sparkle leaves: the helper app, then the framework that holds it.
+        top = self.root / 'Toska.app'
+        version = top / 'Contents' / 'Frameworks' / 'Sparkle.framework' / 'Versions' / 'B'
+        files = [str(version / 'Sparkle'), str(version / 'Autoupdate'), str(version / 'Updater.app' / 'Contents' / 'MacOS' / 'Updater')]
+        order = package_app.nested_bundles(files, top)
+        self.assertEqual([os.path.relpath(d, top / 'Contents' / 'Frameworks') for d in order],
+                         ['Sparkle.framework/Versions/B/Updater.app', 'Sparkle.framework'])
+        self.assertEqual(len(package_app.signing_groups(files, top)), 1)    # one bundle: its files are signed one after the other
+
+
 class OutputFolderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='krita-agent-test-')
