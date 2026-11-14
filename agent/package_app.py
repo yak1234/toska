@@ -54,6 +54,11 @@ BUNDLE_ID = 'local.kritaagent'
 MINIMUM_MACOS = '14'
 # Toska's own version, written once in agent/VERSION: three numbers and an optional stage ("0.2.0-prealpha").
 VERSION_PATTERN = r'^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$'
+# Updates (openspec app-updates). The feed is a file of the newest GitHub release, so the address never changes. The key
+# is the public half of the update-signing key (Sparkle's generate_keys --account toska, 2026-11-14); the private half
+# lives only in the releasing Mac's login keychain. An installed Toska accepts an update only if it is signed with it.
+UPDATE_FEED = 'https://github.com/yak1234/toska/releases/latest/download/appcast.xml'
+UPDATE_PUBLIC_KEY = 'gcCKUa9MSYhMa2cW+n6sJ88LDPAimWB8Lux1dO9wM1M='
 SETTINGS_FOLDER = 'KritaAgent'
 PLUGIN_KEY = 'enable_kritamcp'
 SYSTEM_PREFIXES = ('/usr/lib/', '/System/Library/', '/Library/Apple/')
@@ -593,6 +598,23 @@ def toska_versions(plist, version, build):
     return plist
 
 
+def updater_keys(plist, feed, sparkle):
+    """What makes the app look for updates, on an Info.plist dict: SUFeedURL and SUPublicEDKey when `feed` is given,
+    neither when it is not (the app then never starts its updater: libs/ui/osx_updater.mm). `sparkle`: is the framework
+    in the bundle. A feed is https only, and is refused for a bundle without Sparkle."""
+    plist.pop('SUFeedURL', None)
+    plist.pop('SUPublicEDKey', None)
+    if not feed:
+        return plist
+    if not re.match(r'^https://[^/\s]+/\S+$', feed):
+        raise ValueError('the update feed must be an https address of a file, not %r' % (feed,))
+    if not sparkle:
+        raise ValueError('an update feed needs Sparkle in the app: run agent/fetch-sparkle.sh first')
+    plist['SUFeedURL'] = feed
+    plist['SUPublicEDKey'] = UPDATE_PUBLIC_KEY
+    return plist
+
+
 class Packager:
     def __init__(self, install, out, packages=None, source=None, log=print, options=None, release=None):
         self.install = Path(install).resolve()
@@ -926,6 +948,10 @@ class Packager:
         user_visible_strings(plist)
         system_requirements(plist)
         toska_versions(plist, read_version(ROOT / 'agent'), build_number(self.source))
+        try:
+            updater_keys(plist, self.options.get('feed'), (self.frameworks / 'Sparkle.framework').is_dir())
+        except ValueError as error:
+            self.problems.append(str(error))
         with open(path, 'wb') as stream:
             plistlib.dump(plist, stream)
         return plist
@@ -1842,6 +1868,8 @@ def main(argv=None):
     pack.add_argument('--allow-unpublished', action='store_true', help='package a commit that is not in public/main yet (stamped)')
     pack.add_argument('--overlay-plugin', help='use this checkout\'s plugin folder (kritamcp) instead of the installed one (stamped)')
     pack.add_argument('--no-sign', action='store_true')
+    pack.add_argument('--feed', help='make the app look for updates at this appcast address (a release: %s); '
+                                     'without it the app has no updater' % UPDATE_FEED)
     pack.add_argument('--notarize', action='store_true', help='notarize and staple the signed app (needs KRITA_AGENT_SIGN_IDENTITY, a Developer ID)')
     pack.add_argument('--dmg', action='store_true', help='also make Toska-<version>.dmg in --out (notarized too with --notarize)')
     pack.add_argument('--profile', default=NOTARY_PROFILE, help='the notarytool keychain profile (default: %s)' % NOTARY_PROFILE)
@@ -1918,7 +1946,7 @@ def main(argv=None):
         Path(args.out).mkdir(parents=True, exist_ok=True)
         options = {'allow_dirty': args.allow_dirty, 'allow_stale': args.allow_stale_build,
                    'allow_unpublished': args.allow_unpublished, 'source_url': args.source_url,
-                   'overlay_plugin': args.overlay_plugin, 'sign_identity': None if args.no_sign else identity}
+                   'overlay_plugin': args.overlay_plugin, 'feed': args.feed, 'sign_identity': None if args.no_sign else identity}
         packager = Packager(install, args.out, args.packages, source, options=options, release=args.release)
         print('Packaging %s' % install)
         problems = packager.package()

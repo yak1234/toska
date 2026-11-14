@@ -34,6 +34,8 @@
 # stored once with `xcrun notarytool store-credentials toska-notary`; no password is ever passed here):
 #   --notarize    after the checks pass, submit the app to Apple's notary service (keychain profile --profile, default
 #                 toska-notary), wait, print every issue if it is refused, else staple the ticket and check Gatekeeper accepts it
+#   --feed URL    make the app look for updates at this appcast address (agent/package_app.py UPDATE_FEED for a
+#                 release); without it the app has no updater and no Check for Updates… item
 #   --dmg         also make Toska-<version>.dmg in --out (the app and an /Applications link, signed; notarized and stapled
 #                 too with --notarize). For a bundle already made: agent/package_app.py notarize BUNDLE / dmg BUNDLE --out DIR
 #
@@ -56,7 +58,7 @@ extra=()
 while (( $# )); do
   case $1 in
     --out) out=${2:?--out needs a folder}; shift 2 ;;
-    --packages|--source|--release|--source-url|--overlay-plugin|--profile) extra+=("$1" "${2:?$1 needs a value}"); shift 2 ;;
+    --packages|--source|--release|--source-url|--overlay-plugin|--profile|--feed) extra+=("$1" "${2:?$1 needs a value}"); shift 2 ;;
     --no-sign|--allow-dirty|--allow-stale-build|--allow-unpublished|--notarize|--dmg) extra+=("$1"); shift ;;
     -*) echo "unknown option $1" >&2; exit 2 ;;
     *) install=$1; shift ;;

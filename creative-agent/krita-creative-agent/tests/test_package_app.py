@@ -1427,6 +1427,34 @@ class SparkleInTheAppTests(unittest.TestCase):
         self.assertEqual(len(package_app.signing_groups(files, top)), 1)    # one bundle: its files are signed one after the other
 
 
+class UpdateFeedTests(unittest.TestCase):
+    """The app looks for updates only when the package step is given a feed (openspec app-updates, task 3.3)."""
+
+    def test_a_feed_and_the_public_key_go_into_the_plist(self):
+        plist = package_app.updater_keys({'CFBundleName': 'Toska'}, package_app.UPDATE_FEED, sparkle=True)
+        self.assertEqual(plist['SUFeedURL'], 'https://github.com/yak1234/toska/releases/latest/download/appcast.xml')
+        self.assertEqual(plist['SUPublicEDKey'], package_app.UPDATE_PUBLIC_KEY)
+        self.assertEqual(len(__import__('base64').b64decode(package_app.UPDATE_PUBLIC_KEY)), 32)     # an Ed25519 public key
+        self.assertEqual(plist['CFBundleName'], 'Toska')
+
+    def test_without_a_feed_the_app_has_no_updater_keys(self):
+        plist = package_app.updater_keys({'SUFeedURL': 'https://old.example/x', 'SUPublicEDKey': 'k'}, None, sparkle=True)
+        self.assertNotIn('SUFeedURL', plist)
+        self.assertNotIn('SUPublicEDKey', plist)
+
+    def test_a_feed_without_sparkle_or_over_plain_http_is_refused(self):
+        with self.assertRaisesRegex(ValueError, 'fetch-sparkle'):
+            package_app.updater_keys({}, package_app.UPDATE_FEED, sparkle=False)
+        for feed in ('http://example.org/appcast.xml', 'file:///tmp/appcast.xml', 'appcast.xml', 'https://'):
+            with self.assertRaises(ValueError, msg=feed):
+                package_app.updater_keys({}, feed, sparkle=True)
+
+    def test_the_package_command_takes_the_feed(self):
+        text = (AGENT / 'package-app.sh').read_text()
+        self.assertRegex(text, r'--packages\|[^)]*--feed[^)]*\) extra\+=')                # passed through with its value
+        self.assertIn("'--feed'", (AGENT / 'package_app.py').read_text())
+
+
 class OutputFolderTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='krita-agent-test-')
