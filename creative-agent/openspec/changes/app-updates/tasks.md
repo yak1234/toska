@@ -1,6 +1,7 @@
 # App updates: tasks
 
-Spec: `proposal.md` in this folder. Sections 1 and 2 are done (2026-11-14); nothing else is started.
+Spec: `proposal.md` in this folder. Sections 1 to 5 are built (2026-11-14). Section 6, the proof in a running app, is not started: nothing here has
+run inside Toska yet.
 
 ## 1. Version
 
@@ -26,23 +27,34 @@ Spec: `proposal.md` in this folder. Sections 1 and 2 are done (2026-11-14); noth
 
 ## 3. Updater in the app
 
-- [ ] 3.1 Objective-C++ file: standard updater, **Check for Updates…** in the application menu, off without `SUFeedURL`.
-- [ ] 3.2 Hold install-and-relaunch while an agent move runs.
-- [ ] 3.3 `SUFeedURL` and `SUPublicEDKey` written by the package step for a release build only.
+- [x] 3.1 `libs/ui/osx_updater.mm`: Sparkle is loaded from the app's Frameworks (not linked) when Info.plist has `SUFeedURL`;
+      **Check for Updates…** is a `QAction` with the application-specific menu role (`KisMainWindow.cpp`). Built 2026-11-14;
+      the symbols are in the packaged `libkritaui`. **Not run yet:** the app has not been started with it (Toska was in use),
+      so the menu item, Sparkle loading under the hardened runtime and the permission question are unseen (6.1).
+- [x] 3.2 The relaunch for an update waits while a panel has a run in progress: the panel's `busy` sets the application's
+      `toskaAgentBusy` (`update_hold.py`, true while any window's panel is busy); the updater's delegate asks every 5 s.
+      Tests: `tests/test_update_hold.py` (4); plugin suite 1,274 passed (3 skipped). The delegate itself is unrun (6.1).
+- [x] 3.3 `package-app.sh --feed URL` writes `SUFeedURL` and `SUPublicEDKey`; without it neither is written and a feed
+      without Sparkle in the bundle is a packaging problem. Tests: `UpdateFeedTests` (4). Seen in a signed package.
 
 ## 4. Key and feed
 
-- [ ] 4.1 `generate_keys` once (key in the login keychain; one silent test call first, per the keychain rule); the artist
-      exports a backup themselves.
-- [ ] 4.2 `generate_appcast` in the release step; `appcast.xml` uploaded as a release asset.
+- [x] 4.1 The update key was made 2026-11-14 with `generate_keys --account toska` (private half in the login keychain;
+      public half is `UPDATE_PUBLIC_KEY` in `package_app.py`). **Owed by the artist:** an exported backup, kept by them.
+- [x] 4.2 `generate_appcast` made a signed `appcast.xml` from the test `Toska-0.2.0-prealpha.dmg` (version 202611141326,
+      arm64, macOS 14, notes embedded, `sparkle:edSignature` present). The feed lives on the release tagged `updates`.
 
 ## 5. One-command release
 
-- [ ] 5.1 `agent/release.sh <version>`: CI, publish (asks the artist), package, notarize, DMG, feed, GitHub release.
-- [ ] 5.2 Release notes from the commits since the last release, rewritten for users.
+- [x] 5.1 `agent/release.sh`: a dry run by default (run 2026-11-14: it listed the missing notes and the dirty tree and
+      changed nothing); `--push` publishes, builds, packages, notarizes, makes the feed and the GitHub release.
+      Tests: `ReleaseScriptTests` (4; the file's 156 pass). **`--push` has never been run.**
+- [x] 5.2 Notes are a file per version, `creative-agent/release-notes/<version>.md`, required by the script and shown in
+      Sparkle's window. `0.2.0-prealpha.md` is a draft for the artist to read.
 
 ## 6. Proof
 
-- [ ] 6.1 A to B update on a second user account through the real window (proposal, "Proof before release").
+- [ ] 6.1 A to B update on a second user account through the real window (proposal, "Proof before release"). Needs Toska
+      quit, two notarized builds and a test feed.
 - [ ] 6.2 A tampered update is refused.
 - [ ] 6.3 First public release that contains the updater; README and release notes tell 0.1.0 users to download once.
