@@ -1,6 +1,7 @@
 // @ts-check
 import { Type } from 'typebox';
 import { Value } from 'typebox/value';
+import { shapeSchema } from './shapes/use.ts';
 
 const range = (min,max) => Type.Array(Type.Number({minimum:min,maximum:max}),{minItems:2,maxItems:2});
 export const recipeSchema = Type.Object({
@@ -10,7 +11,11 @@ export const recipeSchema = Type.Object({
   stroke_count:Type.Integer({minimum:1,maximum:20000}),
   size:range(1,10000),opacity:range(.01,1),
   length:Type.Optional(Type.Array(Type.Number({minimum:1}),{minItems:2,maxItems:2})),
-  direction:Type.Union(['horizontal','vertical','diagonal','random'].map(v=>Type.Literal(v))),
+  direction:Type.Union(['horizontal','vertical','diagonal','random','follow_form'].map(v=>Type.Literal(v)),{description:'follow_form traces every stroke along the form\u2019s own direction at its spot (read from the goal image where it sits on the canvas, else from the canvas you last saw): use it for brushwork over a form (cloth folds, a receding floor, hair, foliage). A word is one direction for the whole area.'}),
+  angle:Type.Optional(Type.Number({minimum:-180,maximum:180,description:'Degrees clockwise from horizontal, instead of a direction word (30 = falling to the right).'})),
+  pressure:Type.Optional(Type.Union(['taper','swell','even'].map(v=>Type.Literal(v)),{description:'The pen pressure along every stroke: taper (default) starts light, presses and lifts off; swell presses late; even is full pressure. Shows with presets whose size or opacity follows pressure.'})),
+  colour_from:Type.Optional(Type.Union(['palette','form'].map(v=>Type.Literal(v)),{description:'form takes each stroke\u2019s colour from the image the form is read from, at that stroke, with a hand\u2019s small variation; palette (default) uses the supplied colours.'})),
+  inside_shape:Type.Optional(shapeSchema('canvas','Paint the strokes inside one element (a skirt, the floor): one box around it or a few points on it, canvas pixels. Strokes start inside its shape, end at its boundary and thin out toward it; region is then only where to look for it.')),
   irregularity:Type.Number({minimum:0,maximum:1}),seed:Type.Integer({minimum:0,maximum:4294967295}),
   flow:Type.Optional(Type.Number({minimum:.01,maximum:1})),
   layer_opacity:Type.Optional(Type.Number({minimum:0,maximum:1})),
@@ -20,7 +25,9 @@ export const recipeSchema = Type.Object({
 },{additionalProperties:false});
 
 // Version recipes when changing this algorithm: persisted seeds are execution records.
-export const GENERATOR_VERSION = 1;
+// 2: the tool paints through gesture-strokes.ts (varied placement, pressure shapes, soft area edges); generateStrokes below
+// is version 1's rectangle generator, kept for its records and tests.
+export const GENERATOR_VERSION = 2;
 export function generateStrokes(recipe, canvas) {
   if (!Value.Check(recipeSchema,recipe)) throw new Error('Invalid stroke recipe. Use the documented fields and numeric ranges.');
   for (const key of ['size','opacity','length']) if(recipe[key] && recipe[key][0]>recipe[key][1]) throw new Error(key+' range must be ordered minimum, maximum.');

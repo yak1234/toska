@@ -298,3 +298,21 @@ test('evaluate records the reading and tells the painter nothing', async () => {
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls.record[0].new_ground.reading, 'placeholder');
 });
+
+// The Degas baseline (2026-11-14): seven stroke recipes undone for "mechanical stripes, hard graphic look", then nothing.
+test('guide: a batch undone for a brushwork fault is sent back with the fault as its correction', async () => {
+  const { brushworkCorrection, BRUSHWORK_FAULTS } = await import('../extensions/luna-review.ts');
+  const stripes = { type: 'stripes', label: 'mechanical stripes', probability: 0.94, location: 'bottom' };
+  const graphic = { type: 'hard_graphic', label: 'hard graphic look', probability: 0.9, location: 'center' };
+  const { result } = setup({ reviews: [{ findings: [stripes, graphic] }] });
+  const note = reviewOf(await result('paint_recipe')).note;
+  assert.match(note, /^Luna undid this batch: mechanical stripes \(bottom\); hard graphic look \(center\)\./);
+  assert.match(note, /Try this area once more, changed:/);
+  assert.match(note, /follow_form/); assert.match(note, /pressure taper/); assert.match(note, /inside_shape/);
+  assert.match(note, /one area per call/);
+  assert.doesNotMatch(note, /Reach the same goal another way/);
+  // Each fault is said once; a finding of another kind keeps the general wording.
+  assert.equal(brushworkCorrection([stripes, stripes]).split('ran parallel').length, 2);
+  assert.equal(brushworkCorrection([moon]), '');
+  for (const fault of ['stripes', 'hard_graphic', 'flat_block', 'ellipses']) assert.ok(BRUSHWORK_FAULTS[fault]);
+});

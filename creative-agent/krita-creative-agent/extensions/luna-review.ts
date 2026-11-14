@@ -60,6 +60,22 @@ export function blending(toolName: string, input: unknown): boolean {
   return actions.length > 0 && actions.every(action => blendAction(action?.tool, action?.arguments));
 }
 
+/** Findings that say the strokes themselves read as machine-made (visual-check-questions.json), and what makes a hand's
+ * strokes different. In the Degas baseline (2026-11-14) Luna undid seven stroke recipes for "mechanical stripes, hard
+ * graphic look" and the painter, told only to "reach the same goal another way", painted nothing more: the finding is
+ * the correction, so it is given as one. */
+export const BRUSHWORK_FAULTS: Readonly<Record<string, string>> = {
+  stripes: 'the strokes ran parallel at one angle and spacing: make them follow the form (paint_recipe direction follow_form), with more irregularity and varied length',
+  hard_graphic: 'the marks ended as hard bars inside a cut-out box: give them a pressure taper, a softer or textured preset at lower opacity, and the element’s own shape (inside_shape) instead of a rectangle',
+  flat_block: 'the strokes covered the area as one flat block: fewer, more transparent strokes that leave the paint underneath showing',
+  ellipses: 'the marks read as pasted shapes: use strokes that follow the form instead of filled shapes',
+};
+/** The correction for a batch undone for brushwork faults, or '' when its findings are of another kind. */
+export function brushworkCorrection(findings: MoveFinding[]): string {
+  const said = [...new Set(findings.map(f => BRUSHWORK_FAULTS[f.type]).filter(Boolean))];
+  return said.length ? ` Try this area once more, changed: ${said.join('; ')}. Paint one area per call so each is judged on its own.` : '';
+}
+
 const lost = (findings: MoveFinding[]): string => findings.map(f => f.location ? `${f.label} (${f.location})` : f.label).join('; ');
 const line = (review: Record<string, unknown>) => ({ type: 'text' as const, text: JSON.stringify({ luna_review: review }) });
 
@@ -131,7 +147,7 @@ export default function lunaReview(host: ReviewHost): (pi: ExtensionAPI) => void
       const note = (left.length
         ? `Luna undid part of this batch: ${what}. ${left.join(', ')} could not be undone; repair what remains.`
         : `Luna undid this batch: ${what}.`)
-        + ' The attached image is the canvas now. Reach the same goal another way: keep what already works and refine it.'
+        + ' The attached image is the canvas now. ' + (brushworkCorrection(verdict.findings).trim() || 'Reach the same goal another way: keep what already works and refine it.')
         + (feature ? ` If the ${feature} is in the way, propose_protection for it first.` : '');
       return {
         content: [...event.content.filter(c => c.type !== 'image'), line({ note, findings: verdict.findings, undone_pass_ids: undone.pass_ids }), ...(undone.image ? [undone.image] : [])],

@@ -32,7 +32,7 @@ test('1200 marks use five native contributions and compact receipts; replay neve
  const h=await harness();try{
  const result=await h.tool.execute('call-1',recipe);assert.equal(h.calls.length,5);assert.deepEqual(h.calls.map(c=>c.args.strokes.length),[256,256,256,256,176]);assert.equal(result.details.completed_strokes,1200);assert.equal(new Set(h.calls.map(c=>c.id)).size,5);
  assert.ok(result.content[0].text.length<3000,'result does not echo thousands of coordinates');
- const record=JSON.parse(await readFile(result.details.recipe_file));assert.equal(record.version,1);assert.deepEqual(record.recipe,recipe);assert.equal(record.status,'complete');
+ const record=JSON.parse(await readFile(result.details.recipe_file));assert.equal(record.version,2);assert.deepEqual(record.recipe,recipe);assert.equal(record.status,'complete');
  await h.tool.execute('call-1',recipe);assert.equal(h.calls.length,5);
  await assert.rejects(h.tool.execute('call-1',{...recipe,seed:2}),/different arguments/);
  }finally{await h.close();}
