@@ -81,10 +81,24 @@ batch.
 
 ## 4. Brushwork score
 
-- [ ] 4.1 Crop measurements (direction spread and strength, mark size by scale, edge density and sharpness) in the
-      plugin beside the likeness grid; distance to 0 to 100 in the companion. Tests on synthetic strokes.
-- [ ] 4.2 Calibration on what exists: each original against itself, the two baseline copies, the rejected stripes
-      (repainted once on a scratch canvas if not saved). Record the numbers; stop here if they do not order.
+- [x] 4.1 (part) `src/brushwork-score.ts`: per crop, direction histogram and local agreement, contrast by scale, edge
+      density and sharpness, colour left out; `brushworkScore(original, canvas)` 0 to 100. In the companion on decoded
+      crops, not in the plugin. Tests on synthetic marks (`tests/brushwork-score.test.ts`, 4): the same marks 100,
+      marks blended away, turned, coarser or replaced by stipple each at least 15 lower. Not wired to anything.
+- [ ] 4.2 Calibration. First try 2026-11-14, on what exists: **it does not order them, so the score is not to be used
+      yet.** Degas, five crops: the dabbed copy 81 to 88, an offline render of the rejected stripes 80 to 90, an
+      offline render of `follow_form` 73 to 81; Shishkin's dabbed copy 87 to 89. Two reasons, both about the material
+      and one about the score:
+      - the saved results are 1,196 px copies of 6,000 px canvases and the offline renders are plain lines, not
+        Krita's engine: a crop is about 230 px, where brushwork hardly shows. Calibration needs the canvas's own
+        pixels (a region look at full size) from a live run;
+      - the WikiArt original is itself 1,382 x 1,812 px, drawn 3.3 times larger on the canvas: its close-ups are
+        about 270 px across. What separates the original from the dabbed copy at that size is real but small (fine
+        contrast 0.28 to 0.35 of the total against 0.18 to 0.24; 2 to 5 times the edge density), and the parts'
+        mapping to a score is too lenient to show it (most parts read 0.9).
+      Next: crops at canvas resolution from M.7, then set the mapping so the dabbed copy lands well below the
+      original, and only then use it. For the study: prefer larger sources than WikiArt's (museum open-access
+      images) for anything that learns brushwork from close-ups.
 - [ ] 4.3 Luna's blind pair question for brushwork in a crop, checked against 4.2.
 - [ ] 4.4 Names: `study_brushwork`, `study_*`; nothing reads them at run time.
 
