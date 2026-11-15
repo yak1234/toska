@@ -695,6 +695,11 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         shape_limit = None                               # inside_shape's selection, decoded once: validated here, painted with below
         if operation == 'paint_pass':
             validate_pass(params, doc.width(), doc.height(), Krita.instance().resources('preset'))
+            if 'brush_recipe' in params:
+                # A brush the painter made (brush_craft.py): its settings go on the stroke job's own copy of the preset.
+                if not on_fork():
+                    raise ValueError('A brush of the painter\'s own needs Toska (stroke jobs are the fork\'s).')
+                self._brush_for_pass(params)                 # a recipe that does not check paints nothing
             if 'inside_shape' in params:
                 # An element's shape limits this one pass as the job's own selection (element-shapes 1.5).
                 if not on_fork():
@@ -2217,6 +2222,12 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
         reads_below = bool((params.get('sample_below') or params.get('smudge_overlay'))
                            and (model is None or paintop in ('colorsmudge', 'mypaintbrush')))
         solve_below = bool(new_layer and model not in (None, 'rgb') and not reads_below and hasattr(node, 'rememberPaintBelow'))
+        if params.get('brush_recipe') is not None:
+            # The made brush's settings first; what the pass itself asks (a mixing model, a blender's overlay mode) wins.
+            made = self._brush_for_pass(params)
+            properties = dict(made['properties'], **properties)
+            if made['composite']:
+                properties.setdefault('CompositeOp', made['composite'])
         if 'CompositeOp' in properties:
             # The pixel brush and the other engines without a mixing setting of their own mix through the stroke's blend
             # mode (the job's own compositeOp option, not a preset setting): on a continued layer, where the strokes meet

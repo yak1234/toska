@@ -71,7 +71,7 @@ const DESCRIPTION = 'Make a brush of your own when no catalogue preset makes the
   + 'stroke, a dry broken drag, a fine pen line). Describe the mark in one sentence, choose the catalogue preset nearest to it as the base, and change '
   + 'only what the mark needs in settings. The host paints one fixed sheet (a pressure ramp, a curve, short swelling strokes, single dabs, two colours '
   + 'crossed) with the base and with your brush, returns both, and a judge who is not told which is which says which is closer to the mark. The brush is '
-  + `kept only when it wins; then paint with it by giving brush: "<material>/<name>" wherever a preset goes. You have ${MOST_TRIES} tries a brush: look at `
+  + `kept only when it wins; then paint with it by giving "<material>/<name>" as the preset of paint_pass (inside paint_batch too). You have ${MOST_TRIES} tries a brush: look at `
   + 'the returned sheets, change one or two settings at a time, and call again with the same name. No painting is touched.';
 
 const json = (value: unknown): Result['content'][number] => ({ type: 'text', text: JSON.stringify(value) });
@@ -141,7 +141,7 @@ export function brushMakerTools(runtime: BrushMakerRuntime, dependencies: BrushM
       await dependencies.save(brush, made.path);
       return done({ kept: true, judged_by: judged, luna,
         note: (judged === 'luna' ? 'Kept: the judge chose it over the base preset. ' : 'Kept, but not judged: no decision model answered, so compare the two sheets yourself before you rely on it. ')
-          + `${sheets} Paint with it by giving brush: "${id}" where a preset goes.` });
+          + `${sheets} Paint with it by giving "${id}" as the preset of paint_pass (inside paint_batch too).` });
     },
   }];
 }

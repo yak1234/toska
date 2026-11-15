@@ -147,8 +147,15 @@ batch.
       `unjudged` and the result says so, so that an artist without Decision checks can still make brushes; the proposal
       said "kept only when the new one wins". (2) Every call counts as a try, a kept one too.
       Still to do: live in Toska (3.7), and Reset for the setting (10.2).
-- [ ] 3.5 `brush` accepted wherever `preset` is (`creative_validation.py`, `paint_pass`, `paint_batch`,
-      `paint_recipe`, the reference tools as 1.5 allows).
+- [ ] 3.5 (part) Painting with a made brush. A pass names it where a preset goes, as `"<material>/<name>"`
+      (`src/pass-brush.ts`, wrapped around `paint_pass` last, so `paint_batch` and the mixing policy get it too): the
+      pass paints with the brush's base preset and carries its recipe as `brush_recipe`; the plugin checks it again
+      (`validate_pass`, `brush_craft._brush_for_pass`: the recipe's base must be the pass's preset) and sets its
+      properties on the stroke job, what the pass itself asks (a mixing model, a blender's overlay) winning; a recipe
+      that does not check paints nothing; Toska only. Tests: `tests/pass-brush.test.ts`, `tests/test_brush_pass.py`.
+      Claude's call: the brush goes in the `preset` field, not a separate `brush` field as the proposal said, so every
+      tool that already takes a preset can name one without a new field each. Still to do: `paint_recipe` and the
+      reference tools (they read the preset's catalogue card before the pass is made; not yet looked at), and live.
 - [ ] 3.6 Library brushes in `list_brushes` with their own cards; one line in the prompt on when to make a brush.
 - [ ] 3.7 Live: one brush made, kept and painted with on a 6000 px canvas.
 

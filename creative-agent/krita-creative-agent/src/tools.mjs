@@ -16,7 +16,8 @@ import { snowTools } from './snow-tool.ts';
 import { effectTools, effectCatalogueWithin } from './effects/effect-tool.ts';
 import { loadEffects } from './effects/library.ts';
 import { brushMakerTools } from './brush-maker-tool.ts';
-import { saveBrush } from './library/brushes.ts';
+import { loadBrushes, saveBrush } from './library/brushes.ts';
+import { withBrush } from './pass-brush.ts';
 import { refineTools } from './refine-goal.ts';
 import { materialCatalogue } from './plan-materials.ts';
 import { selectionTools } from './paint-only-here.ts';
@@ -411,6 +412,9 @@ export function paintingTools(runtime) {
       record: event => runtime.diagnostics?.record?.(event) });
   if (measuredModels(CATALOG).length) tools.push(mixColorsTool({ catalog: () => CATALOG }));   // not offered until a model has a card
   helpLookup(runtime, tools);
+  // A pass may name a brush the painter made, as "<material>/<name>", where a preset goes (pass-brush.ts): wrapped last, so
+  // the mixing policy above reads the brush's base preset. The library is read only for such a pass.
+  withBrush(tools.find(t => t.name === 'paint_pass'), () => loadBrushes(libraryFolder(runtime)));
   tools.push(recipeTool(runtime, tools.find(t=>t.name==='paint_pass').execute));
   tools.push(contourTool(runtime, tools.find(t=>t.name==='painting_toolbox').execute));
   tools.push(...referenceTools(runtime,tools.find(t=>t.name==='paint_pass').execute,tools.find(t=>t.name==='fill_region').execute));

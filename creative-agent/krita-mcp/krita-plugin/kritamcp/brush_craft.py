@@ -64,6 +64,18 @@ class BrushCraft:
         from krita import Krita
         return {name: resource.filename() for name, resource in Krita.instance().resources('pattern').items()}
 
+    def _brush_for_pass(self, params):
+        """A pass's brush_recipe (a brush the painter made) checked against the pass's preset and expanded:
+        {'properties', 'composite'}. Raises ValueError naming what is refused; called before anything is painted."""
+        recipe = params['brush_recipe']
+        if recipe.get('base_preset') != params['preset']:
+            raise ValueError('The brush\'s base preset is %s, but the pass paints with %s.' % (recipe.get('base_preset'), params['preset']))
+        try:
+            xml = self._brush_preset_xml(params['preset'])
+        except KeyError:
+            raise ValueError('Use an exact installed preset name from list_brushes') from None
+        return brush_maker.expand(recipe, xml, self._brush_patterns())
+
     def _brush_swatch(self, session, params):
         import cv2
         import numpy as np
