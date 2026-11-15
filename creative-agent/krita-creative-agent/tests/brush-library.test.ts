@@ -80,3 +80,31 @@ test('a brush that does not check is never written', async t => {
   await assert.rejects(saveBrush(root, brush({ size: 2000 })), /size/);
   assert.equal((await loadBrushes(root)).brushes.size, 0);
 });
+
+// list_brushes shows the painter its own brushes beside the catalogue's (painting-skills 3.6).
+import { madeBrushCards } from '../src/library/brushes.ts';
+import { paintingTools } from '../src/tools.mjs';
+
+test('a made brush’s card says how to name it, its mark, its base and who judged it', async t => {
+  const root = await folder(t);
+  await saveBrush(root, brush());
+  assert.deepEqual(madeBrushCards(await loadBrushes(root)), [{ preset: 'soft-pastel/stick-side', material: 'soft-pastel',
+    mark: 'A broad grainy drag of the stick’s side.', base: 'b) Basic-5 Size', judged_by: 'luna' }]);
+  assert.deepEqual(madeBrushCards(await loadBrushes('')), []);
+});
+
+test('list_brushes lists the made brushes when painting skills are on, and not otherwise', async t => {
+  const root = await folder(t);
+  await saveBrush(join(root, 'library'), brush());
+  const list = async (offered: boolean) => {
+    const runtime = { faulted: false, config: { data_dir: root }, study: { directory: '/nonexistent', references: [] }, emit() {},
+      toolOffered: (name: string) => name === 'make_brush' ? offered : true,
+      async callNative() { return { status: 'ok', brushes: ['b) Basic-5 Size'], count: 1, total: 1 }; } };
+    const result = await paintingTools(runtime).find((tool: { name: string }) => tool.name === 'list_brushes').execute('id', {}, undefined);
+    return JSON.parse(result.content[0].text);
+  };
+  const on = await list(true);
+  assert.deepEqual(on.made_brushes.map((b: { preset: string }) => b.preset), ['soft-pastel/stick-side']);
+  assert.match(on.made_brushes_note, /preset/);
+  assert.equal('made_brushes' in await list(false), false);
+});

@@ -156,7 +156,10 @@ batch.
       Claude's call: the brush goes in the `preset` field, not a separate `brush` field as the proposal said, so every
       tool that already takes a preset can name one without a new field each. Still to do: `paint_recipe` and the
       reference tools (they read the preset's catalogue card before the pass is made; not yet looked at), and live.
-- [ ] 3.6 Library brushes in `list_brushes` with their own cards; one line in the prompt on when to make a brush.
+- [x] 3.6 Library brushes in `list_brushes`: with painting skills on, the result carries `made_brushes` (the value
+      to give as `preset`, the material, the mark, the base preset, who judged it; at most 40) and a line on how to
+      paint with one (`madeBrushCards`, `tests/brush-library.test.ts`). When to make a brush is said in `make_brush`'s
+      own description, which the painter reads with the tool; no line was added to the prompt.
 - [ ] 3.7 Live: one brush made, kept and painted with on a 6000 px canvas.
 
 ## 4. Brushwork score

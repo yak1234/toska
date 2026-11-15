@@ -16,7 +16,7 @@ import { snowTools } from './snow-tool.ts';
 import { effectTools, effectCatalogueWithin } from './effects/effect-tool.ts';
 import { loadEffects } from './effects/library.ts';
 import { brushMakerTools } from './brush-maker-tool.ts';
-import { loadBrushes, saveBrush } from './library/brushes.ts';
+import { loadBrushes, madeBrushCards, saveBrush } from './library/brushes.ts';
 import { withBrush } from './pass-brush.ts';
 import { refineTools } from './refine-goal.ts';
 import { materialCatalogue } from './plan-materials.ts';
@@ -248,7 +248,10 @@ export function paintingTools(runtime) {
        signal?.throwIfAborted();
        const result = await runtime.callNative('list_brushes', params, id);
        const mixing = mixingModelCards();
-       return resultContent(runtime, { ...result, brushes: brushCards(result.brushes ?? []), ...(mixing ? { mixing_models: mixing } : {}) }, { limit: 24000 });
+       // The painter's own brushes (make_brush, openspec painting-skills), listed with the catalogue's when painting skills are on.
+       const made = runtime.toolOffered?.('make_brush') ? madeBrushCards(await loadBrushes(libraryFolder(runtime)).catch(() => ({ brushes: new Map(), skipped: [] }))) : [];
+       return resultContent(runtime, { ...result, brushes: brushCards(result.brushes ?? []), ...(mixing ? { mixing_models: mixing } : {}),
+         ...(made.length ? { made_brushes: made, made_brushes_note: 'Brushes you made earlier. Paint with one by giving its preset value (for example "' + made[0].preset + '") as the preset of paint_pass.' } : {}) }, { limit: 24000 });
      }},
     tool('paint_pass', 'Painting a pass',
       'Paint up to 256 continuous native cubic brush curves on a NEW named layer. Each segment is [c1x,c1y,c2x,c2y,endx,endy]. The full pass is validated before painting. Automatically updates the study’s single layered painting.kra file and returns its canvas IMAGE. Assess that image before the next pass. Brush width matters for coverage and overlap. A stroke’s optional pressure, tilt, rotation, speed and time_ms lists drive the preset’s pen dynamics; the result says "applied" for each, or "ignored" when this Krita cannot paint it.',

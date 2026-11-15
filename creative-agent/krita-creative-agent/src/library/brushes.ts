@@ -95,3 +95,9 @@ export async function loadBrushes(root: string): Promise<BrushLibrary> {
   }
   return library;
 }
+
+/** The made brushes as list_brushes shows them: `preset` is what a pass gives where a preset goes. At most 40. */
+export function madeBrushCards(library: BrushLibrary): { preset: string; material: string; mark: string; base: string; judged_by: string }[] {
+  return [...library.brushes.entries()].slice(0, 40).map(([id, brush]) =>
+    ({ preset: id, material: brush.material, mark: brush.mark, base: brush.base, judged_by: brush.judged_by }));
+}
