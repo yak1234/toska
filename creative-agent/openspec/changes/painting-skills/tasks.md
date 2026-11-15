@@ -94,8 +94,15 @@ batch.
 
 ## 3. make_brush
 
-- [ ] 3.1 Settings vocabulary to engine properties (`src/brush-recipe.ts`), per engine, with ranges. Tests for every
-      setting, the shared-curve rule and the tip XML.
+- [x] 3.1 Settings vocabulary to a recipe (`src/brush-recipe.ts`, tests in `tests/brush-recipe.test.ts`): tip (shape,
+      diameter, ratio, softness, spikes, density, angle, randomness), spacing, scatter, opacity, flow, build, blend,
+      respond (seven settings, seven pen inputs, a curve of 2 to 5 points), smudge and texture, each inside a range and
+      refused with its field named. Engines: `paintbrush` (101 of Toska's 137 presets) and `colorsmudge` (16). Key
+      names come from the presets themselves (`local-notes/wikiart-study/mechanism-checks/engine-keys.json`). The tip
+      goes to the plugin as a change (`replace` with a new generated tip, or attributes set on the base preset's own
+      tip), because spacing and angle live inside the base's `brush_definition`, which only the plugin can read. Left
+      out: `bristle` (one bristle preset, no checked vocabulary; refused with a message). Not yet seen live: the
+      texture strength keys and the `distance` input.
 - [ ] 3.2 `kritamcp/brush_maker.py`: check base, engine, keys, ranges, tip; expand `brush` to preset plus properties;
       always pass `size`. Tests.
 - [ ] 3.3 The scratch document and the swatch sheet; PNG into the chat folder. Tests with the fake plugin; live once.
