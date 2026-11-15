@@ -57,3 +57,24 @@ test('a study chat’s decision traces carry wikiart-study after decision and th
 test('without the tag a decision trace’s tags are decision and the kind', async () => {
   assert.deepEqual(await withTraceTag(undefined, decisionTags), ['decision', 'move-review']);
 });
+
+// The chat's closing trace (endSession's end-chat event) and Luna's decision generations, whose tags come from
+// traceInfo('luna') through the decision client's context: one filter must show the whole study.
+const endChatTrace = async () => {
+  const tracing = recordingTracing() as any;
+  await tracing.endSession('study-1');
+  return tracing.recorded.observations[0].trace;
+};
+
+test('a study chat’s closing end-chat trace carries wikiart-study', async () => {
+  assert.deepEqual((await withTraceTag('wikiart-study', endChatTrace)).tags, ['wikiart-study']);
+});
+
+test('without the tag the closing end-chat trace has no tags, as before', async () => {
+  assert.equal('tags' in await withTraceTag(undefined, endChatTrace), false);
+});
+
+test('Luna’s context for a study chat ends with wikiart-study, so its decision generations are tagged', async () => {
+  const lunaTags = () => (StudioRuntime.prototype as any).traceInfo.call(chat, 'luna').tags;
+  assert.deepEqual(await withTraceTag('wikiart-study', lunaTags), ['luna', 'mode:agent', 'wikiart-study']);
+});

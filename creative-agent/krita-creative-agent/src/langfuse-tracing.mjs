@@ -106,7 +106,7 @@ export class LangfuseTracing {
   // New chat closes the session: a final `end-chat` event, then everything is sent.
   async endSession(sessionId, { reason = 'new_chat', metadata } = /** @type {{reason?: string, metadata?: object}} */ ({})) {
     if (!sessionId) return;
-    try { this.start(null, 'end-chat', { metadata: { reason, ...metadata } }, { asType: 'event' }, { traceName: 'end-chat', sessionId, version: this.release }); }
+    try { this.start(null, 'end-chat', { metadata: { reason, ...metadata } }, { asType: 'event' }, { traceName: 'end-chat', sessionId, version: this.release, ...(traceTags().length ? { tags: traceTags() } : {}) }); }
     catch { /* Tracing never interrupts painting. */ }
     await this.flush();
   }
