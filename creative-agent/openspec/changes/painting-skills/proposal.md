@@ -107,6 +107,12 @@ library/
   expands the name to base preset plus properties and always passes `size` (stroke bounds are computed from the base
   preset before properties apply). This is how the artist's decision 3 is met: the reference tool keeps choosing
   colour and place, with the skill's brush.
+- **What the live checks showed** (2026-11-15, tasks section 1, the installed Toska's `kritarunner`): every part of
+  this mechanism works as written. A document with no view takes `paintStrokes` and gives its pixels back, the same
+  through 50 clears and repaints. `presetProperties` changes the tip through `brush_definition` (round to rectangle,
+  and its ratio), switches a sensor on and off and takes a new curve (`PressureSize`, `SizeSensor`), and loads a
+  texture pattern by name and file name. Values may be booleans or the strings the preset XML uses. The reference
+  tools paint through `paint_pass`, so `brush` is expanded in one place for all of them.
 - **Later, not in this change's first pass**: a small fork API to save a library brush as a real Krita preset with a
   generated tip, so it also appears in Krita's own preset list.
 

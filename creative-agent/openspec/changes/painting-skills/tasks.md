@@ -58,16 +58,28 @@ batch.
 
 ## 1. Live checks that decide the mechanism
 
-- [ ] 1.1 A document made with `Krita.createDocument` and no view: `paintStrokes` paints on it, pixels read back, the
-      session checks (`creative_tools.py` around the session guard) pass, Toska stays up through 50 clears and repaints.
-      It is never closed in the check.
-- [ ] 1.2 `presetProperties` with a `brush_definition` override changes the tip (a round and a rectangle tip give
-      measurably different swatches).
-- [ ] 1.3 A sensor curve set through properties changes the stroke (pressure to size, on and off).
-- [ ] 1.4 A texture pattern named in properties loads, or is recorded as not possible this way.
-- [ ] 1.5 Which of `paint_from_reference` and `paint_reference_surface` can take a preset and properties for their
-      dabs, read in code, then seen live.
-- [ ] 1.6 Write what 1.1 to 1.5 showed into the proposal; change the mechanism where a check failed.
+- [x] 1.1 A document made with `Krita.createDocument` and no view: `paintStrokes` paints on it and pixels read back
+      (2026-11-15: 0 views, job done in 107 ms, 32,730 opaque pixels; 50 clears and repaints, the same count every
+      time, the document never closed). Run in the installed Toska's own `kritarunner` (build 136f5ecc) in a temporary
+      home, so the engine and the fork's API are the real ones. Not yet seen: the session checks in `creative_tools.py`
+      and the running Toska window staying up; they need the plugin code and are part of 3.3.
+- [x] 1.2 `presetProperties` with a `brush_definition` override changes the tip: one 200 px dab of `b) Basic-5 Size`
+      covers 31,024 px with its round tip, 40,000 px with `MaskGenerator type="rect"`, 20,000 px with `ratio="0.5"`.
+- [x] 1.3 A sensor curve set through properties changes the stroke. A pressure ramp 0.1 to 1 at size 80: as saved the
+      stroke is 1 px high at its start and 74 px at its end; `PressureSize` false gives 80 and 80 (a boolean and the
+      string `false` both work); a steeper `SizeSensor` curve gives 0 and 66 (set with `SizeUseSameCurve` false and
+      `SizecommonCurve` written too, as the proposal says).
+- [x] 1.4 A texture pattern named in properties loads: `Texture/Pattern/Enabled`, `Name` and `PatternFileName`
+      ("Canvas 04", `Crumpled_Paper.pat`) turn a flat 200 px stroke (alpha deviation 0) into a textured one (deviation
+      40, 160,387 pixels changed). No MD5 was needed; libkis's `Resource` does not expose one.
+- [ ] 1.5 (part) Read in code: `paint_from_reference` and `paint_reference_surface` send every chunk as a `paint_pass`
+      with a `preset` (`reference-tool.mjs`, the pass arguments), and nothing in the plugin accepts properties from a
+      caller (`_creative_stroke_job` builds `presetProperties` from the mixing options only). So `brush` accepted by
+      `paint_pass` and expanded in `_creative_stroke_job` reaches both tools' dabs in one place. Seen live: with 3.5.
+- [x] 1.6 What 1.1 to 1.5 showed is in the proposal ("What the live checks showed"). No check failed, so the
+      mechanism stands. The script and its results: `local-notes/wikiart-study/mechanism-checks/`. A constraint for
+      3.3: `numpy` is not importable in `kritarunner` (the plugin's `vendor.py` adds it), so the checks measured with
+      plain bytes.
 
 ## 2. Library
 
