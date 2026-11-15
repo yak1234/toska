@@ -172,6 +172,45 @@ placement problem (many dots, ordered lines). The painter then builds a techniqu
   for the same kind of surface.
 - These are study scores, written as `study_brushwork` and `study_*`. They never grade or steer Luna at run time.
 
+#### The measure, as proposed after the trials of 2026-11-15 (awaiting the artist's approval)
+
+The artist (2026-11-15) chose two layers for the score: classical texture measures and a learned texture distance.
+A throwaway trial on real pictures decided which learned distance (`local-notes/wikiart-study/mechanism-checks/
+learned-distance-trial/`): three 1024 px close-ups of a real pastel (Degas, the Met's open-access image), each also
+sharpened 4x from a quarter-size copy, plainly enlarged, repainted as uniform soft dabs and blurred, and three close-ups
+of a real oil (Van Gogh). Luminance only, at full size, in 512 px squares. Mean distances from a real square:
+
+| Distance | Same pastel, another spot | Sharpened | Enlarged | Dabbed | Blurred | Oil | Moved 20 px |
+|---|---|---|---|---|---|---|---|
+| VGG19 style (Gram) | 0.18 | 0.55 | 0.61 | 0.66 | 0.66 | 0.59 | 0.02 |
+| DISTS | 0.20 | 0.32 | 0.34 | 0.35 | 0.37 | 0.51 | 0.03 |
+| DINOv2-small texture (Gram) | 0.23 | 0.40 | 0.40 | 0.52 | 0.42 | 0.46 | 0.06 |
+| DreamSim (224 px) | 0.22 | 0.34 | 0.38 | 0.50 | 0.42 | 0.43 | 0.02 |
+| LPIPS (control) | 0.52 | 0.65 | 0.68 | 0.73 | 0.73 | 0.63 | 0.39 |
+
+(The degraded versions are measured at another spot than the real square, so nothing is helped by lining up.) The VGG19
+style distance separates best: the worst real-against-degraded case is 3.1 times the distance between two spots of the
+same real pastel (DISTS 1.6, DINOv2 1.7, DreamSim 1.5, LPIPS 1.25), it hardly notices where the degraded square was cut
+(0.52 at the same spot, 0.55 at another), and a 20 px move is a twentieth of the smallest real difference. DreamSim
+follows the picture, not the marks: at the same spot it finds the sharpened copy (0.20) closer than another spot of the
+real pastel (0.22). LPIPS, as expected, is thrown by a 20 px move.
+
+- **Layer 1, classical, says why** (`src/brushwork-score.ts`, fixed): measured at the crop's own size, never reduced to
+  384 px; its parts reported as plain findings the painter can act on ("a tenth of the original's edges", "marks agree
+  on a direction twice as much"). OpenCV's oriented filters and local patterns are added only if these parts prove too
+  few on a second material.
+- **Layer 2, learned, ranks** (new, in the companion on the ONNX runtime already used for sharpening): the VGG19 style
+  distance over its first four feature levels, on luminance, in 512 px squares of the crop at full size, averaged. The
+  model is the feature part of VGG19 only (about 59 MB as weights), converted to ONNX once and fetched on first use as
+  the sharpening model is. No alignment is needed, so the same number serves Tinker and Transfer, where there is no
+  original to line up with: new paint is compared with stored squares of the style's own material.
+- **The rule**: a version of the measure is used only when it puts the calibration set in order (real against real
+  below every degraded version, on every close-up). The set is the one above, kept as a test.
+- **Sources**: close-ups that teach or grade brushwork come from images that hold it (museum open-access), never from a
+  sharpened copy (tasks 4.2).
+- Not decided by this trial: a second material and a second painter (one pastel and one oil are a small set), and how
+  the distance maps to 0 to 100.
+
 ### 6. The study runner
 
 - A developer script in the companion (`scripts/study-run.ts`), not part of the app. It drives the test driver
