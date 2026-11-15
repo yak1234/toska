@@ -141,16 +141,14 @@ export function brushRecipe(base: Base, settings: unknown): BrushRecipe {
   if (s.build !== undefined) properties.PaintOpAction = BUILD[choice(s.build, 'build', Object.keys(BUILD) as (keyof typeof BUILD)[])];
   if (s.blend !== undefined) properties.CompositeOp = choice(s.blend, 'blend', BLENDS);
   if (s.texture !== undefined) {
-    const texture = fields(s.texture, 'texture', ['pattern', 'scale', 'strength']);
+    // No strength: Krita's texture strength fades the paint itself (0.2 laid a third of the ink on the swatch sheet),
+    // which is not a weaker texture. A fainter texture is a smaller scale or another pattern.
+    const texture = fields(s.texture, 'texture', ['pattern', 'scale']);
     if (typeof texture.pattern !== 'string' || !texture.pattern.trim() || texture.pattern.length > 100)
       throw new Error('texture.pattern must name a pattern of the library (up to 100 characters).');
     properties['Texture/Pattern/Enabled'] = true;
     properties['Texture/Pattern/Name'] = texture.pattern;          // the plugin adds the pattern's file name
     if (texture.scale !== undefined) properties['Texture/Pattern/Scale'] = number(texture.scale, 'texture.scale', 0.1, 10);
-    if (texture.strength !== undefined) {
-      properties['PressureTexture/Strength/'] = true;
-      properties['Texture/Strength/Value'] = number(texture.strength, 'texture.strength', 0, 1);
-    }
   }
   if (s.smudge !== undefined) {
     if (engine !== 'colorsmudge') throw new Error('smudge settings need a Color Smudge base preset such as k) Blender Basic.');

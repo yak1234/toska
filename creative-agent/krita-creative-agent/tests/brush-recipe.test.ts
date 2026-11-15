@@ -48,9 +48,11 @@ test('scatter, opacity, flow, build and blend', () => {
 });
 
 test('a texture names its pattern and switches texturing on', () => {
-  assert.deepEqual(brushRecipe(pixel, { texture: { pattern: 'Canvas 04', scale: 0.6, strength: 0.5 } }).properties, {
-    'Texture/Pattern/Enabled': true, 'Texture/Pattern/Name': 'Canvas 04', 'Texture/Pattern/Scale': 0.6,
-    'PressureTexture/Strength/': true, 'Texture/Strength/Value': 0.5 });
+  assert.deepEqual(brushRecipe(pixel, { texture: { pattern: 'Canvas 04', scale: 0.6 } }).properties, {
+    'Texture/Pattern/Enabled': true, 'Texture/Pattern/Name': 'Canvas 04', 'Texture/Pattern/Scale': 0.6 });
+  // Krita's texture strength fades the paint itself (seen on the swatch sheet: 0.2 lays a third of the ink), which is
+  // not what a painter means by a weaker texture, so the vocabulary does not offer it.
+  assert.throws(() => brushRecipe(pixel, { texture: { pattern: 'Canvas 04', strength: 0.5 } }), /texture\.strength/);
 });
 
 test('smudge settings belong to the colour smudge engine only', () => {
@@ -110,7 +112,7 @@ test('every key a recipe can produce is a key of its engine (read from Toska’s
       .filter(name => engine === 'paintbrush' || !['flow', 'softness'].includes(name))
       .flatMap(name => [[name, { input: Object.keys(INPUTS)[0], curve: [[0, 0], [1, 1]] }]]));
     const on = brushRecipe({ preset: 'p', engine }, { respond, scatter: { amount: 1, x: true, y: true }, opacity: 1, flow: 1, blend: BLENDS[0],
-      texture: { pattern: 'p', scale: 1, strength: 1 }, ...(engine === 'paintbrush' ? { build: 'wash' } : { smudge: { colour_rate: 1, smudge_rate: 1, mode: 'dull', radius: 1 } }) });
+      texture: { pattern: 'p', scale: 1 }, ...(engine === 'paintbrush' ? { build: 'wash' } : { smudge: { colour_rate: 1, smudge_rate: 1, mode: 'dull', radius: 1 } }) });
     const off = brushRecipe({ preset: 'p', engine }, { respond: Object.fromEntries(Object.keys(respond).map(name => [name, false])) });
     return [...Object.keys(on.properties), ...Object.keys(off.properties)];
   };

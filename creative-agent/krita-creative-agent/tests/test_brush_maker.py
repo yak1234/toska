@@ -91,6 +91,7 @@ class Expand(unittest.TestCase):
     def test_values_are_plain_and_in_range(self):
         for properties, message in (({'OpacityValue': 1.5}, 'OpacityValue'), ({'OpacityValue': float('nan')}, 'OpacityValue'),
                                     ({'ScatterValue': 9}, 'ScatterValue'), ({'PaintOpAction': 3}, 'PaintOpAction'),
+                                    ({'Texture/Strength/Value': 0.5}, 'Texture/Strength/Value'), ({'PressureTexture/Strength/': True}, 'PressureTexture/Strength/'),
                                     ({'PressureSize': 'maybe'}, 'PressureSize'), ({'SizeSensor': {'id': 'pressure'}}, 'SizeSensor'),
                                     ({'SizeSensor': 'x' * 3000}, 'SizeSensor'), ({'SizecommonCurve': '0,0;2,1;'}, 'SizecommonCurve'),
                                     ({'SizeSensor': '<params id="mood"> <curve>0,0;1,1;</curve> </params>'}, 'SizeSensor')):

@@ -39,6 +39,7 @@ from .texture_craft import TextureCraft
 from .snow_craft import SnowCraft
 from .effect_craft import EffectCraft
 from .brushwork_pattern import BrushworkCraft
+from .brush_craft import BrushCraft
 from .area_compare import AreaCompare
 from .guide_craft import GuideCraft
 from .tool_craft import ToolCraft, OPERATIONS as TOOL_OPERATIONS, PASS_TITLES as TOOL_TITLES, tool_functions_available
@@ -143,7 +144,7 @@ def note_still_rendering(result, waited):
     result.update(canvas_settle.outcome(canvas_settle.RENDERING, waited))
 
 
-class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, TransformCraft, CanvasView, ComicCraft, MergeCraft, FlattenCraft, ProtectionCraft, FeatureCraft, NativeCraft, MaterialCraft, ToolCraft, GuideCraft, AccentCraft, FinishCraft, TextureCraft, SnowCraft, EffectCraft, BrushworkCraft, AreaCompare):
+class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, TransformCraft, CanvasView, ComicCraft, MergeCraft, FlattenCraft, ProtectionCraft, FeatureCraft, NativeCraft, MaterialCraft, ToolCraft, GuideCraft, AccentCraft, FinishCraft, TextureCraft, SnowCraft, EffectCraft, BrushworkCraft, BrushCraft, AreaCompare):
     def cmd_creative(self, request):
         fields(request, ('operation', 'session_id', 'operation_id', 'params'), ('operation', 'params'))
         operation = request['operation']
@@ -510,6 +511,10 @@ class CreativeTools(LayerCraft, RegionCraft, FilterCraft, ColorizeCraft, Transfo
             # The effect over a picture of the canvas view, written to a file: no document is read, painted or opened,
             # so it runs before the active document is looked up (effect_craft.py). Not a pass or checkpoint.
             return self._effect_preview(session, params)
+        if operation == 'brush_swatch':
+            # A sheet of strokes with a preset or a brush recipe, on the plugin's own hidden scratch document, written
+            # to a file: no painting is read or changed (brush_craft.py). Not a pass or checkpoint.
+            return self._brush_swatch(session, params)
         if operation == 'end':
             fields(params, ())
             # Deferred actions are saved before the study is released.

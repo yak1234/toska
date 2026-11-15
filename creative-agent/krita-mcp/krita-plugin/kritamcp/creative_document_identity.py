@@ -7,6 +7,10 @@ import uuid
 from krita import Krita
 
 _identities = []
+# Documents the plugin made for itself and never shows (the brush swatch sheet, brush_craft.py). Krita lists a document
+# with no view among its documents, so they are left out here: the panel, the session checks and "no other document
+# open" only ever see the artist's documents.
+_hidden = []
 
 
 def _same_document(left, right):
@@ -14,6 +18,21 @@ def _same_document(left, right):
         return left is right or bool(left == right)
     except (RuntimeError, ReferenceError):
         return False
+
+
+def is_hidden(doc):
+    return any(_same_document(doc, hidden) for hidden in _hidden)
+
+
+def hide_document(doc):
+    """Keep `doc` out of open_documents() from now on."""
+    if not is_hidden(doc):
+        _hidden.append(doc)
+
+
+def unhide_document(doc):
+    """Forget a hidden document (the plugin let go of it)."""
+    _hidden[:] = [hidden for hidden in _hidden if not _same_document(doc, hidden)]
 
 
 def open_documents():
@@ -27,7 +46,7 @@ def open_documents():
             candidates.append(view.document())
     result = []
     for doc in candidates:
-        if doc is not None and not any(_same_document(doc, known) for known in result):
+        if doc is not None and not is_hidden(doc) and not any(_same_document(doc, known) for known in result):
             result.append(doc)
     return result
 

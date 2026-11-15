@@ -113,12 +113,26 @@ batch.
       Seen on the real engine 2026-11-15 (the installed Toska's `kritarunner`, recipes from `brush-recipe.ts` through
       `expand` into `paintStrokes`; `local-notes/wikiart-study/mechanism-checks/chain.json`): tip shape and ratio,
       softness, spacing, size response off and steeper, opacity, flow, opacity following pressure, scatter, a texture
-      and a fuzzy rotation each change the swatch measurably. **Not shown yet:** the smudge settings changed nothing
-      measurable on `k) Blender Basic` (the check may be at fault: one blue stroke over a red block), and texture
-      strength 0.2 lays less paint than strength 1, not a fainter texture, so its meaning is not what the vocabulary
-      says. Both are looked into with the swatch sheet (3.3). Still to do here: the brush registry and `brush` wired
-      into the bridge.
-- [ ] 3.3 The scratch document and the swatch sheet; PNG into the chat folder. Tests with the fake plugin; live once.
+      and a fuzzy rotation each change the swatch measurably. Settled with the swatch sheet (3.3): the smudge settings do work (a strong and a weak smudge rate
+      differ in 223,693 pixels of the sheet; the first check was at fault, it gave the blender nothing to drag), and
+      texture strength is out of the vocabulary: 0.2 laid a third of the ink of 1, so it fades the paint, not the
+      texture. Still to do here: the brush registry and `brush` wired into `paint_pass` (3.5).
+- [ ] 3.3 (part) The scratch document and the swatch sheet. Built: the operation `brush_swatch {preset | recipe,
+      out_path, size?}` (`kritamcp/brush_craft.py`, registered in `cmd_creative` beside `effect_preview`); one fixed
+      sheet (`brush_maker.swatch_sheet`: a pressure ramp, an S curve, five swelling strokes, twelve dabs from light to
+      full, two colours crossed) painted on a 1600 x 1000 scratch document with no view, cleared before each swatch, a
+      PNG into the chat folder. A blender gets two colours in stripes to drag, since it lays no paint of its own.
+      Tests: `tests/test_brush_swatch.py`. Seen on the real engine 2026-11-15 (the installed Toska's `kritarunner`
+      with the plugin's own numpy and OpenCV; sheets in `local-notes/wikiart-study/mechanism-checks/swatches/`): ten
+      swatches, each readable; the same brush twice gives the same file byte for byte.
+      Two things the real run showed, both fixed: (1) Krita lists a document with no view among its documents, so the
+      scratch document would have appeared in the panel's list and tripped "no other document open":
+      `creative_document_identity.open_documents` now leaves hidden documents out (`hide_document`). (2) Held while
+      the process shut down, the scratch document crashed it at exit (exit 139, "tiles have leaked"); the plugin now
+      lets go of it on Qt's `aboutToQuit` (`_brush_release`), and with that the runner exits cleanly.
+      Still to do: seen in the running Toska (a swatch through the bridge, the window staying up, the panel's
+      document list unchanged, quitting clean), which needs a build, a package and an install. In the runner's fresh
+      profile `k) Blender Basic` could not load its own texture pattern (a warning per stroke); to look at in Toska.
 - [ ] 3.4 `make_brush` tool in `paintingTools()`, the Luna A/B check against the base swatch, 4 tries, save on a win.
 - [ ] 3.5 `brush` accepted wherever `preset` is (`creative_validation.py`, `paint_pass`, `paint_batch`,
       `paint_recipe`, the reference tools as 1.5 allows).

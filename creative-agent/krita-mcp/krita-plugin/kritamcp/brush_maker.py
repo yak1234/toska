@@ -24,10 +24,10 @@ BLENDS = ('normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'dodge
 SENSORS = ('pressure', 'speed', 'drawingangle', 'fade', 'distance', 'fuzzy', 'fuzzystroke')
 OPTIONS = ('Size', 'Opacity', 'Flow', 'Rotation', 'Scatter', 'Softness', 'Ratio')
 NUMBERS = {'OpacityValue': (0, 1), 'FlowValue': (0, 1), 'ScatterValue': (0, 5), 'ColorRateValue': (0, 1), 'SmudgeRateValue': (0, 1),
-           'SmudgeRadiusValue': (0, 300), 'Texture/Pattern/Scale': (0.1, 10), 'Texture/Strength/Value': (0, 1)}
+           'SmudgeRadiusValue': (0, 300), 'Texture/Pattern/Scale': (0.1, 10)}
 CHOICES = {'PaintOpAction': (1, 2), 'SmudgeRateMode': (0, 1)}
 SWITCHES = frozenset(['Pressure' + option for option in OPTIONS] + [option + suffix for option in OPTIONS for suffix in ('UseCurve', 'UseSameCurve')]
-                     + ['Scattering/AxisX', 'Scattering/AxisY', 'Texture/Pattern/Enabled', 'PressureTexture/Strength/'])
+                     + ['Scattering/AxisX', 'Scattering/AxisY', 'Texture/Pattern/Enabled'])
 # Settings one engine alone uses. Presets keep settings of engines they were once saved from (Toska's pixel-brush presets
 # carry smudge keys), so a key found in an engine's presets is not proof the engine reads it.
 ENGINE_ONLY = {'colorsmudge': frozenset(['ColorRateValue', 'SmudgeRateValue', 'SmudgeRateMode', 'SmudgeRadiusValue']),
@@ -172,3 +172,41 @@ def expand(recipe, preset_xml, patterns):
     if recipe.get('tip') is not None:
         out['brush_definition'] = _tip(recipe['tip'], preset_xml)
     return {'preset': recipe['base_preset'], 'properties': out, 'composite': composite}
+
+
+def inside(folder, path, label):
+    """The real path of `path`, which must be a plain absolute path of a file inside `folder` (the chat folder)."""
+    message = '%s must be a file in the chat folder' % label
+    if not folder or not isinstance(path, str) or not os.path.isabs(path) or '..' in path.split(os.sep):
+        raise ValueError(message)
+    root, real = os.path.realpath(folder), os.path.realpath(path)
+    if real == root or os.path.commonpath([root, real]) != root:
+        raise ValueError(message)
+    return real
+
+
+SWATCH_INK, SWATCH_RED, SWATCH_BLUE = '#000000', '#c8321e', '#1e46c8'
+
+
+def swatch_sheet(width, height, size):
+    """The one fixed sheet every brush is shown on, as Node.paintStrokes strokes with pen pressure, so two brushes are
+    compared mark for mark: a pressure ramp (thin to full), a long S curve, five short strokes side by side (each
+    swelling and thinning), a cluster of single dabs from light to full, and two colours crossed. `size` (the brush
+    diameter the job paints with) sets the gaps. Always the same for the same arguments."""
+    def at(fx, fy, pressure):
+        return [round(width * fx, 1), round(height * fy, 1), round(pressure, 3)]
+    gap = size * 1.3 / height
+    strokes = [{'color': SWATCH_INK, 'points': [at(0.06 + 0.88 * i / 23, 0.13, 0.05 + 0.95 * i / 23) for i in range(24)]}]
+    start, middle, end = at(0.06, 0.36, 0.7), at(0.5, 0.36, 0.7), at(0.94, 0.36, 0.7)
+    strokes.append({'color': SWATCH_INK, 'start': start, 'segments': [
+        [round(width * 0.2, 1), round(height * 0.22, 1), round(width * 0.36, 1), round(height * 0.5, 1)] + middle,
+        [round(width * 0.64, 1), round(height * 0.22, 1), round(width * 0.8, 1), round(height * 0.5, 1)] + end]})
+    for row in range(5):
+        y = min(0.95, 0.56 + row * gap)
+        strokes.append({'color': SWATCH_INK, 'points': [at(0.06 + 0.34 * i / 10, y, 0.3 + 0.7 * (1 - abs(i - 5) / 5)) for i in range(11)]})
+    for index in range(12):
+        column, row = index % 4, index // 4
+        strokes.append({'color': SWATCH_INK, 'points': [at(0.5 + column * 0.06, min(0.95, 0.58 + row * gap * 1.4), 0.2 + 0.8 * index / 11)]})
+    strokes.append({'color': SWATCH_RED, 'points': [at(0.76 + 0.18 * i / 8, 0.72, 0.8) for i in range(9)]})
+    strokes.append({'color': SWATCH_BLUE, 'points': [at(0.85, 0.56 + 0.32 * i / 8, 0.8) for i in range(9)]})
+    return strokes
