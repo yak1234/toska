@@ -127,10 +127,15 @@ batch.
 
 - [ ] 6.1 `scripts/study-run.ts`: driver socket, keep-card answers, budgets, stop and resume, a record per task. The
       waiter's exit conditions checked on real `/state` first, with a deadline.
-- [ ] 6.1a The Langfuse tag `wikiart-study` (proposal goal 6): `TOSKA_TRACE_TAG` in `src/test-env.ts` (one allowed
-      value), appended by `traceInfo` and on decision traces; the tool's description names it; unit tests for the
-      allow-list and for the tag reaching a trace. Langfuse keys in Toska's project folder `.env`. Live: one test chat
-      started with the key, its traces found in Langfuse by the tag.
+- [x] 6.1a The Langfuse tag `wikiart-study` (proposal goal 6): `TOSKA_TRACE_TAG` in `src/test-env.ts` (one allowed
+      value), appended by `traceInfo`, on decision traces and on the closing `end-chat` trace; the tool's description
+      names it; unit tests (`tests/trace-tag.test.ts`). Langfuse keys in Toska's project folder `.env`. Live
+      2026-11-15, installed build 136f5ecc, 6000 x 4500: test chat baac921e started with the key, all 7 of its traces
+      (20 observations, `end-chat` among them) found in Langfuse by the tag; test chat c73e270f started without it,
+      5 traces, none tagged; a made-up tag finds nothing. Langfuse's old traces API is refused for this organisation:
+      read with `/api/public/v2/observations` and a `tags` filter. Left for later: a comment in `test-companion.ts`
+      names only the older key; the driver and Python client tests do not exercise the new key; a Toska launched from
+      a shell that exports the key would tag the artist's chats too.
 - [ ] 6.2 Fix: the painter asking for the canvas it has already observed.
 - [ ] 6.3 Copy without and with the skill on Degas and Shishkin; table against the baselines.
 
