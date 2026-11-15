@@ -53,7 +53,8 @@ batch.
 ## 0. Before building
 
 - [x] 0.1 Release 0.2.0-prealpha finished (2026-11-14).
-- [ ] 0.2 The artist picks the library scheme and confirms or changes the open points in the proposal.
+- [x] 0.2 (part) The artist picked the library scheme: A, two shelves, materials and styles (2026-11-15, "yes"), and
+      `make_brush` as the next thing built. Still open for the artist: the proposal's points 2 to 6.
 - [ ] 0.3 Note in `stroke-generators/proposal.md` that this change takes it over (if the artist agrees).
 
 ## 1. Live checks that decide the mechanism

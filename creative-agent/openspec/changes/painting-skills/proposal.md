@@ -1,8 +1,7 @@
 # Painting skills: the agent makes its own brushes, learns styles and builds stroke tools
 
 Status: DRAFT (2026-11-14). The artist's decisions are marked "the artist"; everything marked "Claude's proposal" is
-open until the artist confirms it. The library layout below assumes scheme A (two shelves), which the artist has not
-picked yet. `mechanical-strokes.md` in this folder is the part built first (hand strokes that do not come out
+open until the artist confirms it. The library layout is scheme A (two shelves), picked by the artist on 2026-11-15. `mechanical-strokes.md` in this folder is the part built first (hand strokes that do not come out
 mechanical); its first tasks are built, see `tasks.md` section M.
 
 ## Why
@@ -52,7 +51,7 @@ are text.
 
 ## Goals
 
-### 1. The library (scheme A, awaiting the artist's pick)
+### 1. The library (scheme A, picked by the artist 2026-11-15)
 
 Two shelves, because a material's marks are the same in every style and a style may use several materials:
 
@@ -264,7 +263,7 @@ style they recognise.
 
 ## Open for the artist
 
-1. The library scheme (A recommended) and whether "after <artist>" is an occasional variant.
+1. Whether "after <artist>" is an occasional variant (the scheme itself is settled: A).
 2. The four tasks and the brushwork score.
 3. The build order.
 4. Techniques taking over `stroke-generators`.
