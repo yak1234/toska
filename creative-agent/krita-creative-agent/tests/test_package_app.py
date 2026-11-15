@@ -2226,5 +2226,27 @@ class ReleaseCommandTests(unittest.TestCase):
             self.assertFalse(pathlib.Path(root, 'out').exists())
 
 
+class UpdateMenuTests(unittest.TestCase):
+    """Check for Updates… reaches the menu bar (openspec app-updates, 5.6). 0.2.0 and 0.2.1 added the action to the
+    help object's own menu, which is never shown, so the item was missing from the released apps."""
+
+    def test_the_action_is_in_the_collection_and_in_the_menu_file(self):
+        window = (REPO / 'libs/ui/KisMainWindow.cpp').read_text()
+        start = window.index('toska_check_for_updates')
+        block = window[start:window.index('#endif', start)]
+        self.assertIn('actions->addAction(checkForUpdates->objectName(), checkForUpdates)', block)
+        self.assertNotIn('helpMenu->menu()->addAction', block)
+        self.assertIn('<Action name="toska_check_for_updates"/>', (REPO / 'krita/krita5.xmlgui').read_text())
+
+    def test_the_menu_file_version_is_above_upstream_on_macos(self):
+        # a saved local copy of the menus (toolbar changes) hides new items unless the version is higher
+        cmake = (REPO / 'krita/CMakeLists.txt').read_text()
+        apple = re.search(r'elseif\(APPLE\)[^\n]*\n(?:\s*#[^\n]*\n)*\s*set\(KRITA5_XMLGUI_VERSION (\d+)\)', cmake)
+        self.assertIsNotNone(apple)
+        others = [int(n) for n in re.findall(r'set\(KRITA5_XMLGUI_VERSION (\d+)\)', cmake)]
+        self.assertEqual(int(apple.group(1)), max(others))
+        self.assertEqual(others.count(max(others)), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

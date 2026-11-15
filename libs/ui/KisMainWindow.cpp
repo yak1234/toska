@@ -579,7 +579,9 @@ KisMainWindow::KisMainWindow(QUuid uuid)
             checkForUpdates->setObjectName(QStringLiteral("toska_check_for_updates"));
             checkForUpdates->setMenuRole(QAction::ApplicationSpecificRole);
             connect(checkForUpdates, &QAction::triggered, this, []() { macosCheckForUpdates(); });
-            d->helpMenu->menu()->addAction(checkForUpdates);
+            // Through the action collection and krita5.xmlgui's Help menu, as About is: the help menu object's own
+            // QMenu is never put in the menu bar, so an action added only there is never shown.
+            actions->addAction(checkForUpdates->objectName(), checkForUpdates);
         }
 #endif
 

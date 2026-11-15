@@ -63,6 +63,11 @@ version to the next, is not started.
 - [x] 5.5 The updater is the default: `package-app.sh` gives the app Toska's feed whenever Sparkle was fetched;
       `--no-feed` makes an app without it (a development package made without `--feed` had lost Check for Updates…).
       Tests: `UpdateFeedTests` (5; the file's 158 pass).
+- [ ] 5.6 Check for Updates… was missing from the menu bar in 0.2.0 and 0.2.1 (the artist looked for it, 2026-11-14):
+      the action was added to the help object's own menu, which is never shown. Fixed: it goes through the action
+      collection and `krita5.xmlgui` (version 545 on macOS, so a saved local copy of the menus does not hide it).
+      Tests: `UpdateMenuTests` (2, source checks only). Open until the artist sees the item in a packaged app.
+      Background checks did work in those releases, so their users are still offered the next one.
 
 ## 6. Proof
 

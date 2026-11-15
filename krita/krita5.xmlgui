@@ -428,6 +428,7 @@ xsi:schemaLocation="http://www.kde.org/standards/kxmlgui/1.0  http://www.kde.org
       <Action name="crashlog"/>
       <Separator/>
       <Action name="help_about_app"/>
+      <Action name="toska_check_for_updates"/>
       <Action name="help_about_kde"/>
     </Menu>
   </MenuBar>
