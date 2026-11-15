@@ -49,7 +49,7 @@ import { BUILD_INFO } from './build-info.mjs';
 import { ModelCapabilities, isInteractiveModel } from './model-capabilities.mjs';
 import { IdleSleepGuard } from './idle-sleep-guard.mjs';
 import { connectLangfuse } from './langfuse-tracing.mjs';
-import { traceTags } from './test-env.ts';   // a study's tag on a test chat's traces (TOSKA_TRACE_TAG)
+import { skillsForced, traceTags } from './test-env.ts';   // a study's tag on a test chat's traces (TOSKA_TRACE_TAG)
 import { paceQuestions, paceState, paceAction, parsePace, stalled, levelledOff, foundMistakes, stepChecks, stepWork, handPaintedBy, callMethod, exhaustedMethods, MIN_ACTIONS_BEFORE_REVIEW, closeUpRegion } from './pacing.ts';
 import { decisionId } from './decision-records.mjs';
 import { skillCommand } from './skill-commands.ts';
@@ -2295,7 +2295,7 @@ export class StudioRuntime extends PaintingRuntime {
     if (this.currentMove?.kind === 'guides' && !GUIDE_MOVE_TOOLS.includes(name)) return false;
     if (name === 'letter') return !!this.goal?.comic;
     if (name === 'paint_effect') return this.executionSettings?.custom_effects === true;   // Custom effects: off by default (openspec custom-effects)
-    if (name === 'make_brush') return this.executionSettings?.painting_skills === true && this.forkTools === true;   // Painting skills: off by default; swatches are stroke jobs (our Krita)
+    if (name === 'make_brush') return (this.executionSettings?.painting_skills === true || skillsForced()) && this.forkTools === true;   // Painting skills: off by default; swatches are stroke jobs (our Krita)
     if (GUIDE_TOOLS.includes(name)) return this.forkTools === true && this.executionSettings?.guides !== false;   // our Krita only, and the setting (guidesAvailable)
     if (name === 'krita_action' && !(this.kritaActions > 0)) return false;     // an unaudited Krita: it would always refuse
     if (FORK_TOOLS.includes(name) && this.forkTools !== true) return false;     // stock Krita, or a plugin too old to say: it would always refuse

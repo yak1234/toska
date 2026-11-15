@@ -78,3 +78,28 @@ test('Luna’s context for a study chat ends with wikiart-study, so its decision
   const lunaTags = () => (StudioRuntime.prototype as any).traceInfo.call(chat, 'luna').tags;
   assert.deepEqual(await withTraceTag('wikiart-study', lunaTags), ['luna', 'mode:agent', 'wikiart-study']);
 });
+
+// A test chat may switch Painting skills on for itself (painting-skills 3.7: the live checks), as it may switch mixing
+// off: the artist's own setting is copied into the test chat and is not changed.
+import { skillsForced } from '../src/test-env.ts';
+
+test('a test chat may switch painting skills on for itself, with the one allowed value', () => {
+  assert.deepEqual(TEST_ENV_ALLOWED.TOSKA_PAINTING_SKILLS, ['on', '']);
+  assert.deepEqual(checkTestEnv({ TOSKA_PAINTING_SKILLS: ' ON ' }), { TOSKA_PAINTING_SKILLS: 'on' });
+  assert.throws(() => checkTestEnv({ TOSKA_PAINTING_SKILLS: 'yes' }), /'on'/);
+  assert.equal(skillsForced({ TOSKA_PAINTING_SKILLS: 'on' }), true);
+  assert.equal(skillsForced({ TOSKA_PAINTING_SKILLS: 'yes' }), false);
+  assert.equal(skillsForced({}), false);
+});
+
+test('make_brush is offered with the setting on or the test chat’s switch, in Toska only', async () => {
+  const offered = (settings: object, forkTools: boolean) =>
+    (StudioRuntime.prototype as any).toolOffered.call({ executionSettings: settings, forkTools, currentMove: null, goal: null }, 'make_brush');
+  const previous = process.env.TOSKA_PAINTING_SKILLS;
+  try {
+    delete process.env.TOSKA_PAINTING_SKILLS;
+    assert.deepEqual([offered({ painting_skills: true }, true), offered({ painting_skills: false }, true), offered({ painting_skills: true }, false)], [true, false, false]);
+    process.env.TOSKA_PAINTING_SKILLS = 'on';
+    assert.deepEqual([offered({ painting_skills: false }, true), offered({ painting_skills: false }, false)], [true, false]);
+  } finally { if (previous === undefined) delete process.env.TOSKA_PAINTING_SKILLS; else process.env.TOSKA_PAINTING_SKILLS = previous; }
+});

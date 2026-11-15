@@ -1,12 +1,13 @@
 // The environment a test chat may set on its own test companion, so a benchmark run can switch a feature per chat
-// (the artist's Toska and the driver keep theirs). An allow-list, never a pass-through: two keys. TOSKA_MIXING switches
+// (the artist's Toska and the driver keep theirs). An allow-list, never a pass-through: three keys. TOSKA_PAINTING_SKILLS=on offers make_brush in that chat; TOSKA_MIXING switches
 // colour mixing off; TOSKA_TRACE_TAG adds one tag to the chat's Langfuse traces (painting-skills 6.1a: wikiart-study).
 
 /** The key naming a study's tag for a test chat's Langfuse traces. */
 export const TRACE_TAG_KEY = 'TOSKA_TRACE_TAG';
 
 /** Allowed keys and their allowed values; '' unsets the key (the companion then gets the default, not the driver's own). */
-export const TEST_ENV_ALLOWED: Readonly<Record<string, readonly string[]>> = Object.freeze({ TOSKA_MIXING: ['off', ''], [TRACE_TAG_KEY]: ['wikiart-study', ''] });
+export const TEST_ENV_ALLOWED: Readonly<Record<string, readonly string[]>> = Object.freeze({ TOSKA_MIXING: ['off', ''], [TRACE_TAG_KEY]: ['wikiart-study', ''],
+  TOSKA_PAINTING_SKILLS: ['on', ''] });
 
 /** The env map checked and normalised (values trimmed, lower-cased), or an Error naming what is refused. */
 export function checkTestEnv(env: unknown): Record<string, string> {
@@ -36,4 +37,10 @@ export function companionEnv(base: NodeJS.ProcessEnv, configPath: string, overri
 export function traceTags(env: NodeJS.ProcessEnv = process.env): string[] {
   const value = env[TRACE_TAG_KEY]?.trim().toLowerCase();
   return value && TEST_ENV_ALLOWED[TRACE_TAG_KEY].includes(value) ? [value] : [];
+}
+
+/** Whether this companion's environment switches Painting skills on whatever the setting says (a test chat's own
+ * switch, TOSKA_PAINTING_SKILLS=on: the artist's setting is copied into a test chat and is never changed by it). */
+export function skillsForced(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.TOSKA_PAINTING_SKILLS?.trim().toLowerCase() === 'on';
 }
