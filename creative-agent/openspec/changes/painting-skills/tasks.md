@@ -103,8 +103,21 @@ batch.
       tip), because spacing and angle live inside the base's `brush_definition`, which only the plugin can read. Left
       out: `bristle` (one bristle preset, no checked vocabulary; refused with a message). Not yet seen live: the
       texture strength keys and the `distance` input.
-- [ ] 3.2 `kritamcp/brush_maker.py`: check base, engine, keys, ranges, tip; expand `brush` to preset plus properties;
-      always pass `size`. Tests.
+- [x] 3.2 (part) `kritamcp/brush_maker.py` (`expand`, pure, 12 tests in `tests/test_brush_maker.py`): the recipe's
+      fields, the base preset's engine, every key (a key of the engine in `brush_engine_keys.json`, not another
+      engine's, and of a form a recipe may set), every value (switches, ranges, one pen input with a curve), the tip
+      change applied to the base's `brush_definition` (a generated tip replaced or patched; an image tip takes spacing
+      and angle only), the pattern's file name added, and the blend mode handed back as the job's own option.
+      Found on the way and fixed in 3.1: the flow response has no switch, and Color Smudge has no flow curve, softness
+      response or build mode; pixel-brush presets carry leftover smudge keys, so one-engine keys are listed by hand.
+      Seen on the real engine 2026-11-15 (the installed Toska's `kritarunner`, recipes from `brush-recipe.ts` through
+      `expand` into `paintStrokes`; `local-notes/wikiart-study/mechanism-checks/chain.json`): tip shape and ratio,
+      softness, spacing, size response off and steeper, opacity, flow, opacity following pressure, scatter, a texture
+      and a fuzzy rotation each change the swatch measurably. **Not shown yet:** the smudge settings changed nothing
+      measurable on `k) Blender Basic` (the check may be at fault: one blue stroke over a red block), and texture
+      strength 0.2 lays less paint than strength 1, not a fainter texture, so its meaning is not what the vocabulary
+      says. Both are looked into with the swatch sheet (3.3). Still to do here: the brush registry and `brush` wired
+      into the bridge.
 - [ ] 3.3 The scratch document and the swatch sheet; PNG into the chat folder. Tests with the fake plugin; live once.
 - [ ] 3.4 `make_brush` tool in `paintingTools()`, the Luna A/B check against the base swatch, 4 tries, save on a win.
 - [ ] 3.5 `brush` accepted wherever `preset` is (`creative_validation.py`, `paint_pass`, `paint_batch`,

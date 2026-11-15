@@ -84,3 +84,36 @@ test('a value out of range, an unknown field and a bad curve are refused with th
 test('bristle settings are not built yet and say so', () => {
   assert.throws(() => brushRecipe(pixel, { bristle: { scale: 1 } }), /bristle.*not available yet/);
 });
+
+// Engines differ: Krita's flow option has no on/off switch, and Color Smudge has no flow curve, softness response or
+// build mode. An engine ignores a key it does not have, silently, so each is refused here by name.
+import { readFileSync } from 'node:fs';
+import { RESPONSES, INPUTS, BLENDS } from '../src/brush-recipe.ts';
+const ENGINE_KEYS: Record<string, string[]> = JSON.parse(readFileSync(new URL('../../krita-mcp/krita-plugin/kritamcp/brush_engine_keys.json', import.meta.url), 'utf8'));
+
+test('the flow response has no switch: on sets its curve, off switches the curve off', () => {
+  assert.deepEqual(brushRecipe(pixel, { respond: { flow: { input: 'speed' } } }).properties, {
+    FlowUseCurve: true, FlowUseSameCurve: false, FlowSensor: sensorXml('speed'), FlowcommonCurve: '0,0;1,1;' });
+  assert.deepEqual(brushRecipe(pixel, { respond: { flow: false } }).properties, { FlowUseCurve: false });
+});
+
+test('Color Smudge has no flow or softness response and no build mode', () => {
+  assert.throws(() => brushRecipe(smudge, { respond: { flow: { input: 'pressure' } } }), /respond\.flow.*Color Smudge/);
+  assert.throws(() => brushRecipe(smudge, { respond: { softness: false } }), /respond\.softness.*Color Smudge/);
+  assert.throws(() => brushRecipe(smudge, { build: 'wash' }), /build.*Color Smudge/);
+  assert.equal(brushRecipe(smudge, { flow: 0.5 }).properties.FlowValue, 0.5);
+});
+
+test('every key a recipe can produce is a key of its engine (read from Toska’s presets)', () => {
+  const everything = (engine: string) => {
+    const respond = Object.fromEntries(Object.keys(RESPONSES)
+      .filter(name => engine === 'paintbrush' || !['flow', 'softness'].includes(name))
+      .flatMap(name => [[name, { input: Object.keys(INPUTS)[0], curve: [[0, 0], [1, 1]] }]]));
+    const on = brushRecipe({ preset: 'p', engine }, { respond, scatter: { amount: 1, x: true, y: true }, opacity: 1, flow: 1, blend: BLENDS[0],
+      texture: { pattern: 'p', scale: 1, strength: 1 }, ...(engine === 'paintbrush' ? { build: 'wash' } : { smudge: { colour_rate: 1, smudge_rate: 1, mode: 'dull', radius: 1 } }) });
+    const off = brushRecipe({ preset: 'p', engine }, { respond: Object.fromEntries(Object.keys(respond).map(name => [name, false])) });
+    return [...Object.keys(on.properties), ...Object.keys(off.properties)];
+  };
+  for (const engine of ['paintbrush', 'colorsmudge'])
+    assert.deepEqual(everything(engine).filter(key => !ENGINE_KEYS[engine].includes(key)), [], engine);
+});

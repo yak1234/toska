@@ -112,11 +112,15 @@ export function brushRecipe(base: Base, settings: unknown): BrushRecipe {
     const respond = fields(s.respond, 'respond', Object.keys(RESPONSES));
     for (const [name, value] of Object.entries(respond)) {
       const option = RESPONSES[name as keyof typeof RESPONSES], path = `respond.${name}`;
-      if (value === false) { properties[`Pressure${option}`] = false; continue; }
+      if (engine === 'colorsmudge' && (name === 'flow' || name === 'softness'))
+        throw new Error(`${path} is not a setting of a Color Smudge brush (its engine has no ${name} response).`);
+      // Krita's flow option is always on: it has no Pressure switch, only its curve.
+      const switched = name !== 'flow';
+      if (value === false) { properties[switched ? `Pressure${option}` : `${option}UseCurve`] = false; continue; }
       const response = fields(value, path, ['input', 'curve']);
       const input = choice(response.input, `${path}.input`, Object.keys(INPUTS) as Input[]);
       const curve = curveText(response.curve ?? LINEAR, `${path}.curve`);
-      properties[`Pressure${option}`] = true;
+      if (switched) properties[`Pressure${option}`] = true;
       properties[`${option}UseCurve`] = true;
       // Both curves are written: with the shared-curve switch on, the shared one wins over the sensor's own.
       properties[`${option}UseSameCurve`] = false;
@@ -133,6 +137,7 @@ export function brushRecipe(base: Base, settings: unknown): BrushRecipe {
   }
   if (s.opacity !== undefined) properties.OpacityValue = number(s.opacity, 'opacity', 0, 1);
   if (s.flow !== undefined) properties.FlowValue = number(s.flow, 'flow', 0, 1);
+  if (s.build !== undefined && engine === 'colorsmudge') throw new Error('build is not a setting of a Color Smudge brush (wash and build-up belong to the pixel brush).');
   if (s.build !== undefined) properties.PaintOpAction = BUILD[choice(s.build, 'build', Object.keys(BUILD) as (keyof typeof BUILD)[])];
   if (s.blend !== undefined) properties.CompositeOp = choice(s.blend, 'blend', BLENDS);
   if (s.texture !== undefined) {
