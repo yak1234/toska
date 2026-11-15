@@ -184,6 +184,17 @@ placement problem (many dots, ordered lines). The painter then builds a techniqu
      style's measurements and on Luna picking the right style out of four, blind.
   Tinker and Transfer are the scores that mean something: a pixel copy cannot pass them.
 - **Record** per task: the image, scores, tools called, time, cost, questions asked, faults. One table per run.
+- **Langfuse tag `wikiart-study`** (the artist, 2026-11-15: "a special tag"; design approved the same day). Every
+  trace of a study chat carries the tag, so one filter shows the whole study.
+  - How: a second key in the test chat's environment allow-list (`src/test-env.ts`), `TOSKA_TRACE_TAG`, whose only
+    allowed value is `wikiart-study`. `traceInfo` (`studio.mjs`) appends it to the tags when it is set, and Luna's
+    decision traces carry it too. The runner starts each chat with `env: {TOSKA_TRACE_TAG: "wikiart-study"}`.
+  - Keys: test chats were untraced, because Toska's project folder had no `.env`. The three Langfuse lines are copied
+    there from `digital_art/.env`. This also traces the artist's own Toska chats, which stay untagged.
+  - Considered and not chosen: a free `tags` list passed through the start command and stored on the chat (five files
+    against two, for free-form tags nobody has asked for).
+  - Not in this step: per-painting details (style, title, the original's and the canvas's dimensions) as trace
+    metadata, and scores per chat. They come with the runner (6.1).
 - **Scale**: the ten paintings in `originals/` first (Degas and Shishkin have baselines), then about 100 sampled
   through the rows API. Chagall (09) is in copyright: private tests only, never in a published file or image.
 - **Run rules** (from earlier live tests): 6000 px on the long side, the usual test painter model, no other document

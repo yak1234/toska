@@ -127,6 +127,10 @@ batch.
 
 - [ ] 6.1 `scripts/study-run.ts`: driver socket, keep-card answers, budgets, stop and resume, a record per task. The
       waiter's exit conditions checked on real `/state` first, with a deadline.
+- [ ] 6.1a The Langfuse tag `wikiart-study` (proposal goal 6): `TOSKA_TRACE_TAG` in `src/test-env.ts` (one allowed
+      value), appended by `traceInfo` and on decision traces; the tool's description names it; unit tests for the
+      allow-list and for the tag reaching a trace. Langfuse keys in Toska's project folder `.env`. Live: one test chat
+      started with the key, its traces found in Langfuse by the tag.
 - [ ] 6.2 Fix: the painter asking for the canvas it has already observed.
 - [ ] 6.3 Copy without and with the skill on Degas and Shishkin; table against the baselines.
 

@@ -94,8 +94,9 @@ def register_test_tools(mcp):
         test chat (and its PLAN.md) only ever sees the copy; the copy is deleted by creative_test_end.
         references: up to four absolute image paths, copied the same way and attached as the panel attaches them.
         env: optional environment for this test chat's companion only, so an A/B run can switch a feature per chat.
-        The only key allowed is TOSKA_MIXING, with the value 'off' (colour mixing off: the painter sees no mixing
-        models); '' or leaving it out keeps the default. Any other key or value is refused with a message.
+        Two keys are allowed. TOSKA_MIXING with the value 'off' (colour mixing off: the painter sees no mixing
+        models). TOSKA_TRACE_TAG with the value 'wikiart-study' (every Langfuse trace of this chat carries that tag).
+        '' or leaving a key out keeps the default. Any other key or value is refused with a message.
         """
         body = {'prompt': prompt, 'loopGuards': loop_guards}
         if painting: body['painting'] = painting

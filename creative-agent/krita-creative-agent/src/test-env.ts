@@ -1,8 +1,12 @@
 // The environment a test chat may set on its own test companion, so a benchmark run can switch a feature per chat
-// (the artist's Toska and the driver keep theirs). An allow-list, never a pass-through: one key for now.
+// (the artist's Toska and the driver keep theirs). An allow-list, never a pass-through: two keys. TOSKA_MIXING switches
+// colour mixing off; TOSKA_TRACE_TAG adds one tag to the chat's Langfuse traces (painting-skills 6.1a: wikiart-study).
+
+/** The key naming a study's tag for a test chat's Langfuse traces. */
+export const TRACE_TAG_KEY = 'TOSKA_TRACE_TAG';
 
 /** Allowed keys and their allowed values; '' unsets the key (the companion then gets the default, not the driver's own). */
-export const TEST_ENV_ALLOWED: Readonly<Record<string, readonly string[]>> = Object.freeze({ TOSKA_MIXING: ['off', ''] });
+export const TEST_ENV_ALLOWED: Readonly<Record<string, readonly string[]>> = Object.freeze({ TOSKA_MIXING: ['off', ''], [TRACE_TAG_KEY]: ['wikiart-study', ''] });
 
 /** The env map checked and normalised (values trimmed, lower-cased), or an Error naming what is refused. */
 export function checkTestEnv(env: unknown): Record<string, string> {
@@ -25,4 +29,11 @@ export function companionEnv(base: NodeJS.ProcessEnv, configPath: string, overri
   const env: NodeJS.ProcessEnv = { ...base, KRITA_CREATIVE_CONFIG: configPath };
   for (const [key, value] of Object.entries(overrides ? checkTestEnv(overrides) : {})) { if (value === '') delete env[key]; else env[key] = value; }
   return env;
+}
+
+/** The extra Langfuse tags of this companion's traces: the study tag when TOSKA_TRACE_TAG holds an allowed value, else
+ * none. Read from the allow-list, so a stray value in someone's shell never becomes a tag. */
+export function traceTags(env: NodeJS.ProcessEnv = process.env): string[] {
+  const value = env[TRACE_TAG_KEY]?.trim().toLowerCase();
+  return value && TEST_ENV_ALLOWED[TRACE_TAG_KEY].includes(value) ? [value] : [];
 }
