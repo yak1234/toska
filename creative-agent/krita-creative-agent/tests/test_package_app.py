@@ -1446,6 +1446,13 @@ class UpdateFeedTests(unittest.TestCase):
         self.assertEqual(len(__import__('base64').b64decode(package_app.UPDATE_PUBLIC_KEY)), 32)     # an Ed25519 public key
         self.assertEqual(plist['CFBundleName'], 'Toska')
 
+    def test_an_app_with_a_feed_looks_for_updates_itself_and_never_installs_unasked(self):
+        plist = package_app.updater_keys({'SUAutomaticallyUpdate': True}, package_app.UPDATE_FEED, sparkle=True)
+        self.assertIs(plist['SUEnableAutomaticChecks'], True)        # no "check automatically?" question to answer no to
+        self.assertNotIn('SUAutomaticallyUpdate', plist)             # it offers; the user presses Install
+        without = package_app.updater_keys({'SUEnableAutomaticChecks': True}, None, sparkle=True)
+        self.assertNotIn('SUEnableAutomaticChecks', without)
+
     def test_without_a_feed_the_app_has_no_updater_keys(self):
         plist = package_app.updater_keys({'SUFeedURL': 'https://old.example/x', 'SUPublicEDKey': 'k'}, None, sparkle=True)
         self.assertNotIn('SUFeedURL', plist)

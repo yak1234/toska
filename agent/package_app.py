@@ -611,11 +611,15 @@ def chosen_feed(feed, no_feed, sparkle):
 
 
 def updater_keys(plist, feed, sparkle):
-    """What makes the app look for updates, on an Info.plist dict: SUFeedURL and SUPublicEDKey when `feed` is given,
-    neither when it is not (the app then never starts its updater: libs/ui/osx_updater.mm). `sparkle`: is the framework
-    in the bundle. A feed is https only, and is refused for a bundle without Sparkle."""
-    plist.pop('SUFeedURL', None)
-    plist.pop('SUPublicEDKey', None)
+    """What makes the app look for updates, on an Info.plist dict: SUFeedURL, SUPublicEDKey and SUEnableAutomaticChecks
+    when `feed` is given, none when it is not (the app then never starts its updater: libs/ui/osx_updater.mm).
+    `sparkle`: is the framework in the bundle. A feed is https only, and is refused for a bundle without Sparkle.
+
+    SUEnableAutomaticChecks: the app looks for an update by itself (Sparkle's daily default) without first asking
+    "Check for updates automatically?", so nobody is left without updates by one click. It only looks and offers:
+    SUAutomaticallyUpdate is never written, an update is installed when the user presses Install."""
+    for key in ('SUFeedURL', 'SUPublicEDKey', 'SUEnableAutomaticChecks', 'SUAutomaticallyUpdate'):
+        plist.pop(key, None)
     if not feed:
         return plist
     if not re.match(r'^https://[^/\s]+/\S+$', feed):
@@ -624,6 +628,7 @@ def updater_keys(plist, feed, sparkle):
         raise ValueError('an update feed needs Sparkle in the app: run agent/fetch-sparkle.sh first')
     plist['SUFeedURL'] = feed
     plist['SUPublicEDKey'] = UPDATE_PUBLIC_KEY
+    plist['SUEnableAutomaticChecks'] = True
     return plist
 
 
