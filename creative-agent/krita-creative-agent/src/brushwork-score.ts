@@ -31,8 +31,11 @@ export type BrushworkMeasure = {
 export type BrushworkScore = { score: number; parts: { direction: number; coherence: number; scales: number; contrast: number; edges: number; sharpness: number };
   original: BrushworkMeasure; canvas: BrushworkMeasure };
 
-/** Both crops are measured on a grid of this long side, so a mark has the same size in cells in each. */
-export const MEASURE_SIDE = 384;
+/** Both crops are measured on a grid of at most this long side: a crop up to 1024 px is measured at its own size, where
+ * brushwork lives. At 384 cells (the first version) a 1024 px close-up lost its fine marks before anything was compared:
+ * a real pastel against its sharpened, enlarged or dabbed copy scored 80 to 93 (tasks 4.2, 2026-11-15). A larger crop is
+ * reduced to this, so cut close-ups of 1024 px or less from the picture at full size. */
+export const MEASURE_SIDE = 1024;
 export const DIRECTION_BINS = 12;
 /** Blur radii (cells) between which contrast is measured: bands 0-1, 1-2, 2-4, 4-8, 8-16. */
 export const SCALES = [1, 2, 4, 8, 16];
@@ -151,4 +154,34 @@ export function cropRgba(image: Rgba, rect: number[]): Rgba {
   const data = new Uint8Array(w * h * 4);
   for (let j = 0; j < h; j++) data.set(image.data.subarray(((y + j) * image.width + x) * 4, ((y + j) * image.width + x + w) * 4), j * w * 4);
   return { width: w, height: h, data };
+}
+
+const times = (ratio: number) => ratio >= 10 ? String(Math.round(ratio)) : String(Math.round(ratio * 10) / 10);
+const percent = (share: number) => (share * 100 < 10 ? Math.round(share * 1000) / 10 : Math.round(share * 100)) + '%';
+
+/** What differs between the canvas crop's marks and the original's, in plain words the painter can act on, the largest
+ * difference first, at most five; nothing when the marks are alike. For the same place in both pictures. */
+export function brushworkFindings(score: BrushworkScore): string[] {
+  const o = score.original, c = score.canvas, found: { weight: number; text: string }[] = [];
+  const edges = (c.edge_density + 1e-4) / (o.edge_density + 1e-4);
+  if (edges < 0.5) found.push({ weight: Math.log2(1 / edges), text: `Far fewer edges than the original: ${percent(c.edge_density)} of the crop is edge against ${percent(o.edge_density)} (about 1/${times(1 / edges)}). The marks are too smooth or blended; the original's are separate and crisp-edged.` });
+  else if (edges > 2) found.push({ weight: Math.log2(edges), text: `Many more edges than the original: ${percent(c.edge_density)} of the crop is edge against ${percent(o.edge_density)} (${times(edges)} times). The marks are too many, too small or too hard.` });
+  const agreement = c.coherence - o.coherence;
+  if (Math.abs(agreement) >= 0.15) found.push({ weight: Math.abs(agreement) * 6, text: agreement > 0
+    ? `Its marks agree on a direction more than the original's (${c.coherence.toFixed(2)} against ${o.coherence.toFixed(2)}): long aligned strokes where the original is broken and scattered.`
+    : `Its marks agree on a direction less than the original's (${c.coherence.toFixed(2)} against ${o.coherence.toFixed(2)}): scattered marks where the original's strokes run together.` });
+  const fine = (m: BrushworkMeasure) => (m.scales[0] ?? 0) + (m.scales[1] ?? 0), grain = fine(c) - fine(o);
+  if (Math.abs(grain) >= 0.08) found.push({ weight: Math.abs(grain) * 8, text: grain < 0
+    ? `Less fine grain: ${percent(fine(c))} of its contrast is fine detail against ${percent(fine(o))}. The original's surface has small marks or texture this lacks.`
+    : `More fine grain: ${percent(fine(c))} of its contrast is fine detail against ${percent(fine(o))}. The original's marks are broader.` });
+  const contrast = (c.contrast + 0.002) / (o.contrast + 0.002);
+  if (contrast < 0.7 || contrast > 1.4) found.push({ weight: Math.abs(Math.log2(contrast)), text: contrast < 1
+    ? `The marks have ${percent(contrast)} of the original's contrast: they sit too close in tone to what is under them.`
+    : `The marks have ${times(contrast)} times the original's contrast: they stand out too strongly.` });
+  const sharp = (c.sharpness + 0.005) / (o.sharpness + 0.005);
+  if (sharp < 0.7 || sharp > 1.4) found.push({ weight: Math.abs(Math.log2(sharp)) * 0.8, text: sharp < 1
+    ? 'Its sharpest edges are softer than the original\u2019s.' : 'Its sharpest edges are harder than the original\u2019s.' });
+  if (Math.max(o.coherence, c.coherence) >= 0.4 && score.parts.direction < 0.8)
+    found.push({ weight: (1 - score.parts.direction) * 4, text: 'Its marks run in other directions than the original\u2019s.' });
+  return found.sort((a, b) => b.weight - a.weight).slice(0, 5).map(f => f.text);
 }

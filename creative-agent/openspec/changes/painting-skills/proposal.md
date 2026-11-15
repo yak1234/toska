@@ -172,7 +172,7 @@ placement problem (many dots, ordered lines). The painter then builds a techniqu
   for the same kind of surface.
 - These are study scores, written as `study_brushwork` and `study_*`. They never grade or steer Luna at run time.
 
-#### The measure, as proposed after the trials of 2026-11-15 (awaiting the artist's approval)
+#### The measure, after the trials of 2026-11-15 (approved by the artist the same day: "yes")
 
 The artist (2026-11-15) chose two layers for the score: classical texture measures and a learned texture distance.
 A throwaway trial on real pictures decided which learned distance (`local-notes/wikiart-study/mechanism-checks/

@@ -196,7 +196,22 @@ batch.
         brushwork; the score measures at the crop's own size; and close-ups that teach or grade brushwork come from
         sources that hold it (museum open-access images). Files: `local-notes/wikiart-study/mechanism-checks/
         sharpen-vs-real/`.
-- [ ] 4.3 Luna's blind pair question for brushwork in a crop, checked against 4.2.
+- [x] 4.2a The measure rebuilt after the trials (proposal goal 5, approved 2026-11-15), in two layers, both seen to
+      put real close-ups in order (`tests/fixtures/brushwork`: a Degas pastel, the Met's open-access image):
+      - **Learned, ranks** (`src/style-distance.ts`, `src/style-distance-onnx.ts`, `scripts/build-style-model.py`): the
+        VGG19 style distance on 512 px luminance tiles. The model is built once into the data folder (42 MB, within
+        0.000005 of PyTorch). From a real pastel square: another spot of the same picture 0.157, the sharpened copy
+        0.488, the dabbed copy 0.635. The calibration is a test (real against real below each copy by at least 2
+        times), skipped when the model is not built.
+      - **Classical, says why** (`src/brushwork-score.ts`): measured at the crop's own size (`MEASURE_SIDE` 1024), so
+        the same pictures now score 92 (another spot), 54 (sharpened) and 71 (dabbed); `brushworkFindings` states
+        what differs in plain words ("Far fewer edges than the original: 0.1% of the crop is edge against 6.5%").
+      - `scripts/brushwork-compare.ts <original.png> <canvas.png>` prints both for any close-ups.
+      Open: the model reaches no other machine yet (hosting it is an upload, the artist's decision); one pastel and one
+      oil are a small set (a second material and painter before the number is trusted widely); the dabbed picture is a
+      stand-in, to be replaced by a real Toska painting from a live run; how the distance maps to 0 to 100; OpenCV's
+      oriented filters and local patterns were not needed and are not built.
+- [ ] 4.3 Luna's blind pair question for brushwork in a crop, checked against 4.2a.
 - [ ] 4.4 Names: `study_brushwork`, `study_*`; nothing reads them at run time.
 
 ## 5. Style skills and Learn

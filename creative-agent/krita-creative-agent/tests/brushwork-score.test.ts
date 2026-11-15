@@ -48,3 +48,38 @@ test('crops are clamped to the image, and a tiny crop is refused', () => {
   assert.deepEqual([crop.width, crop.height], [56, 56]);
   assert.throws(() => measureBrushwork(cropRgba(hatch(30), [0, 0, 4, 4])), /at least 8 x 8/);
 });
+
+// Real close-ups (tests/fixtures/brushwork: a Degas pastel, the Met's open-access image), measured at their own size.
+// At the old 384-cell grid a 1024 px crop lost the fine marks before anything was compared, and every copy scored 80 to 93.
+import { readFile } from 'node:fs/promises';
+import { decodeRgba } from '../src/png-rgba.ts';
+import { MEASURE_SIDE, brushworkFindings } from '../src/brushwork-score.ts';
+
+const fixture = async (name: string) => {
+  const d = decodeRgba(await readFile(new URL(`./fixtures/brushwork/${name}.png`, import.meta.url)))!;
+  return { width: d.width, height: d.height, data: new Uint8Array(d.data) };
+};
+
+test('a crop is measured at its own size, up to 1024 cells', () => {
+  assert.equal(MEASURE_SIDE, 1024);
+});
+
+test('on a real pastel the sharpened and the dabbed copy of the same place score well below the picture itself', async () => {
+  const [real, sharpened, dabbed] = await Promise.all(['pastel-real', 'pastel-sharpened', 'pastel-dabbed'].map(fixture));
+  assert.equal(brushworkScore(real!, real!).score, 100);
+  assert.ok(brushworkScore(real!, sharpened!).score < 65, String(brushworkScore(real!, sharpened!).score));
+  assert.ok(brushworkScore(real!, dabbed!).score < 80, String(brushworkScore(real!, dabbed!).score));
+});
+
+test('the findings say in plain words what differs, largest first, and nothing for the same marks', async () => {
+  const [real, sharpened, dabbed] = await Promise.all(['pastel-real', 'pastel-sharpened', 'pastel-dabbed'].map(fixture));
+  assert.deepEqual(brushworkFindings(brushworkScore(real!, real!)), []);
+  const smooth = brushworkFindings(brushworkScore(real!, sharpened!));
+  assert.match(smooth.join(' | '), /edges/);
+  assert.match(smooth.join(' | '), /agree on a direction more/);
+  assert.match(smooth.join(' | '), /fine grain/);
+  const dabs = brushworkFindings(brushworkScore(real!, dabbed!));
+  assert.match(dabs.join(' | '), /edges/);
+  assert.ok(!/agree on a direction/.test(dabs.join(' | ')), 'the dabs are as scattered as the pastel');
+  assert.ok(smooth.length <= 5 && smooth.every(line => line.length < 200));
+});
