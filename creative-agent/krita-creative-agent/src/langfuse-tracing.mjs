@@ -8,6 +8,7 @@
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
+import { traceTags } from './test-env.ts';   // a study's tag on a test chat's traces (TOSKA_TRACE_TAG)
 
 const run = promisify(execFile);
 export const KEYCHAIN_SERVICE = 'creative-agent-langfuse';
@@ -193,7 +194,7 @@ export class LangfuseTracing {
     const traceId = await this.decisionTraceId(decision.decision_id);
     const spanId = (await this.tracing.createTraceId(decision.decision_id + ':span')).slice(0, 16);
     const name = 'decide-' + decision.kind;
-    this.propagateAttributes({ traceName: name, sessionId, tags: ['decision', decision.kind], version: this.release,
+    this.propagateAttributes({ traceName: name, sessionId, tags: ['decision', decision.kind, ...traceTags()], version: this.release,
       metadata: { decision_id: decision.decision_id.slice(0, 200), kind: decision.kind, answered_by: decision.answered_by ?? 'none' } }, () =>
       this.tracing.startObservation(name, {
         input: { state: decision.state, questions: decision.questions, images: decision.images.map(url => ({ type: 'image_url', image_url: { url } })) },

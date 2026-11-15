@@ -49,6 +49,7 @@ import { BUILD_INFO } from './build-info.mjs';
 import { ModelCapabilities, isInteractiveModel } from './model-capabilities.mjs';
 import { IdleSleepGuard } from './idle-sleep-guard.mjs';
 import { connectLangfuse } from './langfuse-tracing.mjs';
+import { traceTags } from './test-env.ts';   // a study's tag on a test chat's traces (TOSKA_TRACE_TAG)
 import { paceQuestions, paceState, paceAction, parsePace, stalled, levelledOff, foundMistakes, stepChecks, stepWork, handPaintedBy, callMethod, exhaustedMethods, MIN_ACTIONS_BEFORE_REVIEW, closeUpRegion } from './pacing.ts';
 import { decisionId } from './decision-records.mjs';
 import { skillCommand } from './skill-commands.ts';
@@ -704,7 +705,7 @@ export class StudioRuntime extends PaintingRuntime {
     // A plan turn on the painter session is the planner's (plan-from-request goal 4): its own trace and generation names.
     const planner=role==='painter' && this.planningWith ? this.planningWith : null;
     const traceName=planner ? 'plan-folder' : {painter:{agent:'paint-goal',plan:'plan-painting',ask:'answer-artist'}[this.mode] ?? 'answer-artist',reviewer:'review-canvas',preparation:'prepare-batch'}[role];
-    return {traceName,sessionId:this.study?.id,tags:[planner ? 'planner' : role,'mode:'+this.mode],...(planner ? {generationName:'plan-steps'} : {}),
+    return {traceName,sessionId:this.study?.id,tags:[planner ? 'planner' : role,'mode:'+this.mode,...traceTags()],...(planner ? {generationName:'plan-steps'} : {}),
       ids:{study_id:this.study?.id,goal_revision:goal?.revision,plan_step:goal?(goal.current_step+1)+'/'+(goal.brief?.steps?.length ?? 0):null,goal_status:goal?.status,
         provider:planner?.provider ?? this.study?.provider,model:planner?.id ?? this.study?.model},
       metadata:{study_name:this.study?.name,objective:goal?.brief?.objective,plan_step:step,luna_mode:this.lunaMode?.()}};
