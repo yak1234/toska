@@ -182,6 +182,20 @@ batch.
       Next: crops at canvas resolution from M.7, then set the mapping so the dabbed copy lands well below the
       original, and only then use it. For the study: prefer larger sources than WikiArt's (museum open-access
       images) for anything that learns brushwork from close-ups.
+      - 2026-11-15, the artist: "Can't you just sharpen it like we already do". Checked on a pastel whose real large
+        image exists (Degas, Woman with a Towel, the Met's open-access 3066 x 3860): a quarter-size JPEG copy sharpened
+        4x by Toska's own sharpener (Real-ESRGAN x4plus), against the real image at three 1024 px close-ups. **It does
+        not bring the brushwork back.** At full size the real close-ups are 4 to 6 percent edge, the sharpened ones 0.2
+        to 0.8 percent (7 to 25 times fewer); fine contrast is 53, 54 and 38 percent of the total against 32, 35 and
+        26; total contrast falls by a seventh to nearly half; and neighbouring marks agree on a direction two to three
+        times as much (0.29, 0.26, 0.35 against 0.68, 0.61, 0.92): the paper's grain and the pastel's grit become
+        smooth, aligned strokes that read as oil. Against the real image the sharpened copy scores 59 to 64, a plain
+        bicubic enlargement 59 to 62: no better. Measured at the score's own 384 px the difference almost vanishes
+        (80 to 90), which is the leniency above seen again: `MEASURE_SIDE` 384 throws the fine marks away before
+        anything is compared. So: sharpening stays what it is for (a goal to paint toward), never the measure of
+        brushwork; the score measures at the crop's own size; and close-ups that teach or grade brushwork come from
+        sources that hold it (museum open-access images). Files: `local-notes/wikiart-study/mechanism-checks/
+        sharpen-vs-real/`.
 - [ ] 4.3 Luna's blind pair question for brushwork in a crop, checked against 4.2.
 - [ ] 4.4 Names: `study_brushwork`, `study_*`; nothing reads them at run time.
 
