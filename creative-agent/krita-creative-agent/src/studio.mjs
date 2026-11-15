@@ -1934,7 +1934,7 @@ export class StudioRuntime extends PaintingRuntime {
     // Skills (read opens skill files only) and image assets, while planning and painting.
     if (vision && (phase === 'plan' || phase === 'agent')) names.push('read','make_asset','run_skill_script');
     if (phase === 'plan' && this.mode === 'autopilot' && this.goal?.brief) names.push('start_painting');
-    if (phase === 'agent') names.push('ask_for_selection','propose_protection','paint_from_reference','continue_reference_painting','paint_reference_edges','paint_reference_surface','paint_finish','refine_to_goal','texture_architecture','paint_accents','paint_snow','paint_effect','list_brushes','mix_colors','paint_batch','paint_pass','paint_recipe','paint_contours','adjust_layer',...CRAFT_TOOLS,...GUIDE_TOOLS,'letter','finish_move','painting_toolbox','painting_tool_help','ask_question','record_progress','request_review');
+    if (phase === 'agent') names.push('ask_for_selection','propose_protection','paint_from_reference','continue_reference_painting','paint_reference_edges','paint_reference_surface','paint_finish','refine_to_goal','texture_architecture','paint_accents','paint_snow','paint_effect','make_brush','list_brushes','mix_colors','paint_batch','paint_pass','paint_recipe','paint_contours','adjust_layer',...CRAFT_TOOLS,...GUIDE_TOOLS,'letter','finish_move','painting_toolbox','painting_tool_help','ask_question','record_progress','request_review');
     // Agent (collaborative) paints one move per turn: no review or progress bookkeeping tools.
     // With Luna pacing, Autopilot's host tracks plan steps; request_review stays as a backstop.
     const hidden = phase !== 'agent' ? [] : this.mode === 'agent' ? ['record_progress','request_review','ask_question',...(this.executionSettings?.move_size === 'quick' ? ['finish_move'] : [])]
@@ -2295,6 +2295,7 @@ export class StudioRuntime extends PaintingRuntime {
     if (this.currentMove?.kind === 'guides' && !GUIDE_MOVE_TOOLS.includes(name)) return false;
     if (name === 'letter') return !!this.goal?.comic;
     if (name === 'paint_effect') return this.executionSettings?.custom_effects === true;   // Custom effects: off by default (openspec custom-effects)
+    if (name === 'make_brush') return this.executionSettings?.painting_skills === true && this.forkTools === true;   // Painting skills: off by default; swatches are stroke jobs (our Krita)
     if (GUIDE_TOOLS.includes(name)) return this.forkTools === true && this.executionSettings?.guides !== false;   // our Krita only, and the setting (guidesAvailable)
     if (name === 'krita_action' && !(this.kritaActions > 0)) return false;     // an unaudited Krita: it would always refuse
     if (FORK_TOOLS.includes(name) && this.forkTools !== true) return false;     // stock Krita, or a plugin too old to say: it would always refuse

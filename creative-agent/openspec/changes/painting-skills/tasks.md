@@ -133,7 +133,20 @@ batch.
       Still to do: seen in the running Toska (a swatch through the bridge, the window staying up, the panel's
       document list unchanged, quitting clean), which needs a build, a package and an install. In the runner's fresh
       profile `k) Blender Basic` could not load its own texture pattern (a warning per stroke); to look at in Toska.
-- [ ] 3.4 `make_brush` tool in `paintingTools()`, the Luna A/B check against the base swatch, 4 tries, save on a win.
+- [ ] 3.4 (part) `make_brush` (`src/brush-maker-tool.ts`, 9 tests): the base preset's sheet and the new brush's
+      (`brush_swatch`, which now also names the base's engine), Luna's blind choice between them as A and B in a drawn
+      order (the mark's sentence, a close-up of the reference when `crop` is given, never a setting or which sheet is
+      which), saved only when the new one wins, 4 tries a brush in a chat, a brush that never wins refused and recorded
+      (`brush_failed` event, for goal 4). Sheets that come out the same are not a brush and Luna is not asked.
+      The library's brushes shelf (`src/library/brushes.ts`, 6 tests; this is 2.1 for brushes only): scheme A,
+      `<data folder>/library/materials/<material>/brushes/<name>.yaml` with its swatch `.png`, the file in the
+      vocabulary's own words, its recipe worked out again on every load, a bad file skipped with its file and field.
+      Offered only with the new setting **Painting skills (experimental)** on (`painting_skills`, off by default; this
+      is 10.2's Enable) and in Toska (swatches are stroke jobs).
+      Claude's calls, for the artist to change: (1) with no decision model, or no answer, the brush is kept marked
+      `unjudged` and the result says so, so that an artist without Decision checks can still make brushes; the proposal
+      said "kept only when the new one wins". (2) Every call counts as a try, a kept one too.
+      Still to do: live in Toska (3.7), and Reset for the setting (10.2).
 - [ ] 3.5 `brush` accepted wherever `preset` is (`creative_validation.py`, `paint_pass`, `paint_batch`,
       `paint_recipe`, the reference tools as 1.5 allows).
 - [ ] 3.6 Library brushes in `list_brushes` with their own cards; one line in the prompt on when to make a brush.

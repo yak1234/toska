@@ -84,6 +84,7 @@ class BrushSwatch(unittest.TestCase):
         self.assertEqual((options['preset'], options['size'], 'presetProperties' in options, 'compositeOp' in options, selection),
                          ('b) Basic-5 Size', 60, False, False, None))
         self.assertGreater(result['ink_share'], 0)
+        self.assertEqual(result['engine'], 'paintbrush', 'the base preset\'s engine, which a recipe is made for')
         self.assertEqual(result['strokes'], len(strokes))
 
     def test_the_sheet_is_cleared_before_painting_and_the_document_left_unmodified(self):

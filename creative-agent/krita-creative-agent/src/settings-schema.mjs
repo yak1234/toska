@@ -56,6 +56,11 @@ export const SETTINGS = Object.freeze([
     error: 'custom_effects must be true or false.', options: [[false, 'Off'], [true, 'Paint effects from the effect library']],
     tooltip: 'Off by default. When painting an effect fails twice, Toska builds a new effect from tested building blocks and asks you to keep it. Keep it, try again or discard it; Reset removes all your own effects.',
     button: { label: 'Reset custom effects…', command: { type: 'reset_effects' }, confirm: 'Remove all your own effects? Fog and snow stay. This cannot be undone.' } },
+  // Painting skills (openspec painting-skills, experimental): the painter may make brushes of its own with make_brush
+  // (brush-maker-tool.ts), kept in the library only when their swatch wins over the base preset's. Off by default.
+  { key: 'painting_skills', type: 'boolean', default: false, panel: 'generic', control: 'checkbox', label: 'Painting skills (experimental)', accessible: 'Painting skills',
+    error: 'painting_skills must be true or false.', options: [[false, 'Off'], [true, 'The agent makes its own brushes']],
+    tooltip: 'Off by default. Toska may make a brush of its own when no preset makes the mark a picture needs. It paints a test sheet with the new brush and with the preset it started from, and keeps the brush only when the new one is closer to the mark. Your paintings are not touched by the test.' },
   // Off by default: a screen that never sleeps must be the artist's choice. The panel shows when it holds.
   { key: 'keep_screen_awake', type: 'boolean', default: false, panel: 'generic', control: 'checkbox', label: 'Screen', accessible: 'Keep the screen awake while painting',
     error: 'keep_screen_awake must be true or false.', options: [[false, 'Let the screen sleep'], [true, 'Keep the screen awake while painting']],

@@ -4,7 +4,7 @@ import { Type } from 'typebox';
 import { Value } from 'typebox/value';
 import { createHash } from 'node:crypto';
 import { basename, join } from 'node:path';
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { imageContent } from './files.mjs';
 import {referenceTools,findReferenceAccents} from './reference-tool.mjs';
@@ -15,6 +15,8 @@ import { finishTools } from './finish-tool.ts';
 import { snowTools } from './snow-tool.ts';
 import { effectTools, effectCatalogueWithin } from './effects/effect-tool.ts';
 import { loadEffects } from './effects/library.ts';
+import { brushMakerTools } from './brush-maker-tool.ts';
+import { saveBrush } from './library/brushes.ts';
 import { refineTools } from './refine-goal.ts';
 import { materialCatalogue } from './plan-materials.ts';
 import { selectionTools } from './paint-only-here.ts';
@@ -38,6 +40,13 @@ export const EFFECTS_DIR = fileURLToPath(new URL('../effects/', import.meta.url)
 export function effectFolders(runtime) {
   const data = runtime.config?.data_dir;   // not config.output: that can be a paintings folder
   return { bundled: EFFECTS_DIR, own: data ? join(data, 'effects') : '' };   // '' reads as no folder (library.ts: ENOENT is empty)
+}
+
+/** The painting-skills library's own folder (brushes the painter made; openspec painting-skills goal 1): in the companion's
+ * data folder, never a painting's; '' without one. @param {any} runtime */
+export function libraryFolder(runtime) {
+  const data = runtime.config?.data_dir;
+  return data ? join(data, 'library') : '';
 }
 
 /** @template {import('typebox').TProperties} T @param {T} properties */
@@ -441,6 +450,29 @@ export function paintingTools(runtime) {
       const folder = join(runtime.study.directory, 'effect-textures'), target = join(folder, basename(source));
       await mkdir(folder, { recursive: true }); await copyFile(source, target);
       return target;
+    } }));
+  // make_brush (brush-maker-tool.ts, openspec painting-skills goal 2): a brush of the painter's own from a small settings
+  // vocabulary, shown on the plugin's swatch sheet (brush_swatch, brush_craft.py: no painting is touched) beside its base
+  // preset's, and kept in the library only when Luna picks it blind. Offered only with the painting_skills setting on.
+  tools.push(...brushMakerTools(runtime, {
+    folder: () => runtime.study.directory,
+    swatch: params => runtime.callNative('brush_swatch', params),
+    picture: async path => (await imageContent(runtime.study.directory, path)).content,
+    luna: async () => runtime.lunaMode?.() === 'off' ? null : runtime.luna(),
+    save: (brush, swatch) => {
+      const folder = libraryFolder(runtime);
+      if (!folder) throw new Error('There is no data folder to keep the brush in.');
+      return saveBrush(folder, brush, swatch);
+    },
+    // A close-up of an attached reference for the judge, cut by the plugin (comparison_crop: decoded reduced while read).
+    crop: async ({ reference_id, rect }) => {
+      const reference = runtime.study.references.find(r => r.id === reference_id), [x, y, w, h] = rect;
+      if (!reference || w < 8 || h < 8 || x + w > reference.width || y + h > reference.height) return null;
+      const data = await readFile(reference.path), scale = Math.min(1, 1024 / Math.max(w, h));
+      const answer = await runtime.callNative('comparison_crop', { image_base64: data.toString('base64'), sha256: createHash('sha256').update(data).digest('hex'),
+        size: [reference.width, reference.height], source: rect, out: [Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale))] });
+      const image = answer?.images?.[0]?.image_base64;
+      return image ? { type: 'image', mimeType: 'image/jpeg', data: image } : null;
     } }));
   // A flat fill anywhere in a batch is nudged before anything paints (studio.mjs fillNudge), so the batch is refused whole.
   tools.push(batchTool(tools, name => runtime.toolOffered?.(name) ?? true,

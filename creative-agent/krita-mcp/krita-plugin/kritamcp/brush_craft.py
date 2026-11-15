@@ -122,5 +122,5 @@ class BrushCraft:
             ink = float((pixels[:, :, :3].min(axis=2) < 250).mean())
         finally:
             doc.setModified(False)                               # never a document to save: quitting asks nothing
-        return {'status': 'ok', 'path': target, 'width': width, 'height': height, 'preset': expanded['preset'], 'size': size,
+        return {'status': 'ok', 'path': target, 'width': width, 'height': height, 'preset': expanded['preset'], 'engine': brush_maker.engine_of(xml), 'size': size,
                 'properties': sorted(expanded['properties']), 'strokes': job.strokesDone(), 'ms': job.elapsedMs(), 'ink_share': round(ink, 4)}
