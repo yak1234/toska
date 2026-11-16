@@ -63,7 +63,7 @@ while IFS= read -r line; do say WARN "large file: $line"; done < <(git ls-tree -
 while IFS= read -r line; do say WARN "image or video in creative-agent (a painting?): $line"; done < <(git ls-tree -r -l "$rev" creative-agent | awk '$4 > 300000 && tolower($5) ~ /\.(png|jpe?g|webp|gif|mp4|mov|psd|tiff?)$/ { print $4 " " $5 }' | head -20)
 
 # 5. Commit addresses on the published line.
-others=$(git log --first-parent --format='%ae%n%ce' "$base..$rev" | sort -u | grep -v '^yakub.rabiutheen@gmail.com$' | grep -v '^noreply@github.com$' | tr '\n' ' ')
+others=$(git log --first-parent --format='%ae%n%ce' "$base..$rev" | sort -u | grep -v '^yakub.rabiutheen@gmail.com$' | grep -v '^noreply@github.com$' | grep -v '^73138225+yak1234@users.noreply.github.com$' | tr '\n' ' ')
 if [ -n "$others" ]; then say WARN "commit addresses other than the artist's: $others (agent/publish.sh rewrites them)"; else say PASS "every commit carries the artist's address"; fi
 
 # 6. Things that read like a person's path or name in text we wrote.

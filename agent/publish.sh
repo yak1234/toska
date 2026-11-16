@@ -16,7 +16,7 @@
 # first-parent commit of the local branch, with its tree, message, author and dates, so merges of agent branches show as
 # one commit. The local repository stays the truth (full history, upstream merges): the public one is derived from it, and
 # nothing in it is rewritten: later runs only append the commits that are not published yet (the map is
-# <git-dir>/publish-map). The one rewrite is addresses: authors who are not the artist get the artist's address.
+# <git-dir>/publish-map). The one rewrite is addresses: every public commit is the artist's, under the public address.
 #
 # SAFETY: it refuses a dirty tree, runs agent/ci.sh and agent/prepublish-check.sh (both must pass), and never pushes unless
 # --push is given. Run it yourself or let the lead run it after a merge passes.
@@ -35,6 +35,10 @@ while [ $# -gt 0 ]; do
     shift
 done
 artist_name="Yakub Rabiutheen"; artist_email="yakub.rabiutheen@gmail.com"
+# Public commits carry the GitHub account's no-reply address (2026-11-16): GitHub names a commit's author by its address, and
+# the artist's own address belongs there to an old account, so commits pushed by yak1234 showed under another name. Commits
+# already published keep theirs (nothing is rewritten: the map below).
+public_email="73138225+yak1234@users.noreply.github.com"
 gitdir="$(git rev-parse --git-common-dir)"; map="$gitdir/publish-map"; touch "$map"
 
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "tracked files have uncommitted changes: commit or stash them first" >&2; exit 1; }
@@ -46,9 +50,9 @@ public_commit() {                                          # public_commit LOCAL
     local c="$1" parent="$2" msg an ae ad
     msg="$(mktemp)"; git log -1 --format=%B "$c" > "$msg"
     an="$(git log -1 --format=%an "$c")"; ae="$(git log -1 --format=%ae "$c")"; ad="$(git log -1 --format=%aI "$c")"
-    case "$ae" in "$artist_email") ;; *) an="$artist_name"; ae="$artist_email" ;; esac
+    an="$artist_name"; ae="$public_email"                  # every author is the artist, under the public address
     GIT_AUTHOR_NAME="$an" GIT_AUTHOR_EMAIL="$ae" GIT_AUTHOR_DATE="$ad" \
-    GIT_COMMITTER_NAME="$artist_name" GIT_COMMITTER_EMAIL="$artist_email" GIT_COMMITTER_DATE="$(git log -1 --format=%cI "$c")" \
+    GIT_COMMITTER_NAME="$artist_name" GIT_COMMITTER_EMAIL="$public_email" GIT_COMMITTER_DATE="$(git log -1 --format=%cI "$c")" \
         git commit-tree "$c^{tree}" ${parent:+-p "$parent"} -F "$msg"
     rm -f "$msg"
 }

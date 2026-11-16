@@ -16,7 +16,7 @@
 // The studio's calls come in as a small host, so this module imports no .mjs.
 import { Type, type Static } from 'typebox';
 import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { fillHoles, fitAsset, measureFit, MAX_SCALE, type Fit, type Rgba, type Shape } from './asset-fit.ts';
+import { fillHoles, fitAsset, matchPieces, measureFit, pieces, MAX_SCALE, type Fit, type Rgba, type Shape } from './asset-fit.ts';
 
 /** A found part covering at least this share of its asset is the asset all over (a sky filling its frame): used whole. */
 export const ASSET_WHOLE = 0.85;
@@ -104,20 +104,37 @@ export async function repaintFromAsset(host: RepaintHost, id: string, args: Args
       fit = measureFit(inAsset, onCanvas, asset);
     }
   }
-  host.record?.({ type: 'repaint_fit', part, asset: asset.id, ...fit, whole: !inAsset, area: area.bounds });
-  if (!fit.fits) {
+  // One name, several things (a facade and a tower; the tower with a slice of what stands beside it): each piece of the
+  // asset's part is fitted to the piece of the area it matches, and the area's other pieces keep their paint.
+  type Pair = { part: Shape | null; area: Shape; fit: Fit };
+  let pairs: Pair[] = fit.fits ? [{ part: inAsset, area: onCanvas, fit }] : [], left = 0;
+  if (!pairs.length && inAsset) {
+    const matched = matchPieces(pieces(inAsset), pieces(onCanvas));
+    pairs = matched.pairs; left = pairs.length ? matched.areaLeft.length : 0;
+  }
+  host.record?.({ type: 'repaint_fit', part, asset: asset.id, ...fit, whole: !inAsset, area: area.bounds,
+    pieces: pairs.map(pair => ({ area: pair.area.bounds, overlap: pair.fit.overlap, covered: pair.fit.covered, uneven: pair.fit.uneven, scale: pair.fit.scale })), left });
+  if (!pairs.length) {
     host.emit({ type: 'action', seconds: 0, message: `${label} does not fit ${part} on the painting: ${fit.why}. Nothing was painted.` });
-    return reply(`${label} does not fit ${part} on the painting: ${fit.why}. Nothing was painted. ${JSON.stringify({ fit })} `
-      + `Tell the artist plainly; they can adjust the area, choose another image, or ask for it to be painted by hand. ${NO_IMAGE}`, { fit, painted: false });
+    return reply(`${label} does not fit ${part} on the painting: ${fit.why}, and no piece of it matched a piece of the area. Nothing was painted. ${JSON.stringify({ fit })} `
+      + `Tell the artist plainly; they can adjust the area, name one thing in it, choose another image, or ask for it to be painted by hand. ${NO_IMAGE}`, { fit, painted: false });
   }
 
-  const picture = fitAsset(await host.pixels(asset), inAsset, onCanvas), fitted = await host.keep(asset, part, picture);
-  const recipe: Recipe = { name: (args.name ?? `${part} from ${label}`).slice(0, 80), reference_id: fitted.id, preset: args.preset,
-    source: [0, 0, fitted.width, fitted.height], target: area.bounds.slice(0, 4) };
-  const result = await host.transfer(id, recipe, signal);
-  return { ...result, content: [...result.content, { type: 'text', text: JSON.stringify({ repainted: { part, asset: label, fit,
+  const pixels = await host.pixels(asset), content: Result['content'] = [], repainted: Record<string, unknown>[] = [];
+  let details: Record<string, unknown> = {};
+  for (const [index, pair] of pairs.entries()) {
+    const picture = fitAsset(pixels, pair.part, pair.area), fitted = await host.keep(asset, part, picture);
+    const recipe: Recipe = { name: (args.name ?? `${part} from ${label}`).slice(0, 76) + (pairs.length > 1 ? ` ${index + 1}` : ''), reference_id: fitted.id, preset: args.preset,
+      source: [0, 0, fitted.width, fitted.height], target: pair.area.bounds.slice(0, 4) };
+    const result = await host.transfer(index ? `${id}-${index + 1}` : id, recipe, signal);
+    content.push(...result.content); details = { ...(result.details as object) };
+    repainted.push({ area: pair.area.bounds, fitted: fitted.id, fit: pair.fit });
+  }
+  if (left) host.emit({ type: 'action', seconds: 0, message: `${left} separate piece${left === 1 ? '' : 's'} of the area matched nothing in ${label} and kept ${left === 1 ? 'its' : 'their'} paint.` });
+  return { content: [...content, { type: 'text', text: JSON.stringify({ repainted: { part, asset: label, pieces: repainted,
+    ...(left ? { left_as_it_was: `${left} separate piece${left === 1 ? '' : 's'} of the area matched nothing in the image: say so in your reply` } : {}),
     note: 'The canvas’s outline was kept: only this area changed. Finish it with paint_finish in the area, then paint_accents.' } }) }],
-    details: { ...(result.details as object), repaint: { part, asset: asset.id, fitted: fitted.id, fit } } };
+    details: { ...details, repaint: { part, asset: asset.id, pieces: repainted, left } } };
 }
 
 export function repaintTools(host: RepaintHost): ToolDefinition<any, unknown>[] {

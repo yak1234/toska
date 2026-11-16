@@ -126,3 +126,78 @@ export function fitAsset(asset: Rgba, part: Shape | null, area: Shape): Rgba {
   }
   return { width, height, data };
 }
+
+/** A piece smaller than this share of its shape is a speck, not a piece. */
+export const PIECE_SHARE = 0.05;
+/** Things joined only by a neck thinner than this share of the shape's smaller side are separate pieces. */
+export const NECK_SHARE = 0.03;
+/** The shape's separate pieces, largest first, each over its own bounds. Things that only touch through a thin neck come
+ * apart: the shape is worn down by NECK_SHARE of its smaller side (on a grid of at most 256 cells a side), what is left
+ * is told apart, and each piece grows back through the shape to its own outline. Live on New Moscow (2026-11-16): "the
+ * tall golden tower" came back as the tower, a slice of the facade beside it and a strip of the town below, the strip
+ * hanging from the tower by a few pixels; the asset held the tower alone. */
+export function pieces(shape: Shape, minShare = PIECE_SHARE): Shape[] {
+  const [bx, by, w, h] = shape.bounds, step = Math.max(1, Math.max(w, h) / GRID), cols = Math.ceil(w / step), rows = Math.ceil(h / step), cells = cols * rows;
+  const cellOf = (x: number, y: number) => Math.min(rows - 1, Math.floor(y / step)) * cols + Math.min(cols - 1, Math.floor(x / step));
+  const mask = new Uint8Array(cells);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (shape.data[y * w + x]! >= INSIDE) mask[cellOf(x, y)] = 1;
+  // Worn down: a cell stays when every cell within the neck's width of it is in the shape.
+  const wear = (reach: number) => {
+    let worn = mask;
+    for (let pass = 0; pass < reach; pass++) {
+      const next = new Uint8Array(cells);
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+        const k = r * cols + c;
+        next[k] = worn[k] && c > 0 && c < cols - 1 && r > 0 && r < rows - 1 && worn[k - 1] && worn[k + 1] && worn[k - cols] && worn[k + cols] ? 1 : 0;
+      }
+      worn = next;
+    }
+    return worn;
+  };
+  let core = wear(Math.max(1, Math.round(NECK_SHARE * Math.min(cols, rows))));
+  if (!core.some(v => v)) core = mask;                        // a thin shape: nothing left to tell apart, so as it is
+  const label = new Int32Array(cells), queue = new Int32Array(cells);
+  let head = 0, tail = 0, id = 0;
+  const spread = (from: Uint8Array) => {                      // labels spread through `from`, corners too
+    while (head < tail) {
+      const k = queue[head++]!, c = k % cols, r = (k - c) / cols;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const nc = c + dc, nr = r + dr, n = nr * cols + nc;
+        if (nc < 0 || nr < 0 || nc >= cols || nr >= rows || label[n] || !from[n]) continue;
+        label[n] = label[k]!; queue[tail++] = n;
+      }
+    }
+  };
+  for (let k = 0; k < cells; k++) { if (!core[k] || label[k]) continue; label[k] = ++id; queue[tail++] = k; spread(core); }
+  head = 0; spread(mask);                                    // every piece grows back at the same pace, to its own outline
+  for (let k = 0; k < cells; k++) { if (!mask[k] || label[k]) continue; label[k] = ++id; head = tail; queue[tail++] = k; spread(mask); }   // what wore away whole
+  const found = new Map<number, { x0: number; y0: number; x1: number; y1: number; count: number }>();
+  let total = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (shape.data[y * w + x]! < INSIDE) continue;
+    const own = label[cellOf(x, y)]!, piece = found.get(own) ?? { x0: w, y0: h, x1: -1, y1: -1, count: 0 };
+    if (x < piece.x0) piece.x0 = x; if (x > piece.x1) piece.x1 = x; if (y < piece.y0) piece.y0 = y; if (y > piece.y1) piece.y1 = y;
+    piece.count++; total++; found.set(own, piece);
+  }
+  return [...found.entries()].filter(([, piece]) => piece.count >= minShare * total).sort((a, b) => b[1].count - a[1].count).map(([own, { x0, y0, x1, y1 }]) => {
+    const pw = x1 - x0 + 1, ph = y1 - y0 + 1, data = new Uint8Array(pw * ph);
+    for (let j = 0; j < ph; j++) for (let i = 0; i < pw; i++)
+      if (shape.data[(y0 + j) * w + x0 + i]! >= INSIDE && label[cellOf(x0 + i, y0 + j)] === own) data[j * pw + i] = 255;
+    return { bounds: [bx + x0, by + y0, pw, ph] as Rect, data };
+  });
+}
+
+export type PiecePair = { part: Shape; area: Shape; fit: Fit };
+/** Each piece of the asset's part with the piece of the canvas area it fits best, the best fits first; a piece is used
+ * once, and only fits that pass count. `areaLeft`: the canvas pieces nothing fitted (they keep their paint). */
+export function matchPieces(parts: Shape[], areas: Shape[]): { pairs: PiecePair[]; areaLeft: Shape[]; partLeft: Shape[] } {
+  const candidates: PiecePair[] = [];
+  for (const part of parts) for (const area of areas) { const fit = measureFit(part, area); if (fit.fits) candidates.push({ part, area, fit }); }
+  candidates.sort((a, b) => b.fit.overlap - a.fit.overlap);
+  const pairs: PiecePair[] = [], usedPart = new Set<Shape>(), usedArea = new Set<Shape>();
+  for (const pair of candidates) {
+    if (usedPart.has(pair.part) || usedArea.has(pair.area)) continue;
+    pairs.push(pair); usedPart.add(pair.part); usedArea.add(pair.area);
+  }
+  return { pairs, areaLeft: areas.filter(a => !usedArea.has(a)), partLeft: parts.filter(p => !usedPart.has(p)) };
+}

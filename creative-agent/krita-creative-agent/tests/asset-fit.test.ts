@@ -3,7 +3,7 @@
 // Repaint from asset: how well an asset's part fits the area on the canvas, and the asset fitted into that area's box.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fillHoles, fitAsset, measureFit, MAX_SCALE, MAX_UNEVEN, MIN_OVERLAP, type Shape } from '../src/asset-fit.ts';
+import { fillHoles, fitAsset, matchPieces, measureFit, pieces, MAX_SCALE, MAX_UNEVEN, MIN_OVERLAP, type Shape } from '../src/asset-fit.ts';
 
 /** A shape over [x, y, w, h], inside where `inside(i, j)` says so (all of it by default). */
 const shape = (x: number, y: number, w: number, h: number, inside: (i: number, j: number) => boolean = () => true): Shape => {
@@ -91,4 +91,45 @@ test('holes enclosed in a part are filled; a bay open to the edge is not', () =>
   assert.equal(filled.data[5 * 10 + 5], 255);
   assert.equal(filled.data[1 * 10 + 8], 0, 'the notch reaches the edge: it stays outside');
   assert.equal(holed.data[4 * 10 + 4], 0, 'the given shape is not changed');
+});
+
+// One name, several things (live, New Moscow 2026-11-16): the canvas "tower" was the tower, a slice of facade and a strip.
+const towerLike = (x: number, y: number, w: number, h: number) => shape(x, y, w, h, (i, j) => Math.abs(i + 0.5 - w / 2) <= (j + 1) / h * w / 2);
+const canvasTower = (): Shape => {
+  // Over [0, 0, 600, 500]: a facade block at the left, a tower (a triangle) at 300-500, a low strip at the bottom right.
+  const data = new Uint8Array(600 * 500), tower = towerLike(0, 0, 200, 400);
+  for (let j = 0; j < 500; j++) for (let i = 0; i < 600; i++) {
+    const facade = i < 120 && j >= 100 && j < 300, strip = i >= 380 && i < 600 && j >= 460;
+    const inTower = i >= 300 && i < 500 && j < 400 && tower.data[j * 200 + (i - 300)]! > 0;
+    if (facade || strip || inTower) data[j * 600 + i] = 255;
+  }
+  return { bounds: [1000, 100, 600, 500], data };
+};
+
+test('a shape of several separate things comes apart into its pieces, largest first, specks dropped', () => {
+  const area = canvasTower(); area.data[5 * 600 + 590] = 255;                // one stray pixel
+  const found = pieces(area);
+  assert.equal(found.length, 3);
+  assert.deepEqual(found.map(p => p.bounds), [[1300, 101, 200, 399], [1000, 200, 120, 200], [1380, 560, 220, 40]]);
+  assert.ok(found[0]!.data.some(v => v === 0), 'a piece keeps its own outline inside its box');
+});
+
+test('an asset’s piece is matched to the canvas piece of the same shape, and the other canvas pieces are left', () => {
+  const asset = [towerLike(50, 20, 300, 600)];                                // the tower alone, larger
+  const { pairs, areaLeft, partLeft } = matchPieces(asset, pieces(canvasTower()));
+  assert.equal(pairs.length, 1);
+  assert.deepEqual(pairs[0]!.area.bounds, [1300, 101, 200, 399]);   // the tip's first row is narrower than a pixel
+  assert.ok(pairs[0]!.fit.overlap > 0.9);
+  assert.equal(areaLeft.length, 2);
+  assert.equal(partLeft.length, 0);
+  assert.equal(measureFit(asset[0]!, canvasTower()).fits, false, 'as one shape it does not fit');
+});
+
+test('two things joined only by a thin neck are two pieces; a thin shape alone stays one', () => {
+  // Two 200 x 300 blocks, 100 apart, joined by a bar 6 px high.
+  const joined = shape(0, 0, 500, 300, (i, j) => i < 200 || i >= 300 || (j >= 150 && j < 156));
+  const found = pieces(joined);
+  assert.equal(found.length, 2);
+  assert.ok(found.every(p => p.bounds[2] >= 200 && p.bounds[2] <= 300), JSON.stringify(found.map(p => p.bounds)));
+  assert.equal(pieces(shape(0, 0, 400, 4)).length, 1);
 });

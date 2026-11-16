@@ -119,3 +119,15 @@ test('the goal picture the underpainting came from is not repainted this way: th
   assert.equal(h.calls.transfers.length + h.calls.asked.length, 0);
   assert.match(text(result), /paint_from_reference inside its area/);
 });
+
+test('one name, several things: the asset’s piece is repainted into the piece of the area it matches; the rest is left and said', async () => {
+  // The area: a tall block (the tower) and, apart from it, a wide low strip. The asset holds the tall block alone.
+  const area = box(1000, 200, 900, 600, (i, j) => i < 300 || (i >= 500 && j >= 520));
+  const h = host({ shape: async () => area, findInAsset: async () => box(100, 50, 150, 300) });
+  const result = await run(h);
+  assert.equal(h.calls.transfers.length, 1);
+  assert.deepEqual(h.calls.transfers[0]!.target, [1000, 200, 300, 600]);
+  assert.match(h.calls.said.join('\n'), /1 separate piece of the area matched nothing/);
+  assert.match(text(result), /left_as_it_was/);
+  assert.equal((h.calls.recorded[0]!.pieces as unknown[]).length, 1);
+});

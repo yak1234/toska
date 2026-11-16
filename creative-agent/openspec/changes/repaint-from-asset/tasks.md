@@ -39,7 +39,15 @@ transfer, the shapes model and the area question unchanged. Limits are first val
   buildings" as a group, 0.30: rightly. The tower alone, 0.57 against 0.6: wrongly, its outline had holes. Holes are now
   filled and the limit is 0.5; from the run's saved outlines the tower fits at 0.65 and the three wrong pairings stay
   at 0.27-0.37. Still to see: the tower painted, with the fixed build.)
-- [ ] 5.2 A part of several pieces (a facade and a tower): each piece of the asset fitted to its own piece on the canvas.
+- [x] 5.2 A part of several pieces: each piece of the asset fitted to the piece of the area it matches (`pieces`, which
+  parts things joined by a thin neck, and `matchPieces`); the area's other pieces keep their paint and the artist is
+  told. From the outlines of the second live run (test chat 6b144fb6, the artist's own underpainting, "the tall golden
+  tower" found as the tower, a facade slice and a strip of town): the tower pairs at 0.61 and three pieces are left.
+  "The historic buildings" as a group still pairs nothing: the canvas pieces there hold more than the facade and the
+  tower (5.3).
+- [ ] 5.3 A refusal diagnosed, not just reported (the artist, 2026-11-16): the asset's outline trimmed to what matches
+  when it spills; the decision model shown both crops and asked whether they are the same thing, to pair pieces;
+  the area's unmatched part shown to the artist. Per piece: overlap, covered, spill, stretch, same-object.
 
 ## 6 New Moscow
 
