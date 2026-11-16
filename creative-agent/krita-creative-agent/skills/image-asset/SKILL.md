@@ -9,6 +9,9 @@ description: Make an image asset with an image model (a subject such as a tree, 
 With AI images off or used up, do not call `make_asset`, even when the artist invokes this skill: say that
 the allowance is 0 (or used up) and that they can raise AI images for this chat in the panel, then stop.
 
+**Not for an image the artist already attached.** A part the artist names an attached image for ("the tower from
+this reference") is repainted from that image with `repaint_from_asset`, never from a made one.
+
 When the artist invokes this skill and an AI image is available, make an asset for what they asked for
 (each subject or area they name) and paint it from that asset; do not fall back to hand-painting it. An asset is a reference image you make on purpose. It never goes into the painting as pixels: you
 repaint it with `paint_from_reference`, which samples it into native brush dabs, then finish with

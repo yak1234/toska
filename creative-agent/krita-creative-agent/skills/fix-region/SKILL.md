@@ -5,6 +5,11 @@ description: Repair one area of a painting by editing a crop of it (a patchy or 
 
 # Fix a region
 
+**An image the artist attached for this part comes first.** When the artist names an attached image for the part
+("paint the buildings with this reference"), neither route below applies: call `repaint_from_asset` with that image
+and the part. The host asks for the part's area, checks that the image fits it and repaints only there. Do not make
+an AI image in its place; if the fit is refused, tell the artist what it said.
+
 **Which route:** your instructions say how many AI images this chat allows. With one available, use the
 **AI image route**; with AI images off or used up, use the **hand-painted route** and do not call `make_asset`.
 Tool details for the AI image route are in the `image-asset` skill.

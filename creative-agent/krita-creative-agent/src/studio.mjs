@@ -57,7 +57,7 @@ import { fillNudge, massGuidance, hasGoalReference, paintedTransfers, referenceC
 import { transferRefusal, existingPainting, WHOLE_SHARE } from './reference-tool.mjs';
 import { typedStrokeRefusal, handPaintingRequested, MAX_MARKS, widthCap } from './typed-strokes.ts';
 import { openRoutesLine } from './open-routes.ts';
-import { scanFolder, readFolderText, elementStep, folderStepKind, elementsNamed, goalChoices, goalNamed, FOLDER_LIMITS, FOLDER_STEP_KINDS } from './project-folder.ts';
+import { scanFolder, readFolderText, elementStep, elementGuess, folderStepKind, elementsNamed, goalChoices, goalNamed, FOLDER_LIMITS, FOLDER_STEP_KINDS } from './project-folder.ts';
 import { stagePolicy, reviseStages, stagesNamed, orderStages, folderPlanSteps, shapePlan, nextStages, STAGE_CARD, stagesFromCard, PLAN_STAGES, planOrNot, PLAN_CARD, planFromCard, additionsNamed, refinePartsNamed } from './plan-stages.ts';
 import { refineGroups, partsOf, unionFound } from './refine-parts.ts';
 import { goalSharpener, sharpenedContext, noMoreDetailNote, refineRequested, pictureGoal, ENLARGEMENT } from './goal-sharpen.ts';
@@ -68,7 +68,8 @@ import { keptLayer, stackSummary } from './kept-layers.ts';
 import { writePlan, writePlanGoal, appendNote, readPlan, parsePlan, planDifference, briefFromPlan, remapTicks, stepFile, stepKeys, layerName } from './folder-notes.ts';
 import { planStepControls, stepMarksContext, withStepIds, STEP_ID } from './plan-steps.ts';
 import { applyPaintOnlyCommand, areaContext, adoptArea, askForArea, chipLine } from './paint-only-here.ts';
-import { findArea, timingLine, FindError, FIND_PIXELS } from './find-it.ts';
+import { findArea, readFound, timingLine, FindError, FIND_PIXELS } from './find-it.ts';
+import { ASSET_WHOLE } from './repaint-from-asset.ts';
 import { decisionLocator } from './find-it-locate.ts';
 import { boundedImage, boundedPixels } from './bounded-image.ts';
 import { WORKING_PIXELS } from './reference-limits.ts';
@@ -1934,7 +1935,7 @@ export class StudioRuntime extends PaintingRuntime {
     // Skills (read opens skill files only) and image assets, while planning and painting.
     if (vision && (phase === 'plan' || phase === 'agent')) names.push('read','make_asset','run_skill_script');
     if (phase === 'plan' && this.mode === 'autopilot' && this.goal?.brief) names.push('start_painting');
-    if (phase === 'agent') names.push('ask_for_selection','propose_protection','paint_from_reference','continue_reference_painting','paint_reference_edges','paint_reference_surface','paint_finish','refine_to_goal','texture_architecture','paint_accents','paint_snow','paint_effect','make_brush','list_brushes','mix_colors','paint_batch','paint_pass','paint_recipe','paint_contours','adjust_layer',...CRAFT_TOOLS,...GUIDE_TOOLS,'letter','finish_move','painting_toolbox','painting_tool_help','ask_question','record_progress','request_review');
+    if (phase === 'agent') names.push('ask_for_selection','repaint_from_asset','propose_protection','paint_from_reference','continue_reference_painting','paint_reference_edges','paint_reference_surface','paint_finish','refine_to_goal','texture_architecture','paint_accents','paint_snow','paint_effect','make_brush','list_brushes','mix_colors','paint_batch','paint_pass','paint_recipe','paint_contours','adjust_layer',...CRAFT_TOOLS,...GUIDE_TOOLS,'letter','finish_move','painting_toolbox','painting_tool_help','ask_question','record_progress','request_review');
     // Agent (collaborative) paints one move per turn: no review or progress bookkeeping tools.
     // With Luna pacing, Autopilot's host tracks plan steps; request_review stays as a backstop.
     const hidden = phase !== 'agent' ? [] : this.mode === 'agent' ? ['record_progress','request_review','ask_question',...(this.executionSettings?.move_size === 'quick' ? ['finish_move'] : [])]
@@ -2129,6 +2130,65 @@ export class StudioRuntime extends PaintingRuntime {
       return null;
     }
   }
+  /** Repaint from asset (repaint-from-asset.ts): the shape of `part` inside an attached picture, in that picture's own pixels;
+   * null when the picture is that part all over (ASSET_WHOLE of it or more). The shapes model looks at the picture as Find
+   * it looks at a goal: a bounded copy, the picture it was before sharpening, coordinates by proportion. Throws when it is
+   * not found or the shapes model is not ready. */
+  async findInAsset(reference, part, signal) {
+    if (!(await this.shapes?.ready?.())) throw new Error('The shapes model is not ready to find a part in an image.');
+    const directory = this.study.directory;
+    const file = await containedFile(directory, goalView(reference)).catch(() => null) ?? await containedFile(directory, reference.path);
+    const found = await findArea({ directory, shapes:this.shapes, get shapeStudies() { return this.owner.shapeStudies ??= new Map(); }, owner:this, signal,
+      view: async () => ({path:file, width:Number(reference.width), height:Number(reference.height), revision:null}),
+      pixels: async path => {
+        const bounded = await boundedPixels(directory, path, FIND_PIXELS).catch(() => null);
+        if (!bounded) throw new FindError('invalid', 'This image could not be read to find the part in it.');
+        return {sha:bounded.sha, pixels:bounded.pixels};
+      },
+      goal: null,
+      locate: decisionLocator(async () => { const client = await this.luna().catch(() => null); return client?.connected ? client : null; }),
+    }, {part});
+    this.diagnostics?.record({type:'repaint_part_found', part, asset:reference.id, share:found.share, score:found.score, ms:found.ms, cached:found.cached});
+    if (found.share >= ASSET_WHOLE) return null;
+    return {bounds:found.bounds, data:(await readFound(directory, found)).data};
+  }
+  /** An attached picture's pixels, whole (repaint_from_asset fits them into an area). */
+  async referencePixels(reference) {
+    const pixels = await this.decodeImage(await readFile(await containedFile(this.study.directory, reference.path)));
+    if (!pixels?.width) throw new Error('This image could not be read.');
+    return pixels;
+  }
+  /** A fitted picture (asset-fit.ts) kept in the chat's assets as a reference of its own, named by its content: the same fit
+   * is the same file and the same reference. It is see-through outside the part, so a transfer from it paints only the part. */
+  async keepFitted(reference, part, fitted) {
+    const png = encodeRgba({width:fitted.width, height:fitted.height, data:fitted.data instanceof Uint8Array ? fitted.data : new Uint8Array(fitted.data)});
+    const id = 'fitted-' + createHash('sha256').update(png).digest('hex').slice(0, 16);
+    const kept = this.study.references.find(r => r.id === id);
+    if (kept) return kept;
+    const folder = join(this.study.directory, 'assets'), file = join(folder, id + '.png');
+    await mkdir(folder, {recursive:true}); await writeFile(file, png);
+    const label = reference.name ?? reference.id;
+    const made = {id, path:file, source_path:file, role:'asset', purpose:'fitted', name:`${part} from ${label}`.slice(0, 200),
+      notes:`${label} fitted into the area of ${part} on the canvas (repaint_from_asset): see-through outside the part.`, source:{mode:'fitted', from:reference.id},
+      mimeType:'image/png', width:fitted.width, height:fitted.height};
+    this.study.references.push(made);
+    await this.persist(); this.publish();
+    return made;
+  }
+  /** The attached picture the artist's request names for a part ("paint the buildings with this reference", "the tower from
+   * 02-historic-buildings"), or null: a picture named by its name, or "this reference" when the chat has exactly one picture
+   * that is not the goal its underpainting came from. Made images and fitted pictures are never it. */
+  async repaintAssetNamed(text) {
+    const pictures = (this.study?.references ?? []).filter(r => r.width > 0 && r.height > 0 && r.purpose !== 'fitted' && (r.role === 'reference' || r.source === 'folder' || r.folder));
+    if (!pictures.length || !text) return null;
+    const named = elementsNamed(text, pictures.map(r => ({name:String(r.name ?? r.id), guess:elementGuess(String(r.name ?? r.id))})));
+    if (named.length) return pictures.find(r => String(r.name ?? r.id) === named[0]) ?? null;
+    if (!/\b(this|that|the|my|attached)\s+(reference|image|picture|asset|photo|study)\b/i.test(text)) return null;
+    const placed = await this.placedGoal().catch(() => null), others = pictures.filter(r => r.path !== placed?.path);
+    return others.length === 1 && this.repaintable() ? others[0] : null;
+  }
+  /** Whether the canvas has paint to repaint a part of: a picture named on a blank canvas is the goal to lay, not an asset. */
+  repaintable() { return (this.lastObservation?.painted_share ?? 0) >= 0.5 || (this.goal?.moves ?? []).some(m => m.status === 'kept'); }
   /** Autopilot: a found outline becomes the chat's area, protected on the painting at once through the bridge (the panel
    * shows the chip when the goal arrives). Every such area is the run's, never the artist's: `auto` is the step it was
    * found for, and it ends with that step, the Autopilot run, Stop or a mode switch (clearAutoArea). A bridge failure
@@ -2294,6 +2354,7 @@ export class StudioRuntime extends PaintingRuntime {
   toolOffered(name) {
     if (this.currentMove?.kind === 'guides' && !GUIDE_MOVE_TOOLS.includes(name)) return false;
     if (name === 'letter') return !!this.goal?.comic;
+    if (name === 'repaint_from_asset') return (this.study?.references ?? []).some(r => r.width > 0 && r.height > 0 && r.purpose !== 'fitted');   // a picture to repaint from
     if (name === 'paint_effect') return this.executionSettings?.custom_effects === true;   // Custom effects: off by default (openspec custom-effects)
     if (name === 'make_brush') return (this.executionSettings?.painting_skills === true || skillsForced()) && this.forkTools === true;   // Painting skills: off by default; swatches are stroke jobs (our Krita)
     if (GUIDE_TOOLS.includes(name)) return this.forkTools === true && this.executionSettings?.guides !== false;   // our Krita only, and the setting (guidesAvailable)
@@ -2337,6 +2398,17 @@ export class StudioRuntime extends PaintingRuntime {
     for (const tool of tools.filter(t=>ELEMENT_STEP_GUARDED.includes(t.name))) {
       const execute = tool.execute;
       tool.execute = async (id, args, ...rest) => { this.refuseInElementStep({tool:tool.name, args}); return execute(id, args, ...rest); };
+    }
+    // A move whose request names an attached picture repaints from it (repaint_from_asset): no image is made in its place,
+    // unless the request itself asks for an AI image (chat c6928c35, 2026-11-16: two made images for an attached picture).
+    for (const tool of tools.filter(t=>t.name==='make_asset')) {
+      const execute = tool.execute;
+      tool.execute = async (id, args, ...rest) => {
+        const named = this.mode === 'agent' ? this.currentMove?.repaint : null;
+        if (named && !/\b(ai[- ]image|make_asset|image model|generate)/i.test(String(this.currentMove.request ?? '')))
+          throw new Error(`The artist named an attached image for this move ("${named.name}"): repaint the part from it with repaint_from_asset (reference_id ${named.reference_id}), not from a made image. If its fit was refused, tell the artist and stop; make_asset is for when they ask for an AI image.`);
+        return execute(id, args, ...rest);
+      };
     }
     const add = (name, description, schema, execute) => tools.push({ name, label: name.replaceAll('_',' '), description,
       parameters: schema, executionMode: 'sequential', execute: async (_id, args, signal) => {
@@ -3730,6 +3802,8 @@ export class StudioRuntime extends PaintingRuntime {
       }
       const answered = this.goal.question;
       if (answered) this.goal.user_updates.push('Answer to ' + answered.question + ': ' + text);
+      // The area card answered without an area (Paint everywhere): repaint_from_asset then fits into the found outline, unprotected.
+      if (answered?.select_area) this.goal.area_passed = text.trim() === 'Paint everywhere' ? {part:answered.select_area.part} : null;
       // paint_accents' question: a yes is the first option (the panel sends it as typed) or a plain yes, nothing else.
       if (answered?.accents) this.goal.accents_answer = {...answered.accents,
         yes:text.trim().toLowerCase() === String(answered.options?.[0] ?? '').toLowerCase() || /^(y|yes|ok|okay|sure|go ahead|do it)\b[.!]*$/i.test(text.trim())};
@@ -4335,10 +4409,16 @@ export class StudioRuntime extends PaintingRuntime {
       const reading = this.messageReading?.text === said ? this.messageReading.policy : null;
       const partNote = reading?.part && !this.goal.paint_only_here && !command.move_kind && !guidesOnly
         ? '\nTHE ARTIST\u2019S MESSAGE is about one part of the picture (Luna read it so) and no Paint only here area is set: call ask_for_selection for that part, named as the artist named it, before painting it. Not for something the message asks you to ADD that is not in the picture yet (a new ship, figure, tree): there is nothing to select, so choose its place and size yourself (the place-subject skill) and paint it.\n' : '';
+      // The request names an attached picture for a part (repaint-from-asset.ts): the move repaints from it, and no image is made in its place.
+      if (!guidesOnly && !command.move_kind && !folderMove && !move.repaint) {
+        const named = await this.repaintAssetNamed(String(move.request ?? said)).catch(() => null);
+        if (named) move.repaint = {reference_id:named.id, name:String(named.name ?? named.id)};
+      }
+      const repaintNote = move.repaint && !guidesOnly ? `\nTHE ARTIST NAMED AN ATTACHED IMAGE for this: "${move.repaint.name}" (reference_id ${move.repaint.reference_id}). Repaint the part from it with repaint_from_asset, the part named as the artist named it: the host asks for the part\u2019s area itself, checks that the image fits it and paints only there, keeping the canvas\u2019s outline. Do not call make_asset or ask_for_selection for it. If the fit is refused, tell the artist what it said and stop.\n` : '';
       // Refine after the whole-picture Finish (refine-goal.ts): the whole picture runs refine_to_goal, a part is asked for and refined fine.
       const refineNote = guidesOnly || command.move_kind || folderMove ? '' : refineToGoalNote({text:said, area:!!this.goal.paint_only_here,
         finished:this.wholeFinished(), reading:this.messageReading?.text === said ? this.messageReading.reading : null});
-      await super.runPrompt(this.context('agent') + agentMoveInstructions(this.executionSettings?.move_size, {referenceFirst:state, guidesOnly}) + referenceFirst + underpaintingNote + folderMove + continueNote + routesNote + detailNote + partNote + (refineNote ? '\n' + refineNote + '\n' : '') + (move.ask_next ? askWhenDoneNote(move.ask_next.reason, this.layerNeed.area, move.ask_next.elements) : '') + this.canvasReferenceNote() + '\nArtist:\n' + text, images);
+      await super.runPrompt(this.context('agent') + agentMoveInstructions(this.executionSettings?.move_size, {referenceFirst:state, guidesOnly}) + referenceFirst + underpaintingNote + folderMove + continueNote + routesNote + detailNote + (move.repaint ? repaintNote : partNote) + (refineNote ? '\n' + refineNote + '\n' : '') + (move.ask_next ? askWhenDoneNote(move.ask_next.reason, this.layerNeed.area, move.ask_next.elements) : '') + this.canvasReferenceNote() + '\nArtist:\n' + text, images);
     } finally {
       this.goal.used_ms += Date.now() - this.goalStartedAt; this.goalStartedAt = undefined;
       const guidesOnly = !move.actions && move.guides > 0;

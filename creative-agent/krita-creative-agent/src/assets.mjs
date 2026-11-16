@@ -231,7 +231,8 @@ async function checked(runtime, prepared, kind, before, signal) {
 function assertAssetRoom(runtime) {
   const limit = runtime.executionSettings?.assets === 'openrouter' ? ASSET_LIMIT : CODEX_ASSET_LIMIT;
   // Element images from the project folder are the artist's, not made assets: they take no room.
-  if (runtime.study.references.filter(r => r.role === 'asset' && r.source !== 'folder').length >= limit) throw new Error('This conversation already has ' + limit + ' assets. Reuse one of them.');
+  // Nor does a picture fitted from one (repaint_from_asset): it is the artist's own image, in an area's proportions.
+  if (runtime.study.references.filter(r => r.role === 'asset' && r.source !== 'folder' && r.purpose !== 'fitted').length >= limit) throw new Error('This conversation already has ' + limit + ' assets. Reuse one of them.');
 }
 
 /** An image file as a reference asset of the chat (make_asset's, a script's, a canvas reference's). */

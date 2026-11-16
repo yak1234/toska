@@ -20,7 +20,9 @@ import { loadBrushes, madeBrushCards, saveBrush } from './library/brushes.ts';
 import { withBrush } from './pass-brush.ts';
 import { refineTools } from './refine-goal.ts';
 import { materialCatalogue } from './plan-materials.ts';
-import { selectionTools } from './paint-only-here.ts';
+import { selectionTools, askForArea, areaMaskPath, loadAreaMask } from './paint-only-here.ts';
+import { repaintTools } from './repaint-from-asset.ts';
+import { readFound } from './find-it.ts';
 import { canvasShape, checkPassLimits, passShape, shapeReport, shapeSchema, shapeTimings } from './shapes/use.ts';
 import { recipeTool } from './recipe-tool.mjs';
 import { contourTool } from './contour-tool.mjs';
@@ -488,6 +490,9 @@ export function paintingTools(runtime) {
   // Paint only here (paint-only-here.ts): for work on one part with no area set, ask the artist for its area (Agent), with
   // the shapes model's outline when the studio can find it (Find it for me); Autopilot uses that outline by itself.
   tools.push(...selectionTools(selectionHostFor(runtime)));
+  // Repaint from asset (repaint-from-asset.ts): a part repainted from an attached picture inside its area on the canvas. The
+  // transfer is paint_from_reference as the studio wrapped it (looked up when it runs), so it is paced and judged as one.
+  tools.push(...repaintTools(repaintHostFor(runtime, (id, recipe, signal) => tools.find(t => t.name === 'paint_from_reference').execute(id, recipe, signal, undefined, undefined))));
   tools.push(...assetTools(runtime), skillReadTool());
   return tools;
 }
@@ -541,6 +546,36 @@ export function selectionHostFor(runtime) {
     latestRequest: () => String(runtime.goal?.messages?.findLast?.(m => m.role === 'user')?.text ?? ''),
     propose: part => runtime.proposeArea?.(part) ?? Promise.resolve(null),
     adopt: (proposal, part) => runtime.adoptFoundArea(proposal, part) };
+}
+
+/** The runtime as repaint-from-asset.ts's RepaintHost. `transfer` is the reference transfer's execute. */
+export function repaintHostFor(runtime, transfer) {
+  const directory = () => runtime.study.directory, select = selectionHostFor(runtime);
+  const picture = r => r && r.width > 0 && r.height > 0 ? r : null;
+  return {
+    reference: id => picture(runtime.study?.references?.find(r => r.id === id)),
+    placedGoal: async reference => { const placed = await runtime.placedGoal?.(); return !!placed && placed.path === runtime.study.references.find(r => r.id === reference.id)?.path; },
+    area: () => runtime.goal?.paint_only_here ?? null,
+    ask: part => askForArea(select, part, { request: select.latestRequest() }),
+    passed: part => String(runtime.goal?.area_passed?.part ?? '').trim().toLowerCase() === part.trim().toLowerCase(),
+    propose: async part => (await runtime.proposeArea?.(part, { quiet: true })) ?? null,
+    shape: async area => {
+      if (areaMaskPath(directory(), area.mask_path)) { const mask = await loadAreaMask(area, directory()); return { bounds: mask.bounds, data: mask.data }; }
+      return { bounds: area.bounds.slice(0, 4), data: (await readFound(directory(), area)).data };
+    },
+    findInAsset: (reference, part, signal) => runtime.findInAsset(reference, part, signal),
+    pixels: reference => runtime.referencePixels(reference),
+    ...(runtime.sharpenReference ? { sharpen: async (reference, signal) => {
+      if (reference.sharpened || runtime.sharpenReference.refusal?.(reference)) return null;
+      await runtime.sharpenReference(reference, { signal, onProgress: (at, total, message) => runtime.emit?.({ type: 'status', phase: 'painting',
+        message: message ?? `Sharpening "${reference.name ?? reference.id}" 4x for this repaint: ${Math.floor(at / Math.max(1, total) * 100)}%\u2026` }) });
+      return picture(runtime.study.references.find(r => r.id === reference.id));
+    } } : {}),
+    keep: (reference, part, fitted) => runtime.keepFitted(reference, part, fitted),
+    transfer,
+    emit: event => runtime.emit?.(event),
+    record: event => runtime.diagnostics?.record?.(event),
+  };
 }
 
 /** Element shapes on the painting (element-shapes 1.5, 1.6): paint_pass inside_shape and propose_protection shape find
