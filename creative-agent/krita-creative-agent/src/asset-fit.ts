@@ -20,8 +20,10 @@ export type Shape = { bounds: Rect; data: Uint8Array };
 export type Rgba = { width: number; height: number; data: Uint8Array | Uint8ClampedArray };
 
 /** Below this overlap (shared pixels over all pixels of the two outlines, the part stretched onto the area's box) the part
- * is another shape than the area. */
-export const MIN_OVERLAP = 0.6;
+ * is another shape than the area. Live on New Moscow's underpainting (2026-11-16, 02-historic-buildings): the tower alone
+ * overlapped 0.57 before its outline's holes were filled, and was plainly the same tower; "the historic buildings" as a
+ * group (a facade and the tower, side by side in the image and far apart on the canvas) overlapped 0.30. */
+export const MIN_OVERLAP = 0.5;
 /** Past this the part is stretched too much more one way than the other: its windows and proportions would read wrong. */
 export const MAX_UNEVEN = 1.5;
 /** Past this the asset is too small for the area: the transfer's own stretch limit (reference-tool.mjs MAX_PATCH_SCALE). */
@@ -54,6 +56,25 @@ const stretch = (from: Rect, to: Rect) => {
   if (!(from[2] > 0 && from[3] > 0 && to[2] > 0 && to[3] > 0)) throw new Error('A fit needs a part and an area with a size.');
   return { sx: to[2] / from[2], sy: to[3] / from[3] };
 };
+
+/** The shape with every enclosed hole filled (a pixel outside it that no path of outside pixels joins to the bounds' edge).
+ * The shapes model leaves holes inside a found part (a dark courtyard, a lit window); the part is the whole of its outline. */
+export function fillHoles(shape: Shape): Shape {
+  const [, , w, h] = shape.bounds, data = Uint8Array.from(shape.data), open = new Uint8Array(w * h), queue = new Int32Array(w * h);
+  let head = 0, tail = 0;
+  const visit = (k: number) => { if (!open[k] && data[k]! < INSIDE) { open[k] = 1; queue[tail++] = k; } };
+  for (let x = 0; x < w; x++) { visit(x); visit((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { visit(y * w); visit(y * w + w - 1); }
+  while (head < tail) {
+    const k = queue[head++]!, x = k % w;
+    if (x > 0) visit(k - 1);
+    if (x < w - 1) visit(k + 1);
+    if (k >= w) visit(k - w);
+    if (k < (h - 1) * w) visit(k + w);
+  }
+  for (let k = 0; k < data.length; k++) if (data[k]! < INSIDE && !open[k]) data[k] = 255;
+  return { bounds: shape.bounds, data };
+}
 
 /** How well the asset's part fits the area on the canvas when its box is stretched onto the area's box. */
 export function measureFit(part: Shape | null, area: Shape, asset?: { width: number; height: number }): Fit {

@@ -3,7 +3,7 @@
 // Repaint from asset: how well an asset's part fits the area on the canvas, and the asset fitted into that area's box.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fitAsset, measureFit, MAX_SCALE, MAX_UNEVEN, MIN_OVERLAP, type Shape } from '../src/asset-fit.ts';
+import { fillHoles, fitAsset, measureFit, MAX_SCALE, MAX_UNEVEN, MIN_OVERLAP, type Shape } from '../src/asset-fit.ts';
 
 /** A shape over [x, y, w, h], inside where `inside(i, j)` says so (all of it by default). */
 const shape = (x: number, y: number, w: number, h: number, inside: (i: number, j: number) => boolean = () => true): Shape => {
@@ -32,9 +32,9 @@ test('a part stretched much more one way than the other does not fit, and the re
 });
 
 test('a part whose outline is another shape does not fit: the overlap is what is measured', () => {
-  // The asset's part is the top-left triangle of its box; the canvas area fills its box.
-  const fit = measureFit(shape(0, 0, 200, 200, (i, j) => i + j < 200), shape(0, 0, 200, 200));
-  assert.ok(Math.abs(fit.overlap - 0.5) < 0.02, String(fit.overlap));
+  // The asset's part is a corner triangle of its box (a quarter of it and a little more); the canvas area fills its box.
+  const fit = measureFit(shape(0, 0, 200, 200, (i, j) => i + j < 150), shape(0, 0, 200, 200));
+  assert.ok(Math.abs(fit.overlap - 0.28) < 0.02, String(fit.overlap));
   assert.ok(fit.overlap < MIN_OVERLAP);
   assert.equal(fit.fits, false);
   assert.match(fit.why!, /shape/);
@@ -81,4 +81,14 @@ test('the fitted picture is never larger than the asset’s own detail on its le
   assert.deepEqual([fitted.width, fitted.height], [133, 100]);
   const small = fitAsset(asset, null, shape(0, 0, 50, 50));                   // a smaller area: its own size
   assert.deepEqual([small.width, small.height], [50, 50]);
+});
+
+test('holes enclosed in a part are filled; a bay open to the edge is not', () => {
+  // A 10 x 10 block with a closed hole at (4-5, 4-5) and a notch cut in from the right edge at row 1.
+  const holed = shape(0, 0, 10, 10, (i, j) => !(i >= 4 && i <= 5 && j >= 4 && j <= 5) && !(j === 1 && i >= 7));
+  const filled = fillHoles(holed);
+  assert.equal(filled.data[4 * 10 + 4], 255);
+  assert.equal(filled.data[5 * 10 + 5], 255);
+  assert.equal(filled.data[1 * 10 + 8], 0, 'the notch reaches the edge: it stays outside');
+  assert.equal(holed.data[4 * 10 + 4], 0, 'the given shape is not changed');
 });

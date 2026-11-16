@@ -71,7 +71,7 @@ const toolTexts = req => req.messages.filter(m => m.role === 'tool').map(m => ty
 test('repaint_from_asset is offered in an Agent move of a chat with a picture', { timeout: 30000 }, async () => {
   const { h, painted } = await agentChat(() => ({ content: 'Done.' }));
   try {
-    await h.runtime.prompt('Paint the sky');
+    await h.runtime.prompt('Paint the sky from final_goal.png');             // named by its name, on a blank canvas (live, 2026-11-16)
     assert.ok(offered(painted[0]).includes('repaint_from_asset'));
     assert.doesNotMatch(JSON.stringify(painted[0].messages), /THE ARTIST NAMED AN ATTACHED IMAGE/, 'a blank canvas: the picture is the goal to lay, not an asset');
   } finally { await h.close(); }

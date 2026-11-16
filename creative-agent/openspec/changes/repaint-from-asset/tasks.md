@@ -34,7 +34,12 @@ transfer, the shapes model and the area question unchanged. Limits are first val
 ## 5 Live
 
 - [ ] 5.1 In Toska at 6000 x 4500: an underpainting, then one asset repainted into its area; the outline seen on the
-  painting, the result looked at.
+  painting, the result looked at. (Run 2026-11-16, test chat d49670bb: the painter called the tool, the card asked, the
+  part was found in the asset and the fit measured; both fits were refused, so nothing was painted. "The historic
+  buildings" as a group, 0.30: rightly. The tower alone, 0.57 against 0.6: wrongly, its outline had holes. Holes are now
+  filled and the limit is 0.5; from the run's saved outlines the tower fits at 0.65 and the three wrong pairings stay
+  at 0.27-0.37. Still to see: the tower painted, with the fixed build.)
+- [ ] 5.2 A part of several pieces (a facade and a tower): each piece of the asset fitted to its own piece on the canvas.
 
 ## 6 New Moscow
 

@@ -16,7 +16,7 @@
 // The studio's calls come in as a small host, so this module imports no .mjs.
 import { Type, type Static } from 'typebox';
 import type { AgentToolResult, ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { fitAsset, measureFit, MAX_SCALE, type Fit, type Rgba, type Shape } from './asset-fit.ts';
+import { fillHoles, fitAsset, measureFit, MAX_SCALE, type Fit, type Rgba, type Shape } from './asset-fit.ts';
 
 /** A found part covering at least this share of its asset is the asset all over (a sky filling its frame): used whole. */
 export const ASSET_WHOLE = 0.85;
@@ -86,7 +86,7 @@ export async function repaintFromAsset(host: RepaintHost, id: string, args: Args
   const onCanvas = await host.shape(area);
 
   const find = async (from: AssetRef): Promise<Shape | null | Error> => {
-    try { return await host.findInAsset(from, part, signal); } catch (error) { signal?.throwIfAborted(); return error as Error; }
+    try { const found = await host.findInAsset(from, part, signal); return found && fillHoles(found); } catch (error) { signal?.throwIfAborted(); return error as Error; }
   };
   let inAsset = await find(asset);
   const notFound = () => {

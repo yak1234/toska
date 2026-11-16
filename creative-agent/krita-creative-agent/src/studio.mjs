@@ -2180,12 +2180,12 @@ export class StudioRuntime extends PaintingRuntime {
    * that is not the goal its underpainting came from. Made images and fitted pictures are never it. */
   async repaintAssetNamed(text) {
     const pictures = (this.study?.references ?? []).filter(r => r.width > 0 && r.height > 0 && r.purpose !== 'fitted' && (r.role === 'reference' || r.source === 'folder' || r.folder));
-    if (!pictures.length || !text) return null;
-    const named = elementsNamed(text, pictures.map(r => ({name:String(r.name ?? r.id), guess:elementGuess(String(r.name ?? r.id))})));
-    if (named.length) return pictures.find(r => String(r.name ?? r.id) === named[0]) ?? null;
-    if (!/\b(this|that|the|my|attached)\s+(reference|image|picture|asset|photo|study)\b/i.test(text)) return null;
+    if (!pictures.length || !text || !this.repaintable()) return null;
     const placed = await this.placedGoal().catch(() => null), others = pictures.filter(r => r.path !== placed?.path);
-    return others.length === 1 && this.repaintable() ? others[0] : null;
+    const named = elementsNamed(text, others.map(r => ({name:String(r.name ?? r.id), guess:elementGuess(String(r.name ?? r.id))})));
+    if (named.length) return others.find(r => String(r.name ?? r.id) === named[0]) ?? null;
+    if (!/\b(this|that|the|my|attached)\s+(reference|image|picture|asset|photo|study)\b/i.test(text)) return null;
+    return others.length === 1 ? others[0] : null;
   }
   /** Whether the canvas has paint to repaint a part of: a picture named on a blank canvas is the goal to lay, not an asset. */
   repaintable() { return (this.lastObservation?.painted_share ?? 0) >= 0.5 || (this.goal?.moves ?? []).some(m => m.status === 'kept'); }
