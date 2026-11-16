@@ -354,6 +354,9 @@ void Selection::setPixelData(QByteArray value, int x, int y, int w, int h)
     KisPixelSelectionSP dev = d->selection->pixelSelection();
     if (!dev) return;
     dev->writeBytes((const quint8*)value.constData(), x, y, w, h);
+    // Krita Agent: a new pixel selection calls its empty outline valid, and the canvas redraws an outline only when it
+    // is not. Without this a selection filled here clipped paint but showed no marching ants.
+    dev->invalidateOutlineCache();
 }
 
 KisSelectionSP Selection::selection() const

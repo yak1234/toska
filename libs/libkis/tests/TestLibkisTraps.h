@@ -36,6 +36,7 @@ private Q_SLOTS:
     void testHeldBackOperationsAreCancelled();
     void testLockedImageSettersAreImmediateAndUndoable();
     void testSelectionContractOnAnInvertedSelection();
+    void testSelectionPixelDataRefreshesItsOutline();
 };
 
 #endif

@@ -38,6 +38,8 @@
 #include <KoColorSpaceRegistry.h>
 #include <brushengine/kis_paintop_preset.h>
 #include <kis_canvas_resource_provider.h>
+#include <kis_pixel_selection.h>
+#include <kis_selection.h>
 #include <kis_image.h>
 #include <kis_command_utils.h>
 #include <kis_layer_utils.h>
@@ -874,6 +876,34 @@ void TestLibkisTraps::testSelectionContractOnAnInvertedSelection()
     inverted.resize(10, 10);
     QCOMPARE(d.selectedAt(inverted, 100, 80), 255);
     QCOMPARE(d.selectedAt(inverted, 15, 15), 0);
+}
+
+void TestLibkisTraps::testSelectionPixelDataRefreshesItsOutline()
+{
+    // A selection filled with setPixelData had no marching ants: a new pixel selection calls its (empty) outline valid,
+    // writing bytes left it so, and the canvas redraws an outline only when it is not valid. The selection was there
+    // and clipped paint, but the artist saw nothing ("Is this the sea?" with nothing shown on the painting).
+    TrapDocument d(false);
+    QVERIFY(d.valid());
+    Selection found;
+    found.setPixelData(QByteArray(30 * 20, char(0xff)), 40, 50, 30, 20);
+    d.doc->setSelection(&found);
+    d.settle();
+    KisSelectionSP selection = d.image->globalSelection();
+    QVERIFY(selection);
+    selection->recalculateOutlineCache();                 // as the canvas does before it draws the selection
+    QCOMPARE(selection->outlineCache().boundingRect().toRect(), QRect(40, 50, 30, 20));
+
+    // A later write is seen as well, not only the first.
+    Selection wider;
+    wider.setPixelData(QByteArray(30 * 20, char(0xff)), 40, 50, 30, 20);
+    wider.setPixelData(QByteArray(10 * 10, char(0xff)), 100, 100, 10, 10);
+    d.doc->setSelection(&wider);
+    d.settle();
+    selection = d.image->globalSelection();
+    QVERIFY(selection);
+    selection->recalculateOutlineCache();
+    QCOMPARE(selection->outlineCache().boundingRect().toRect(), QRect(40, 50, 70, 60));
 }
 
 void TestLibkisTraps::testArtistToolStrokesOnTheMovesLayerSplitIt()
