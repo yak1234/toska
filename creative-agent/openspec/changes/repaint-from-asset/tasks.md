@@ -38,7 +38,10 @@ transfer, the shapes model and the area question unchanged. Limits are first val
   part was found in the asset and the fit measured; both fits were refused, so nothing was painted. "The historic
   buildings" as a group, 0.30: rightly. The tower alone, 0.57 against 0.6: wrongly, its outline had holes. Holes are now
   filled and the limit is 0.5; from the run's saved outlines the tower fits at 0.65 and the three wrong pairings stay
-  at 0.27-0.37. Still to see: the tower painted, with the fixed build.)
+  at 0.27-0.37. Run 2026-11-23, test chat 03c8c7e2, the artist's underpainting: the tower piece paired at 0.61 with
+  three pieces left, and was painted from the asset inside its area: tiers, windows, the underpainting's place and
+  size. Seen in the canvas previews, not yet by the artist on screen. In the same move the painter then ran Finish
+  and a surface pass, which read the underpainting as the goal and took much of the asset's detail away again: 5.4.)
 - [x] 5.2 A part of several pieces: each piece of the asset fitted to the piece of the area it matches (`pieces`, which
   parts things joined by a thin neck, and `matchPieces`); the area's other pieces keep their paint and the artist is
   told. From the outlines of the second live run (test chat 6b144fb6, the artist's own underpainting, "the tall golden
@@ -48,6 +51,10 @@ transfer, the shapes model and the area question unchanged. Limits are first val
 - [ ] 5.3 A refusal diagnosed, not just reported (the artist, 2026-11-16): the asset's outline trimmed to what matches
   when it spills; the decision model shown both crops and asked whether they are the same thing, to pair pieces;
   the area's unmatched part shown to the artist. Per piece: overlap, covered, spill, stretch, same-object.
+- [x] 5.4 A repaint kept (`src/repaint-kept.ts`): each repainted area is kept in the chat with its fitted picture and
+  its move; Finish, the surface and edge passes, a refinement, accents and a transfer from another picture are turned
+  away where they would cover it (an undone move's area is forgotten; the fitted picture as the reference goes
+  through). The tool and the move's note no longer tell the painter to finish the area. Not yet run in Toska.
 
 ## 6 New Moscow
 

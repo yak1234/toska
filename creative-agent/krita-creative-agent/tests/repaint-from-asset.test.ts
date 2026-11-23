@@ -131,3 +131,13 @@ test('one name, several things: the asset’s piece is repainted into the piece 
   assert.match(text(result), /left_as_it_was/);
   assert.equal((h.calls.recorded[0]!.pieces as unknown[]).length, 1);
 });
+
+test('each repainted area is told to the host, so passes that read the goal are kept off it (5.4)', async () => {
+  const painted: { part: string; asset: string; bounds: number[]; fitted: string }[] = [];
+  const h = host({ painted: done => { painted.push({ part: done.part, asset: done.asset, bounds: done.bounds, fitted: done.fitted.id }); } });
+  const result = await run(h);
+  assert.deepEqual(painted, [{ part: 'the tower', asset: '02-historic-buildings.png', bounds: [1000, 200, 300, 600], fitted: 'fitted-1' }]);
+  assert.match(text(result), /do not run paint_finish/);
+  const refused = host({ findInAsset: async () => box(0, 0, 400, 100), painted: () => { throw new Error('nothing was painted'); } });
+  await run(refused);
+});

@@ -50,6 +50,8 @@ export type RepaintHost = {
   keep(reference: AssetRef, part: string, picture: Rgba): Promise<AssetRef>;
   /** The reference transfer (paint_from_reference). */
   transfer(id: string, recipe: Recipe, signal?: AbortSignal): Promise<Result>;
+  /** One area was repainted from the asset: the host keeps it from the passes that read the goal (repaint-kept.ts). */
+  painted?(done: { part: string; asset: string; fitted: AssetRef; bounds: number[] }): void;
   emit(event: Record<string, unknown>): void;
   record?(event: Record<string, unknown>): void;
 };
@@ -128,12 +130,13 @@ export async function repaintFromAsset(host: RepaintHost, id: string, args: Args
       source: [0, 0, fitted.width, fitted.height], target: pair.area.bounds.slice(0, 4) };
     const result = await host.transfer(index ? `${id}-${index + 1}` : id, recipe, signal);
     content.push(...result.content); details = { ...(result.details as object) };
+    host.painted?.({ part, asset: label, fitted, bounds: recipe.target });
     repainted.push({ area: pair.area.bounds, fitted: fitted.id, fit: pair.fit });
   }
   if (left) host.emit({ type: 'action', seconds: 0, message: `${left} separate piece${left === 1 ? '' : 's'} of the area matched nothing in ${label} and kept ${left === 1 ? 'its' : 'their'} paint.` });
   return { content: [...content, { type: 'text', text: JSON.stringify({ repainted: { part, asset: label, pieces: repainted,
     ...(left ? { left_as_it_was: `${left} separate piece${left === 1 ? '' : 's'} of the area matched nothing in the image: say so in your reply` } : {}),
-    note: 'The canvas’s outline was kept: only this area changed. Finish it with paint_finish in the area, then paint_accents.' } }) }],
+    note: 'The canvas’s outline was kept: only this area changed. This paint is finished as it is: do not run paint_finish, surface, edge or refine passes over it (they read the underpainting and would blur it back). End the move.' } }) }],
     details: { ...details, repaint: { part, asset: asset.id, pieces: repainted, left } } };
 }
 
@@ -145,7 +148,7 @@ export function repaintTools(host: RepaintHost): ToolDefinition<any, unknown>[] 
       + 'artist for the part’s area (the shapes model’s outline, selected on the painting) unless one is set, finds the same part in the image, checks that its '
       + 'shape fits the area (a poor fit paints nothing and says why), and transfers it into the area. The canvas’s outline wins: nothing outside the area '
       + 'changes. Use this, never make_asset, for an image the artist attached; the image is never placed as a layer. After the question, stop; call it again '
-      + 'with the same arguments once the artist has answered. Then finish the area with paint_finish and paint_accents.',
+      + 'with the same arguments once the artist has answered. The repainted area is finished paint: end the move after it; passes that read the goal are refused there.',
     execute: async (id: string, args: Args, signal?: AbortSignal): Promise<Result> => repaintFromAsset(host, id, args, signal),
   }];
 }

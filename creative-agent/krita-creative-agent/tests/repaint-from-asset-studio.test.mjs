@@ -109,3 +109,15 @@ test('the area card answered with Paint everywhere is remembered for repaint_fro
     assert.deepEqual(h.runtime.goal.area_passed, { part: 'the tower' });
   } finally { await h.close(); }
 });
+
+test('a pass that reads the goal over a repainted area is turned away; an undone repaint is forgotten (5.4)', { timeout: 30000 }, async () => {
+  const { h, painted } = await agentChat((req, n) => n === 1 ? call('paint_finish', {}) : { content: 'Left as it is.' });
+  try {
+    h.runtime.noteRepainted({ part: 'the tower', asset: '02-historic-buildings.png', fitted: { id: 'fitted-1', width: 80, height: 150 }, bounds: [100, 100, 200, 400] });
+    assert.equal(h.runtime.repaintedAreas().length, 1);
+    await h.runtime.prompt('Paint the sky from final_goal.png');
+    assert.match(toolTexts(painted[1]), /Nothing was painted: paint_finish here would paint over the tower/);
+    h.runtime.goal.repainted[0].move = 7; h.runtime.goal.moves.push({ number: 7, status: 'undone' });
+    assert.equal(h.runtime.repaintedAreas().length, 0);
+  } finally { await h.close(); }
+});

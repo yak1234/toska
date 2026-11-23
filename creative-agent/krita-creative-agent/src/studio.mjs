@@ -70,6 +70,7 @@ import { planStepControls, stepMarksContext, withStepIds, STEP_ID } from './plan
 import { applyPaintOnlyCommand, areaContext, adoptArea, askForArea, chipLine } from './paint-only-here.ts';
 import { findArea, readFound, timingLine, FindError, FIND_PIXELS } from './find-it.ts';
 import { ASSET_WHOLE } from './repaint-from-asset.ts';
+import { GOAL_PASSES, repaintKept } from './repaint-kept.ts';
 import { decisionLocator } from './find-it-locate.ts';
 import { boundedImage, boundedPixels } from './bounded-image.ts';
 import { WORKING_PIXELS } from './reference-limits.ts';
@@ -2160,6 +2161,17 @@ export class StudioRuntime extends PaintingRuntime {
   }
   /** A fitted picture (asset-fit.ts) kept in the chat's assets as a reference of its own, named by its content: the same fit
    * is the same file and the same reference. It is see-through outside the part, so a transfer from it paints only the part. */
+  /** An area repainted from an attached picture (repaint-kept.ts), kept in the chat with the move that painted it. */
+  noteRepainted({part, asset, fitted, bounds}) {
+    if (!this.goal) return;
+    const done = {part, asset, fitted_id:fitted.id, bounds:bounds.slice(0, 4), size:[fitted.width, fitted.height], ...(this.currentMove ? {move:this.currentMove.number} : {})};
+    this.goal.repainted = [...(this.goal.repainted ?? []).filter(r => r.bounds.join() !== done.bounds.join()), done];
+  }
+  /** The repainted areas still on the painting: those of an undone move are gone. */
+  repaintedAreas() {
+    const undone = new Set((this.goal?.moves ?? []).filter(m => m.status === 'undone').map(m => m.number));
+    return (this.goal?.repainted ?? []).filter(r => !undone.has(r.move));
+  }
   async keepFitted(reference, part, fitted) {
     const png = encodeRgba({width:fitted.width, height:fitted.height, data:fitted.data instanceof Uint8Array ? fitted.data : new Uint8Array(fitted.data)});
     const id = 'fitted-' + createHash('sha256').update(png).digest('hex').slice(0, 16);
@@ -2401,6 +2413,16 @@ export class StudioRuntime extends PaintingRuntime {
     }
     // A move whose request names an attached picture repaints from it (repaint_from_asset): no image is made in its place,
     // unless the request itself asks for an AI image (chat c6928c35, 2026-11-16: two made images for an attached picture).
+    // A part repainted from an attached picture keeps that paint (repaint-kept.ts): a pass that reads the goal there is turned away.
+    for (const tool of tools.filter(t=>GOAL_PASSES.includes(t.name))) {
+      const execute = tool.execute;
+      tool.execute = async (id, args, ...rest) => {
+        const seen = this.decisionObservation ?? this.lastObservation ?? this.canvasContext?.canvas, repainted = this.repaintedAreas();
+        const why = repainted.length && seen?.width > 0 ? repaintKept({tool:tool.name, args:args ?? {}, repainted, canvas:[seen.width, seen.height], area:this.goal?.paint_only_here?.bounds ?? null}) : null;
+        if (why) { this.diagnostics?.record({type:'repaint_kept', tool:tool.name, move:this.currentMove?.number}); throw new Error(why); }
+        return execute(id, args, ...rest);
+      };
+    }
     for (const tool of tools.filter(t=>t.name==='make_asset')) {
       const execute = tool.execute;
       tool.execute = async (id, args, ...rest) => {
@@ -4414,7 +4436,7 @@ export class StudioRuntime extends PaintingRuntime {
         const named = await this.repaintAssetNamed(String(move.request ?? said)).catch(() => null);
         if (named) move.repaint = {reference_id:named.id, name:String(named.name ?? named.id)};
       }
-      const repaintNote = move.repaint && !guidesOnly ? `\nTHE ARTIST NAMED AN ATTACHED IMAGE for this: "${move.repaint.name}" (reference_id ${move.repaint.reference_id}). Repaint the part from it with repaint_from_asset, the part named as the artist named it: the host asks for the part\u2019s area itself, checks that the image fits it and paints only there, keeping the canvas\u2019s outline. Do not call make_asset or ask_for_selection for it. If the fit is refused, tell the artist what it said and stop.\n` : '';
+      const repaintNote = move.repaint && !guidesOnly ? `\nTHE ARTIST NAMED AN ATTACHED IMAGE for this: "${move.repaint.name}" (reference_id ${move.repaint.reference_id}). Repaint the part from it with repaint_from_asset, the part named as the artist named it: the host asks for the part\u2019s area itself, checks that the image fits it and paints only there, keeping the canvas\u2019s outline. Do not call make_asset or ask_for_selection for it. If the fit is refused, tell the artist what it said and stop. Once it has painted, the area is finished: call finish_move; do not run paint_finish, surface, edge or refine passes over it.\n` : '';
       // Refine after the whole-picture Finish (refine-goal.ts): the whole picture runs refine_to_goal, a part is asked for and refined fine.
       const refineNote = guidesOnly || command.move_kind || folderMove ? '' : refineToGoalNote({text:said, area:!!this.goal.paint_only_here,
         finished:this.wholeFinished(), reading:this.messageReading?.text === said ? this.messageReading.reading : null});

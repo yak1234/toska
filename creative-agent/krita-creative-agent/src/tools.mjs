@@ -572,6 +572,7 @@ export function repaintHostFor(runtime, transfer) {
       return picture(runtime.study.references.find(r => r.id === reference.id));
     } } : {}),
     keep: (reference, part, fitted) => runtime.keepFitted(reference, part, fitted),
+    painted: done => runtime.noteRepainted(done),
     transfer,
     emit: event => runtime.emit?.(event),
     record: event => runtime.diagnostics?.record?.(event),
