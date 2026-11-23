@@ -115,8 +115,10 @@ export async function repaintFromAsset(host: RepaintHost, id: string, args: Args
   };
   let fit: Fit = measure(asset, inAsset);
   if (!fit.fits && fit.scale > MAX_SCALE && fit.why?.includes('too small') && host.sharpen) {
-    const sharper = await host.sharpen(asset, signal).catch(() => null);
-    if (sharper && sharper.width > asset.width) {
+    // The size before: the host may sharpen the chat's own record in place (live 2026-11-23: it did, the size was compared
+    // with itself, and a sharpened sky stayed "too small").
+    const was = asset.width, sharper = await host.sharpen(asset, signal).catch(() => null);
+    if (sharper && sharper.width > was) {
       asset = sharper; inAsset = await find(asset);
       if (inAsset instanceof Error) return notFound();
       fit = measure(asset, inAsset);

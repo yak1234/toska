@@ -169,3 +169,12 @@ test('a refused fit is told to the host, so the move may end without painting', 
   await run(h);
   assert.equal(refused.length, 1); assert.match(refused[0]!, /stretched/);
 });
+
+test('a host that sharpens the asset in place (the chat’s own record) is still seen as sharpened', async () => {
+  const record: AssetRef = { ...TOWER };
+  const small = box(0, 0, 100, 200), large = box(0, 0, 400, 800);
+  const h = host({ reference: () => record, findInAsset: async ref => ref.width > 400 ? large : small,
+    sharpen: async ref => { ref.width *= 4; ref.height *= 4; return ref; } });
+  await run(h);
+  assert.equal(h.calls.transfers.length, 1);
+});
