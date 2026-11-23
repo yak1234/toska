@@ -54,7 +54,9 @@ transfer, the shapes model and the area question unchanged. Limits are first val
 - [x] 5.4 A repaint kept (`src/repaint-kept.ts`): each repainted area is kept in the chat with its fitted picture and
   its move; Finish, the surface and edge passes, a refinement, accents and a transfer from another picture are turned
   away where they would cover it (an undone move's area is forgotten; the fitted picture as the reference goes
-  through). The tool and the move's note no longer tell the painter to finish the area. Not yet run in Toska.
+  through). The tool and the move's note no longer tell the painter to finish the area. Run 2026-11-23, test chat
+  in test-8: the tower repainted and the move ended at once, its detail kept. The painter tried no goal pass, so the
+  refusal itself is proved by the tests only.
 
 ## 6 New Moscow
 
