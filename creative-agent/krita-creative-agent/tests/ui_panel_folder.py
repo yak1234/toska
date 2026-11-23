@@ -238,6 +238,15 @@ class PanelFolder(unittest.TestCase):
         none = dict(INDEX, goal=None)
         self.panel.handle_event({'type': 'folder', 'index': none, 'references': {}})
         self.assertEqual(choice.currentIndex(), -1); self.assertIn('No goal image found', self.panel.folder_goal.text())
+        self.assertIn('underpainting.png', self.panel.folder_goal.text())
+        # An underpainting on top (repaint-from-asset 8): the row says so, and what the plan does with it.
+        layout = dict(INDEX, goal=dict(INDEX['goal'], name='underpainting.png'), goal_role='underpainting')
+        self.panel.handle_event({'type': 'folder', 'index': layout, 'references': {}})
+        self.assertEqual(self.panel.folder_goal_caption.text(), 'Underpainting:')
+        self.assertIn('each element is repainted from its own image', self.panel.folder_goal.text())
+        self.panel.handle_event({'type': 'folder', 'index': INDEX, 'references': {}})
+        self.assertEqual(self.panel.folder_goal_caption.text(), 'Goal image:')
+        self.assertNotIn('repainted from its own image', self.panel.folder_goal.text())
 
     def test_the_folder_card_says_what_happened_to_a_small_goal(self):
         self.panel.handle_event({'type': 'folder', 'index': INDEX, 'references': {}, 'goal_sharpen': {'state': 'offered', 'factor': 4.1}})

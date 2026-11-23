@@ -57,7 +57,7 @@ import { fillNudge, massGuidance, hasGoalReference, paintedTransfers, referenceC
 import { transferRefusal, existingPainting, WHOLE_SHARE } from './reference-tool.mjs';
 import { typedStrokeRefusal, handPaintingRequested, MAX_MARKS, widthCap } from './typed-strokes.ts';
 import { openRoutesLine } from './open-routes.ts';
-import { scanFolder, readFolderText, elementStep, elementGuess, folderStepKind, elementsNamed, goalChoices, goalNamed, FOLDER_LIMITS, FOLDER_STEP_KINDS } from './project-folder.ts';
+import { scanFolder, readFolderText, elementStep, elementGuess, folderStepKind, elementsNamed, goalChoices, goalNamed, layoutPlanSteps, FOLDER_LIMITS, FOLDER_STEP_KINDS } from './project-folder.ts';
 import { stagePolicy, reviseStages, stagesNamed, orderStages, folderPlanSteps, shapePlan, nextStages, STAGE_CARD, stagesFromCard, PLAN_STAGES, planOrNot, PLAN_CARD, planFromCard, additionsNamed, refinePartsNamed } from './plan-stages.ts';
 import { refineGroups, partsOf, unionFound } from './refine-parts.ts';
 import { goalSharpener, sharpenedContext, noMoreDetailNote, refineRequested, pictureGoal, ENLARGEMENT } from './goal-sharpen.ts';
@@ -2270,7 +2270,10 @@ export class StudioRuntime extends PaintingRuntime {
     if (answered?.select_area) { if (!declined.includes(key)) declined.push(key); return false; }
     if (declined.includes(key)) return false;
     if (refine) return (await this.refinePartArea(index, key, text)) === 'asked';
-    return (await askForArea(selectionHostFor(this), layerName(steps[index].title), {request:text})).asked;
+    const asked = (await askForArea(selectionHostFor(this), layerName(steps[index].title), {request:text})).asked;
+    // An underpainting folder: each element's area is its step's own and ends with it, so the next element is asked for afresh.
+    if (asked && this.layoutFolder() && this.goal.question?.select_area) { this.goal.question.select_area.step_key = key; await this.persist(); }
+    return asked;
   }
   /** A refine step per part (refine-parts.ts): Find it on each part's name, the union of the outlines becomes the step's
    * own area (it ends with the step, as Autopilot's do); any part not found, the card asks the artist to select them,
@@ -2418,7 +2421,8 @@ export class StudioRuntime extends PaintingRuntime {
       const execute = tool.execute;
       tool.execute = async (id, args, ...rest) => {
         const seen = this.decisionObservation ?? this.lastObservation ?? this.canvasContext?.canvas, repainted = this.repaintedAreas();
-        const why = repainted.length && seen?.width > 0 ? repaintKept({tool:tool.name, args:args ?? {}, repainted, canvas:[seen.width, seen.height], area:this.goal?.paint_only_here?.bounds ?? null}) : null;
+        const fitted = this.study?.references?.find(r => r.id === args?.reference_id)?.purpose === 'fitted';   // another element's own fitted picture: its area keeps it off the rest
+        const why = !fitted && repainted.length && seen?.width > 0 ? repaintKept({tool:tool.name, args:args ?? {}, repainted, canvas:[seen.width, seen.height], area:this.goal?.paint_only_here?.bounds ?? null}) : null;
         if (why) { this.diagnostics?.record({type:'repaint_kept', tool:tool.name, move:this.currentMove?.number}); throw new Error(why); }
         return execute(id, args, ...rest);
       };
@@ -2752,7 +2756,7 @@ export class StudioRuntime extends PaintingRuntime {
     if (index.goal_source === 'chosen') this.study.folder.goal = index.goal.name; else delete this.study.folder.goal;
     await this.readFolder(index);
     if (index.goal) {
-      try { await this.addReferences([{path:index.goal.path, role:'reference', purpose:'composition', name:basename(index.goal.name), folder:index.goal.name, notes:'The goal image of the project folder: it decides the layout.'}]); }
+      try { await this.addReferences([{path:index.goal.path, role:'reference', purpose:'composition', name:basename(index.goal.name), folder:index.goal.name, notes:index.goal_role === 'underpainting' ? 'The underpainting image of the project folder: it gives every element its place. It is the layout, not the finished look: each element\u2019s look comes from its own image.' : 'The goal image of the project folder: it decides the layout.'}]); }
       catch (error) { this.emit({type:'action', seconds:0, message:'The goal image was not attached: '+this.redact(error.message)}); }
     }
     for (const e of index.elements) {                            // one unreadable element is reported, the rest attach
@@ -2932,7 +2936,7 @@ export class StudioRuntime extends PaintingRuntime {
     const references = Object.fromEntries((this.study?.references ?? []).filter(r => r.folder_name).map(r => [r.folder_name, r.id]));
     this.emit({type:'folder', index:{root:index.root, name:basename(index.root), goal:index.goal ? strip(index.goal) : null,
       elements:index.elements.map(e => ({...strip(e), guess:this.folderGuessOf(e)})), others:index.others.map(strip),
-      texts:index.texts.map(strip), skipped:index.skipped, goal_choices:goalChoices(index), goal_source:index.goal_source ?? null},
+      texts:index.texts.map(strip), skipped:index.skipped, goal_choices:goalChoices(index), goal_source:index.goal_source ?? null, goal_role:index.goal_role ?? null},
       references, plan_limit:FOLDER_PLAN_ELEMENTS, goal_sharpen:this.goalSharpen?.status() ?? null, study:this.folderStudy?.status() ?? null});
   }
   /** What the painter knows of the folder: the goal, the elements with the artist's names, the texts and the brief. */
@@ -2962,6 +2966,15 @@ export class StudioRuntime extends PaintingRuntime {
   }
   // Project folder B3: the element plan, PLAN.md and NOTES.md (folder-notes.ts), resume.
   folderPlanning() { return this.mode === 'agent' && !!this.study?.folder && !!this.folderIndex?.elements.length; }
+  /** A folder whose top image is an underpainting, not a goal (project-folder.ts goal_role): each element is repainted from
+   * its own image into its place on it (repaint_from_asset). */
+  layoutFolder() { return !!this.study?.folder && this.folderIndex?.goal_role === 'underpainting'; }
+  /** Its plan: the underpainting, then one repaint step per element in file order (project-folder.ts layoutPlanSteps). */
+  layoutPlanDraft() {
+    const index = this.folderIndex, name = basename(index.root), elements = this.folderElements();
+    return normalizeBrief({title:name.slice(0,200), objective:`Paint ${name} from its underpainting image: lay it over the canvas, then repaint each element from its own image inside its place on it.`,
+      requirements:[], freedom:[], completion:['Every element is repainted from its own image where the underpainting has it, or the artist was told why one was left.'], steps:layoutPlanSteps(elements)});
+  }
   folderPlanApproved() { return !!this.goal?.brief && this.goal.approved_revision === this.goal.revision; }
   firstOpenStep() {
     const done = new Set(this.goal?.done_steps ?? []), steps = this.goal?.brief?.steps ?? [];
@@ -3049,6 +3062,18 @@ export class StudioRuntime extends PaintingRuntime {
   /** Agent mode with a folder and no approved plan: a planning turn (propose_plan, no painting tools). Its stages follow
    * the request (planStagesFor); a plan card answer (`answered`) gives them. */
   async planFolder(text, images, answered = null) {
+    // An underpainting folder has one plan, the host's own: no stages to choose and nothing for a planner to shape.
+    if (this.layoutFolder()) {
+      if (!this.goal.brief || this.goal.folder_plan_root !== this.study.folder.root) {
+        this.goal.revisions ??= []; this.goal.revisions.push({revision:this.goal.revision,brief:this.goal.brief ?? null,at:stamp(),source:'folder'});
+        this.goal.brief = this.layoutPlanDraft(); this.goal.revision++; this.goal.approved_revision = null; this.goal.current_step = 0; this.goal.done_steps = [];
+        await this.persist(); await this.folderPlanChanged(null);
+      }
+      this.goal.status = 'ready'; await this.persist(); this.publish();
+      const n = this.goal.brief.steps.length - 1;
+      this.setActivity('idle', `Plan ready: the underpainting, then ${n} element${n === 1 ? '' : 's'} repainted from ${n === 1 ? 'its' : 'their'} own image${n === 1 ? '' : 's'}, one a step. For each I show you where I found it on the painting first. Review or edit it, then press Start painting.`);
+      return;
+    }
     const stages = await this.planStagesFor(text, answered);
     if (!stages) { this.setActivity('awaiting_user', 'Your answer will guide the plan.'); return; }
     const request = answered?.plan_stages ? `${answered.plan_stages.request}\n\n(The artist answered "${answered.question}": ${String(text).trim()}.)` : text;
@@ -3271,12 +3296,17 @@ export class StudioRuntime extends PaintingRuntime {
         return `\nPLAN MOVE: step ${move.step + 1} of the approved plan, "${name}": an addition the goal image does not have: ${thing}.${asked ? ` The artist asked: "${asked.slice(0, 600)}".` : ''} Paint it over the picture as it is now ${tool}, on its own layer named "${name}", leaving the copy of ${goalText} underneath intact. Done when: ${String(step.done_when ?? '').trim()} Paint all of it where the artist asked, not a token few marks; then look at the canvas and finish_move.\n`;
       }
       if (kind === 'whole') return `\nPROJECT FOLDER MOVE: step ${move.step + 1} of the approved plan, "${name}", for the whole composition: ${String(step.done_when ?? '').trim()} Refine what the underpainting has rather than repainting it (paint_finish, paint_accents, Krita's layers and filters), then finish_move.\n`;
-      return `\nPROJECT FOLDER MOVE: step ${move.step + 1} of the approved plan, "${name}", for the whole composition: the underpainting of the whole picture from ${goalText} (paint_from_reference, all of it onto the whole canvas). Paint only this step. ${UNDERPAINTING_MOVE_NOTE}\n`;
+      return `\nPROJECT FOLDER MOVE: step ${move.step + 1} of the approved plan, "${name}", for the whole composition: the underpainting of the whole picture from ${this.layoutFolder() ? goalText.replace('the goal image', 'the underpainting image') : goalText} (paint_from_reference, all of it onto the whole canvas). Paint only this step. ${UNDERPAINTING_MOVE_NOTE}\n`;
     }
     // An element step is one the artist asked for: it refines the element over the underpainting, judged against the goal.
     // With its area set (Find it for me, or the artist's selection) the default is the scoped transfer of the goal, then
     // accents in the area (the artist, 2026-10-24); colour splits and selections, materials and typed strokes are refused
     // there unless the artist asks (element-step-rules.ts).
+    if (this.layoutFolder()) {
+      const part = String(this.folderGuessOf({name:file, guess:name}) || name), set = this.goal.paint_only_here;
+      move.repaint = {reference_id:element.id, name:basename(file)};
+      return `\nPROJECT FOLDER MOVE: paint only step ${move.step + 1} of the approved plan, "${name}". This folder has an underpainting, not a finished goal: repaint this element from its own image. One call: repaint_from_asset with reference_id ${element.id} (${file}) and part "${part}"${set ? `; its area is set (${chipLine(set)})` : '; the host asks the artist for its area first, so stop after the question and call it again once they answer'}. The host fits the image to the area and paints only there; the underpainting\u2019s outline is kept. If the fit is refused, tell the artist what it said and call finish_move: do not paint the element another way and do not make an image. Once it has painted, call finish_move: no paint_finish, surface, edge, accent or refine passes.\n`;
+    }
     const area = this.goal.paint_only_here, refused = 'No split_by_color, colour selections (magic wand, colour ranges), materials or typed strokes: the host refuses them in an element step unless the artist asks for them.';
     if (area && this.wholeFinished()) return `\nPROJECT FOLDER MOVE: paint only step ${move.step + 1} of the approved plan, "${name}", the element the artist asked for, inside the Paint only here area (${chipLine(area)}). The whole picture is finished: refine the element to the goal's real detail size, never underpaint it again: 1. paint_finish with detail "fine" (2-4 px strokes from ${goalText}), which works in the area by default (an area of more than 15% of the canvas: refine_to_goal, which works in it by default); 2. paint_accents from ${goalText}, which works in the area by default. ${refused} Its look also comes from the element reference ${element.id} (${file}). Then finish_move.\n`;
     if (area) return `\nPROJECT FOLDER MOVE: paint only step ${move.step + 1} of the approved plan, "${name}", the element the artist asked for, inside the Paint only here area (${chipLine(area)}). The default sequence: 1. paint_from_reference of ${goalText}, the whole goal over the whole canvas with its default steps: the underpainting engine at full strength, and only the dabs inside the area are painted; 2. paint_finish, which works in the area by default (its soft parts blended, its forms restroked from the goal); 3. paint_accents from ${goalText}, which works in the area by default. ${refused} Its look also comes from the element reference ${element.id} (${file}). Then finish_move.\n`;

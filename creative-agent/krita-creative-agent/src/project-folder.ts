@@ -19,7 +19,9 @@ export type FolderImage = { name: string; path: string; width: number; height: n
 export type FolderText = { name: string; path: string; kind: 'brief' | 'readme' | 'plan' | 'notes' | 'other'; chars: number };
 /** goal_source: 'chosen' when the goal is the image the artist picked (the panel's Goal image list, a typed request, or
  * PLAN.md's "Goal image:" line), 'name' when it is found by its name (final_goal.png, goal.jpg), none without a goal. */
-export type FolderIndex = { root: string; goal: FolderImage | null; goal_source?: 'chosen' | 'name'; elements: FolderImage[]; others: FolderImage[];
+/** goal_role: 'underpainting' when the top image is an underpainting (its name says so): it gives every element its place
+ * and is not the finished look, so the plan repaints each element from its own image into it (layoutPlanSteps). */
+export type FolderIndex = { root: string; goal: FolderImage | null; goal_source?: 'chosen' | 'name'; goal_role?: 'goal' | 'underpainting'; elements: FolderImage[]; others: FolderImage[];
   texts: FolderText[]; prompts: Record<string, string>; skipped: { name: string; reason: string }[] };
 /** goal: the folder-relative name of the image the artist chose as the goal. One that is not an image of the folder (gone,
  * renamed, or outside it) is ignored, and the goal is found by its name as before. */
@@ -34,7 +36,15 @@ const KRITA = new Set(['.kra', '.krz', '.ora', '.psd', '.xcf', '.blend']);
 const HEADER_BYTES = 512 * 1024;                     // enough for a JPEG's size marker after its metadata
 const NUMBERED = /^(\d{1,3})(?:[-_ .]|$)/;
 const GOAL = /^(?:final[-_ ]?)?(?:goal|target)(?:[-_ ].*)?$/i;
+const UNDERPAINTING = /^(?:under[-_ ]?painting|layout|block[-_ ]?in)(?:[-_ ].*)?$|[-_ ]under[-_ ]?painting$/i;
 const BACKUP = /\.backup-\d{4}-\d{2}-\d{2}(?:-\d+)?\.md$/i;
+
+/** Whether a file's name says it is an underpainting (underpainting.png, new_moscow_underpainting.png, layout.png,
+ * block-in.png); a numbered image is an element, whatever it is called. */
+export function isUnderpaintingName(name: string): boolean {
+  const stem = basename(name, extname(name));
+  return !NUMBERED.test(stem) && UNDERPAINTING.test(stem);
+}
 
 /** "04-kremlin-towers.png" → "Kremlin towers": the number and extension go, separators become spaces. */
 export function elementGuess(name: string): string {
@@ -190,7 +200,9 @@ export async function scanFolder(dir: string, limits: FolderLimits = FOLDER_LIMI
   }
   const number = (name: string) => { const match = NUMBERED.exec(basename(name)); return match ? Number(match[1]) : null; };
   const picked = typeof chosen === 'string' && images.some(c => c.name === chosen) ? chosen : null;
-  const isGoal = (name: string) => picked ? name === picked : GOAL.test(basename(name, extname(name)));
+  // Found by name: a goal image first; with none, an underpainting image is the layout.
+  const named = images.some(c => GOAL.test(basename(c.name, extname(c.name))));
+  const isGoal = (name: string) => picked ? name === picked : named ? GOAL.test(basename(name, extname(name))) : isUnderpaintingName(name);
   // Read order decides what the image cap keeps: the goal, then elements by number, then other images.
   const rank = (c: Candidate) => isGoal(c.name) ? -1 : number(c.name) ?? Number.MAX_SAFE_INTEGER;
   images.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
@@ -208,7 +220,7 @@ export async function scanFolder(dir: string, limits: FolderLimits = FOLDER_LIMI
     const prompt = promptText.get(stem);
     const item: FolderImage = { name: image.name, path: image.path, ...info, role: 'other', guess: elementGuess(image.name),
       ...(n !== null ? { number: n } : {}), ...(prompt ? { prompt: promptSubject(prompt) } : {}) };
-    if (!goal && isGoal(image.name)) goal = { ...item, role: 'goal', guess: 'Goal image' };
+    if (!goal && isGoal(image.name)) goal = { ...item, role: 'goal', guess: isUnderpaintingName(image.name) ? 'Underpainting' : 'Goal image' };
     else if (n !== null) elements.push({ ...item, role: 'element' });
     else others.push(item);
   }
@@ -220,7 +232,7 @@ export async function scanFolder(dir: string, limits: FolderLimits = FOLDER_LIMI
     folderTexts.push({ name: text.name, path: text.path, kind: textKind(text.name), chars });
   }
   const promptsByName: Record<string, string> = Object.fromEntries([...promptText].map(([stem, prompt]) => [stem, promptSubject(prompt)]));
-  return { root, goal, ...(goal ? { goal_source: picked ? 'chosen' as const : 'name' as const } : {}), elements, others, texts: folderTexts, prompts: promptsByName, skipped };
+  return { root, goal, ...(goal ? { goal_source: picked ? 'chosen' as const : 'name' as const, goal_role: isUnderpaintingName(goal.name) ? 'underpainting' as const : 'goal' as const } : {}), elements, others, texts: folderTexts, prompts: promptsByName, skipped };
 }
 
 /** The images the artist may choose as the goal, by folder-relative name: the goal, the elements in order, the others. */
@@ -298,6 +310,19 @@ export function defaultFolderSteps(): FolderStep[] {
 /** An element's step, added when the artist asks for that element: its scope is the element's file. */
 export function elementStep(name: string, guess: string): FolderStep {
   return { title: guess.slice(0, 200), done_when: `${guess} is refined in its place as the goal image shows it, its look from ${basename(name)}.`, scope: name };
+}
+
+// A folder whose top image is an underpainting (the artist, 2026-11-16: "the underpainting gives positions of everything.
+// We have all the assets, so why shouldn't I be able to say: I want this asset, this region"). There is no finished goal
+// to copy, so the plan is the underpainting laid over the canvas, then each element repainted from its own image inside
+// its area on the underpainting (repaint_from_asset: the canvas's outline wins), in file order.
+export const LAYOUT_STEP = 'Underpainting';
+export function layoutPlanSteps(elements: readonly { name: string; guess: string }[]): FolderStep[] {
+  return [
+    { title: LAYOUT_STEP, done_when: 'The underpainting image is laid over the whole canvas, every element in its place.', scope: WHOLE, kind: 'underpainting' },
+    ...elements.map(({ name, guess }): FolderStep => ({ title: guess.slice(0, 200), scope: name, kind: 'element',
+      done_when: `${guess} is repainted from ${basename(name)} inside its area on the underpainting; the underpainting’s outline is kept.` })),
+  ];
 }
 
 /** What a folder plan step paints: its own `kind` when it records one; else by its scope and title: an element (its scope

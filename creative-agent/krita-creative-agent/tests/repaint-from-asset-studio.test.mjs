@@ -121,3 +121,38 @@ test('a pass that reads the goal over a repainted area is turned away; an undone
     assert.equal(h.runtime.repaintedAreas().length, 0);
   } finally { await h.close(); }
 });
+
+// A folder without a goal (repaint-from-asset 8).
+test('a folder with an underpainting and no goal: the host’s plan is the underpainting, then a repaint step per element; an element step calls repaint_from_asset', { timeout: 60000 }, async () => {
+  const seen = [];
+  const h = await harness(req => { seen.push(req); return { content: 'Done.' }; });
+  const root = join(h.output, 'moscow');
+  try {
+    await mkdir(root); await writeFile(join(root, 'underpainting.png'), png);
+    for (const name of ['01-moonlit-sky.png', '02-historic-buildings.png']) await writeFile(join(root, name), png);
+    await h.runtime.start({ provider: 'local-test', model: 'vision-test', chat_mode: 'ask', prompt: 'Hello', mode: 'copy' });
+    await h.runtime.setExecutionSettings({ move_size: 'quick', study_folder: false });
+    await h.runtime.openFolder({ path: root });
+    assert.equal(h.runtime.layoutFolder(), true);
+    assert.equal(h.events.filter(e => e.type === 'folder').at(-1).index.goal_role, 'underpainting');
+    assert.match(h.runtime.study.references.find(r => r.role === 'reference').notes, /underpainting image/);
+    await h.runtime.setMode('agent');
+    const before = seen.length;
+    await h.runtime.prompt('Paint it');
+    assert.equal(seen.length, before, 'no planner turn: the plan is the host’s own');
+    assert.deepEqual(h.runtime.goal.brief.steps.map(s => s.title), ['Underpainting', 'Moonlit sky', 'Historic buildings']);
+    assert.match(h.events.filter(e => e.type === 'status' || e.activity).map(e => String(e.message ?? e.activity ?? '')).join('\n'), /2 elements repainted from their own images/);
+    await h.runtime.prompt('', { start_plan: true });
+    const first = JSON.stringify(seen.at(-1).messages);
+    assert.match(first, /the underpainting of the whole picture from the underpainting image/);
+    // The second step, its area already set: the painter is told to repaint from the element's own image.
+    h.runtime.goal.done_steps = [0]; h.runtime.goal.current_step = 1;
+    h.runtime.goal.paint_only_here = { name: 'Moonlit sky', bounds: [0, 0, 400, 200], mask_path: join(h.output, 'm.png'), share: 0.1, canvas: [768, 1024] };
+    const sky = h.runtime.study.references.find(r => r.folder_name === '01-moonlit-sky.png');
+    const move = { step: 1 };
+    const told = h.runtime.folderMoveInstructions(move);
+    assert.match(told, new RegExp(`repaint_from_asset with reference_id ${sky.id} \\(01-moonlit-sky\\.png\\) and part "Moonlit sky"`));
+    assert.doesNotMatch(told, /goal image/);
+    assert.deepEqual(move.repaint, { reference_id: sky.id, name: '01-moonlit-sky.png' });
+  } finally { await h.close(); }
+});

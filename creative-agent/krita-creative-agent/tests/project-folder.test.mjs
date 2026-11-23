@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile, truncate, symlink, readdir, readFile, stat, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scanFolder, FOLDER_LIMITS, elementGuess, defaultFolderSteps, elementStep, folderStepKind, elementsNamed, goalNamed, goalChoices } from '../src/project-folder.ts';
+import { scanFolder, FOLDER_LIMITS, elementGuess, defaultFolderSteps, elementStep, folderStepKind, elementsNamed, goalNamed, goalChoices, isUnderpaintingName, layoutPlanSteps, LAYOUT_STEP } from '../src/project-folder.ts';
 
 /** A PNG signature and IHDR: enough for imageInfo (files.mjs) to read the size. */
 function tinyPng(width = 4, height = 3) {
@@ -304,4 +304,36 @@ test('goalNamed: a typed message that makes a folder image the goal, by file nam
     'the goal is a snowy night', 'use 99-nothing.png as the goal', ''])
     assert.equal(goalNamed(text, images), null, text);
   assert.equal(goalNamed('use final_goal.png or skies.png as the goal', images), null, 'two images named: not a choice');
+});
+
+// A folder without a goal (repaint-from-asset 8): an underpainting image is the layout, and the plan repaints each element into it.
+test('with no goal image, an image named underpainting is the layout; a goal image still comes first', async () => {
+  const root = await cleanFolder();
+  try {
+    await writeFile(join(root, 'underpainting.png'), tinyPng(1448, 1086));
+    const both = await scanFolder(root);
+    assert.deepEqual([both.goal?.name, both.goal_role], ['final_goal.png', 'goal']);
+    assert.ok(both.others.some(o => o.name === 'underpainting.png'));
+    const chosen = await scanFolder(root, FOLDER_LIMITS, { goal: 'underpainting.png' });
+    assert.deepEqual([chosen.goal?.name, chosen.goal_role, chosen.goal_source, chosen.goal?.guess], ['underpainting.png', 'underpainting', 'chosen', 'Underpainting']);
+    await rm(join(root, 'final_goal.png'));
+    const layout = await scanFolder(root);
+    assert.deepEqual([layout.goal?.name, layout.goal_role, layout.goal_source, layout.goal?.role], ['underpainting.png', 'underpainting', 'name', 'goal']);
+    assert.equal(layout.elements.length, 12);
+    await rm(join(root, 'underpainting.png'));
+    const none = await scanFolder(root);
+    assert.equal(none.goal, null); assert.equal(none.goal_role, undefined);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('the names that say underpainting, and the plan of a folder with one: the underpainting, then a repaint step per element in file order', () => {
+  for (const name of ['underpainting.png', 'Under-Painting.jpg', 'new_moscow_underpainting.png', 'underpainting-v2.png', 'layout.png', 'block-in.png'])
+    assert.equal(isUnderpaintingName(name), true, name);
+  for (const name of ['final_goal.png', '03-underpainting-study.png', 'layouts-of-moscow.png', 'sky.png']) assert.equal(isUnderpaintingName(name), false, name);
+  const steps = layoutPlanSteps([{ name: 'assets/01-moonlit-sky.png', guess: 'Moonlit sky' }, { name: 'assets/02-historic-buildings.png', guess: 'Historic buildings' }]);
+  assert.deepEqual(steps.map(s => s.title), [LAYOUT_STEP, 'Moonlit sky', 'Historic buildings']);
+  assert.deepEqual(steps.map(s => folderStepKind(s)), ['underpainting', 'element', 'element']);
+  assert.deepEqual(steps.map(s => s.scope), ['whole composition', 'assets/01-moonlit-sky.png', 'assets/02-historic-buildings.png']);
+  assert.match(steps[1].done_when, /repainted from 01-moonlit-sky\.png/);
+  assert.doesNotMatch(JSON.stringify(steps), /goal image/i);
 });

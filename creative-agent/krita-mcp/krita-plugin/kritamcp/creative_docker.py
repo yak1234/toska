@@ -1732,7 +1732,7 @@ class CreativeAgentDocker(DockWidget):
         self.folder_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred); folder_words.addWidget(self.folder_title)
         # Goal picker: which folder image is the goal (the companion's goal reference); the default is final_goal.png.
         goal_row = QHBoxLayout(); goal_row.setSpacing(6)
-        goal_caption = QLabel('Goal image:'); goal_caption.setObjectName('muted'); goal_row.addWidget(goal_caption)
+        goal_caption = self.folder_goal_caption = QLabel('Goal image:'); goal_caption.setObjectName('muted'); goal_row.addWidget(goal_caption)
         self.folder_goal_choice = QComboBox(); self.folder_goal_choice.setAccessibleName('Goal image')
         self.folder_goal_choice.setToolTip('The image the painting follows: its layout, colours and light. Any image of the folder can be the goal.')
         self.folder_goal_choice.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon); self.folder_goal_choice.setMinimumContentsLength(8)
@@ -2912,7 +2912,12 @@ class CreativeAgentDocker(DockWidget):
         for name in choices: self.folder_goal_choice.addItem(name, name)
         self.folder_goal_choice.setCurrentIndex(self.folder_goal_choice.findData(goal['name']) if goal else -1)
         self.folder_goal_choice.blockSignals(False); self.folder_goal_choice.setEnabled(bool(choices) and not self.busy)
-        self.folder_goal.setText(self.goal_sharpen_words(event.get('goal_sharpen')) if goal else 'No goal image found: choose one above, or name it final_goal.png.')
+        # An underpainting on top (project-folder.ts goal_role): the layout, not the finished look; each element is repainted into it.
+        layout = bool(goal) and index.get('goal_role') == 'underpainting'
+        self.folder_goal_caption.setText('Underpainting:' if layout else 'Goal image:')
+        words = self.goal_sharpen_words(event.get('goal_sharpen')) if goal else 'No goal image found: choose one above, or name it final_goal.png. With no goal, an image named underpainting.png is used as the layout.'
+        if layout: words = ' '.join(filter(None, ['No goal image: this underpainting gives every element its place, and each element is repainted from its own image into it, one a step.', words]))
+        self.folder_goal.setText(words)
         self.folder_goal.setVisible(bool(self.folder_goal.text()))
         self.clear_folder_masses(); self.show_folder_masses()          # never another folder's goal
         elements = index.get('elements') or []

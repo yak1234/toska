@@ -68,3 +68,20 @@ transfer, the shapes model and the area question unchanged. Limits are first val
 - [ ] 7.1 The fitted asset as the area's goal for the likeness check of its repaint.
 - [ ] 7.2 A folder with no goal image: element notes placed against the canvas once it has an underpainting.
 - [ ] 7.3 Outline warp for the parts 6.1 turns away.
+
+## 8 A folder without a goal
+
+The artist, 2026-11-16: a folder whose goal image is deleted, with an underpainting image in it, repaints each element
+into its place on the underpainting.
+
+- [x] 8.1 The scan: with no goal image, an image whose name says underpainting (underpainting.png, layout.png,
+  block-in.png) is the top image, `goal_role: 'underpainting'`; a goal image still comes first; chosen in the Goal image
+  list, an underpainting keeps its role.
+- [x] 8.2 The plan is the host's own (`layoutPlanSteps`): the underpainting, then one step per element in file order;
+  no planner turn, no stages card, and no Finish, Refine or Accents (they read the underpainting as the goal: 5.4, 7.1).
+- [x] 8.3 An element step tells the painter to call `repaint_from_asset` with the element's image; its area card is the
+  step's own and ends with the step. Another element's fitted picture may cross a repainted box (its area keeps it off).
+- [x] 8.4 The panel's folder card says "Underpainting:" and what the plan does with it.
+- [ ] 8.5 Live: the New Moscow folder without its goal, at 6000 x 4500.
+- [ ] 8.6 "Repaint from this" on each element row; the role chosen in the panel (Goal, Underpainting, None) instead of
+  by the file's name; Autopilot skipping a refused element and reporting it.
