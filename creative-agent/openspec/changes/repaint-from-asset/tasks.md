@@ -82,6 +82,14 @@ into its place on the underpainting.
 - [x] 8.3 An element step tells the painter to call `repaint_from_asset` with the element's image; its area card is the
   step's own and ends with the step. Another element's fitted picture may cross a repainted box (its area keeps it off).
 - [x] 8.4 The panel's folder card says "Underpainting:" and what the plan does with it.
-- [ ] 8.5 Live: the New Moscow folder without its goal, at 6000 x 4500.
+- [ ] 8.5 Live: the New Moscow folder without its goal, at 6000 x 4500. (Run 2026-11-23, underpainting and the first
+  elements: the plan, each step's area card and the area ending with its step all worked; "Historic buildings"
+  repainted the tower and left five pieces; the sky was first refused as stretched, then as too small, both fixed
+  (a window of a whole asset; a refusal ends the move; sharpening in place), and then repainted. Still to run: all
+  twelve.)
+- [ ] 8.7 A whole-surface asset keeps the underpainting's light. The repainted sky lost the moon and the warm glow at
+  the skyline and has a hard edge against the buildings: the asset's own colours replaced the scene's. The
+  underpainting should win on colour and light as it does on outline (the asset's detail over the underpainting's
+  large-scale colour), and the area's edge should be soft.
 - [ ] 8.6 "Repaint from this" on each element row; the role chosen in the panel (Goal, Underpainting, None) instead of
   by the file's name; Autopilot skipping a refused element and reporting it.
