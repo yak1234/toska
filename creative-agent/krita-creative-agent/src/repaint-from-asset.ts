@@ -52,6 +52,10 @@ export type RepaintHost = {
   transfer(id: string, recipe: Recipe, signal?: AbortSignal): Promise<Result>;
   /** One area was repainted from the asset: the host keeps it from the passes that read the goal (repaint-kept.ts). */
   painted?(done: { part: string; asset: string; fitted: AssetRef; bounds: number[] }): void;
+  /** The fit was refused and nothing was painted: the host lets the move end without painting. */
+  refused?(why: string): void;
+  /** The canvas's size, for where an area sits on it. */
+  canvas?(): [number, number] | null;
   emit(event: Record<string, unknown>): void;
   record?(event: Record<string, unknown>): void;
 };
@@ -97,26 +101,40 @@ export async function repaintFromAsset(host: RepaintHost, id: string, args: Args
       + `or cut it out themselves (the reference’s Select a part in Krita). ${NO_IMAGE}`, { not_found: true });
   };
   if (inAsset instanceof Error) return notFound();
-  let fit: Fit = measureFit(inAsset, onCanvas, asset);
+  // An asset that is its part all over (a sky, water, a wall) has no outline of its own to keep, and the area's shape
+  // cuts it: a window of it with the area's proportions is taken, never a stretch, from the side of the asset the area is
+  // on in the canvas (a sky at the top takes the asset's top). Only its size then decides (live 2026-11-23: the sky
+  // asset was refused as "stretched 2.48 times" for the band of sky on the painting).
+  let whole: Shape | null = null;
+  const measure = (from: AssetRef, found: Shape | null): Fit => {
+    whole = null;
+    if (found) return measureFit(found, onCanvas, from);
+    const view = assetWindow(from, onCanvas.bounds, host.canvas?.() ?? null), fit = measureFit(view, onCanvas, from), small = fit.scale > MAX_SCALE;
+    whole = view;
+    return { ...fit, uneven: 1, fits: !small, why: small ? `it is too small for this area (enlarged ${fit.scale.toFixed(2)} times, it would be painted blurred)` : null };
+  };
+  let fit: Fit = measure(asset, inAsset);
   if (!fit.fits && fit.scale > MAX_SCALE && fit.why?.includes('too small') && host.sharpen) {
     const sharper = await host.sharpen(asset, signal).catch(() => null);
     if (sharper && sharper.width > asset.width) {
       asset = sharper; inAsset = await find(asset);
       if (inAsset instanceof Error) return notFound();
-      fit = measureFit(inAsset, onCanvas, asset);
+      fit = measure(asset, inAsset);
     }
   }
+  const window = (whole as Shape | null)?.bounds ?? null;
   // One name, several things (a facade and a tower; the tower with a slice of what stands beside it): each piece of the
   // asset's part is fitted to the piece of the area it matches, and the area's other pieces keep their paint.
   type Pair = { part: Shape | null; area: Shape; fit: Fit };
-  let pairs: Pair[] = fit.fits ? [{ part: inAsset, area: onCanvas, fit }] : [], left = 0;
+  let pairs: Pair[] = fit.fits ? [{ part: inAsset ?? (whole as Shape | null), area: onCanvas, fit }] : [], left = 0;
   if (!pairs.length && inAsset) {
     const matched = matchPieces(pieces(inAsset), pieces(onCanvas));
     pairs = matched.pairs; left = pairs.length ? matched.areaLeft.length : 0;
   }
-  host.record?.({ type: 'repaint_fit', part, asset: asset.id, ...fit, whole: !inAsset, area: area.bounds,
+  host.record?.({ type: 'repaint_fit', part, asset: asset.id, ...fit, whole: !inAsset, ...(window ? { window } : {}), area: area.bounds,
     pieces: pairs.map(pair => ({ area: pair.area.bounds, overlap: pair.fit.overlap, covered: pair.fit.covered, uneven: pair.fit.uneven, scale: pair.fit.scale })), left });
   if (!pairs.length) {
+    host.refused?.(fit.why ?? 'it does not fit');
     host.emit({ type: 'action', seconds: 0, message: `${label} does not fit ${part} on the painting: ${fit.why}. Nothing was painted.` });
     return reply(`${label} does not fit ${part} on the painting: ${fit.why}, and no piece of it matched a piece of the area. Nothing was painted. ${JSON.stringify({ fit })} `
       + `Tell the artist plainly; they can adjust the area, name one thing in it, choose another image, or ask for it to be painted by hand. ${NO_IMAGE}`, { fit, painted: false });
@@ -138,6 +156,16 @@ export async function repaintFromAsset(host: RepaintHost, id: string, args: Args
     ...(left ? { left_as_it_was: `${left} separate piece${left === 1 ? '' : 's'} of the area matched nothing in the image: say so in your reply` } : {}),
     note: 'The canvas’s outline was kept: only this area changed. This paint is finished as it is: do not run paint_finish, surface, edge or refine passes over it (they read the underpainting and would blur it back). End the move.' } }) }],
     details: { ...details, repaint: { part, asset: asset.id, pieces: repainted, left } } };
+}
+
+/** The part of a whole asset that goes into an area: the largest window with the area's proportions, on the side of the
+ * asset where the area sits in the canvas (centred when the canvas is not known). */
+export function assetWindow(asset: { width: number; height: number }, bounds: number[], canvas: [number, number] | null): Shape {
+  const [bx, by, bw, bh] = bounds as [number, number, number, number], wide = bw / bh > asset.width / asset.height;
+  const w = Math.max(1, Math.round(wide ? asset.width : asset.height * bw / bh)), h = Math.max(1, Math.round(wide ? asset.width * bh / bw : asset.height));
+  const side = (at: number, size: number, of: number | undefined) => of && of > size ? Math.min(1, Math.max(0, at / (of - size))) : 0.5;
+  const x = Math.round((asset.width - w) * side(bx, bw, canvas?.[0])), y = Math.round((asset.height - h) * side(by, bh, canvas?.[1]));
+  return { bounds: [x, y, w, h] as Shape['bounds'], data: new Uint8Array(w * h).fill(255) };
 }
 
 export function repaintTools(host: RepaintHost): ToolDefinition<any, unknown>[] {

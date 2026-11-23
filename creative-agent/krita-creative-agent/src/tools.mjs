@@ -573,6 +573,8 @@ export function repaintHostFor(runtime, transfer) {
     } } : {}),
     keep: (reference, part, fitted) => runtime.keepFitted(reference, part, fitted),
     painted: done => runtime.noteRepainted(done),
+    refused: why => runtime.noteRepaintRefused(why),
+    canvas: () => { const seen = runtime.decisionObservation ?? runtime.lastObservation; return seen?.width > 0 && seen?.height > 0 ? /** @type {[number, number]} */ ([seen.width, seen.height]) : null; },
     transfer,
     emit: event => runtime.emit?.(event),
     record: event => runtime.diagnostics?.record?.(event),

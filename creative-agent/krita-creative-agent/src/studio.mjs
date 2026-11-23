@@ -2165,8 +2165,11 @@ export class StudioRuntime extends PaintingRuntime {
   noteRepainted({part, asset, fitted, bounds}) {
     if (!this.goal) return;
     const done = {part, asset, fitted_id:fitted.id, bounds:bounds.slice(0, 4), size:[fitted.width, fitted.height], ...(this.currentMove ? {move:this.currentMove.number} : {})};
+    if (this.currentMove) delete this.currentMove.repaint_refused;
     this.goal.repainted = [...(this.goal.repainted ?? []).filter(r => r.bounds.join() !== done.bounds.join()), done];
   }
+  /** A repaint was refused in this move: nothing else paints the part, and the move may end without painting. */
+  noteRepaintRefused(why) { if (this.currentMove) this.currentMove.repaint_refused = String(why ?? 'it does not fit').slice(0, 200); }
   /** The repainted areas still on the painting: those of an undone move are gone. */
   repaintedAreas() {
     const undone = new Set((this.goal?.moves ?? []).filter(m => m.status === 'undone').map(m => m.number));
@@ -2423,6 +2426,7 @@ export class StudioRuntime extends PaintingRuntime {
         const seen = this.decisionObservation ?? this.lastObservation ?? this.canvasContext?.canvas, repainted = this.repaintedAreas();
         const fitted = this.study?.references?.find(r => r.id === args?.reference_id)?.purpose === 'fitted';   // another element's own fitted picture: its area keeps it off the rest
         const why = !fitted && repainted.length && seen?.width > 0 ? repaintKept({tool:tool.name, args:args ?? {}, repainted, canvas:[seen.width, seen.height], area:this.goal?.paint_only_here?.bounds ?? null}) : null;
+        if (!fitted && this.currentMove?.repaint_refused) throw new Error(`Nothing was painted: the repaint of this part from the artist's image was refused (${this.currentMove.repaint_refused}). Do not paint it another way: call finish_move and tell the artist why.`);
         if (why) { this.diagnostics?.record({type:'repaint_kept', tool:tool.name, move:this.currentMove?.number}); throw new Error(why); }
         return execute(id, args, ...rest);
       };
@@ -2450,6 +2454,12 @@ export class StudioRuntime extends PaintingRuntime {
         // A continue move may find the request it continues already painted (LIVE 2026-10-24: refused five times, the move
         // ended empty): it finishes the request without painting.
         const continued = this.currentMove.continues && request_done;
+        // A repaint the host refused (repaint-from-asset.ts): the move ends with nothing painted, and the artist is told why
+        // (live 2026-11-23: refused here, the painter painted accents so that the move could end).
+        if (!this.currentMove.actions && !this.currentMove.guides && !continued && this.currentMove.repaint_refused) {
+          this.currentMove.title = summary;
+          return { message: 'Noted: nothing was painted, because the repaint was refused. Stop now and tell the artist why in your reply.' };
+        }
         if (!this.currentMove.actions && !this.currentMove.guides && !continued) throw new Error('Paint the subject first; this move has no painting yet.');
         if (!this.currentMove.actions && !continued) {              // a guides-only move: its card shows the guides
           const seen = await this.callNative('observe').catch(() => null);

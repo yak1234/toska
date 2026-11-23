@@ -156,3 +156,18 @@ test('a folder with an underpainting and no goal: the host’s plan is the under
     assert.deepEqual(move.repaint, { reference_id: sky.id, name: '01-moonlit-sky.png' });
   } finally { await h.close(); }
 });
+
+test('a refused repaint lets the move end without painting, and nothing else paints the part', { timeout: 30000 }, async () => {
+  let h;
+  const chat = await agentChat((req, n) => {
+    if (n === 1) { h.runtime.noteRepaintRefused('it would be stretched 2.48 times more one way than the other to fit'); return call('paint_finish', {}); }
+    return n === 2 ? call('finish_move', { summary: 'The sky image does not fit the sky on the painting.' }) : { content: 'It did not fit.' };
+  });
+  h = chat.h;
+  try {
+    await h.runtime.setExecutionSettings({ move_size: 'subject' });          // finish_move is offered
+    await h.runtime.prompt('Paint the sky from final_goal.png');
+    assert.match(toolTexts(chat.painted[1]), /the repaint of this part from the artist's image was refused \(it would be stretched/);
+    assert.match(toolTexts(chat.painted[2]), /Noted: nothing was painted, because the repaint was refused/);
+  } finally { await h.close(); }
+});

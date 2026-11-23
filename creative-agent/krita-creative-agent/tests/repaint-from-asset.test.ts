@@ -141,3 +141,31 @@ test('each repainted area is told to the host, so passes that read the goal are 
   const refused = host({ findInAsset: async () => box(0, 0, 400, 100), painted: () => { throw new Error('nothing was painted'); } });
   await run(refused);
 });
+
+test('an asset that is its part all over (a sky) is not stretched to a box of other proportions: a window of it with the area’s proportions is taken', async () => {
+  // The sky fills its 400 x 400 asset; on the painting it is a wide band at the top of a 1200 x 900 canvas, with a ragged lower edge.
+  const band = box(0, 0, 1200, 300, (i, j) => j < 150 || i % 3 === 0);
+  const h = host({ findInAsset: async () => null, area: () => ({ ...AREA, bounds: [0, 0, 1200, 300] }), shape: async () => band, canvas: () => [1200, 900],
+    pixels: async ref => ({ width: ref.width, height: ref.height, data: new Uint8Array(ref.width * ref.height * 4).fill(200) }),
+    sharpen: async ref => ({ ...ref, width: ref.width * 4, height: ref.height * 4 }) });
+  const result = await run(h);
+  assert.equal(h.calls.transfers.length, 1, text(result));
+  assert.deepEqual(h.calls.transfers[0]!.target, [0, 0, 1200, 300]);
+  assert.equal(h.calls.kept[0]!.width / h.calls.kept[0]!.height, 4, 'the area’s proportions, not the asset’s');
+  const fit = h.calls.recorded[0]!;
+  assert.equal(fit.window !== undefined && (fit.window as number[])[1], 0, 'an area at the top of the canvas takes the top of the asset');
+  assert.equal(fit.fits, true);
+  // At the bottom of the canvas: the bottom of the asset.
+  const low = host({ findInAsset: async () => null, area: () => ({ ...AREA, bounds: [0, 600, 1200, 300] }), shape: async () => box(0, 600, 1200, 300), canvas: () => [1200, 900],
+    sharpen: async ref => ({ ...ref, width: ref.width * 4, height: ref.height * 4 }) });
+  await run(low);
+  const window = low.calls.recorded[0]!.window as number[];
+  assert.equal(window[1]! + window[3]!, 1600, 'the sharpened asset’s bottom edge');
+});
+
+test('a refused fit is told to the host, so the move may end without painting', async () => {
+  const refused: string[] = [];
+  const h = host({ findInAsset: async () => box(0, 0, 400, 100), refused: why => { refused.push(why); } });
+  await run(h);
+  assert.equal(refused.length, 1); assert.match(refused[0]!, /stretched/);
+});
